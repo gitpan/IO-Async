@@ -1,0 +1,36 @@
+---
+name: IO-Async
+version: 0.01
+author:
+  - 'Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>'
+abstract: a collection of modules that implement asynchronous filehandle IO
+license: perl
+requires:
+  IO::Poll: 0
+build_requires:
+  Glib: 0
+  Test::Exception: 0
+  Time::HiRes: 0
+provides:
+  IO::Async::Buffer:
+    file: lib/IO/Async/Buffer.pm
+    version: 0.01
+  IO::Async::Notifier:
+    file: lib/IO/Async/Notifier.pm
+    version: 0.01
+  IO::Async::Set:
+    file: lib/IO/Async/Set.pm
+    version: 0.01
+  IO::Async::Set::GMainLoop:
+    file: lib/IO/Async/Set/GMainLoop.pm
+    version: 0.01
+  IO::Async::Set::IO_Poll:
+    file: lib/IO/Async/Set/IO_Poll.pm
+    version: 0.01
+  IO::Async::Set::Select:
+    file: lib/IO/Async/Set/Select.pm
+    version: 0.01
+  IO::Async::SignalProxy:
+    file: lib/IO/Async/SignalProxy.pm
+    version: 0.01
+generated_by: Module::Build version 0.26
