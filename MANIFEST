@@ -1,4 +1,5 @@
 Build.PL
+Changes
 lib/IO/Async.pod
 lib/IO/Async/Buffer.pm
 lib/IO/Async/Notifier.pm

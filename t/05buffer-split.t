@@ -39,8 +39,9 @@ sub read_data($)
 }
 
 my $incoming_buffer = "";
-sub incoming_data
+sub on_incoming_data
 {
+   my $self = shift;
    my ( $buffref, $buffclosed ) = @_;
 
    $incoming_buffer .= $$buffref;
@@ -52,12 +53,12 @@ sub incoming_data
 my $buff = IO::Async::Buffer->new(
    read_handle  => $S[1],
    write_handle => $S[2],
-   incoming_data => \&incoming_data,
+   on_incoming_data => \&on_incoming_data,
 );
 
 # Sending
 $buff->send( "message\n" );
-$buff->write_ready;
+$buff->on_write_ready;
 
 is( read_data( $S[3] ), "message\n", '$S[3] receives data' );
 is( read_data( $S[0] ), "",          '$S[0] empty' );
@@ -67,6 +68,6 @@ $S[0]->syswrite( "another message\n" );
 # Reverse push - should be ignored
 $S[3]->syswrite( "reverse\n" );
 
-$buff->read_ready;
+$buff->on_read_ready;
 
 is( $incoming_buffer, "another message\n", 'incoming buffer contains message' );

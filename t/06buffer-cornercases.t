@@ -33,8 +33,9 @@ sub read_data($)
 my @received;
 my $closed = 0;
 
-sub incoming_data
+sub on_incoming_data
 {
+   my $self = shift;
    my ( $buffref, $buffclosed ) = @_;
 
    if( $buffclosed ) {
@@ -48,7 +49,10 @@ sub incoming_data
    return 1;
 }
 
-my $buff = IO::Async::Buffer->new( handle => $S1, incoming_data => \&incoming_data );
+my $buff = IO::Async::Buffer->new(
+   handle => $S1,
+   on_incoming_data => \&on_incoming_data
+);
 
 # First corner case - byte at a time
 
@@ -56,7 +60,7 @@ foreach( split( m//, "my line here\n" ) ) {
    $S2->syswrite( $_ );
 
    is( scalar @received, 0, 'scalar @received no data yet' );
-   $buff->read_ready;
+   $buff->on_read_ready;
 }
 
 is( scalar @received, 1,                'scalar @received line' );
@@ -68,7 +72,7 @@ is( $received[0],     "my line here\n", '$received[0] line' );
 
 $S2->syswrite( "my\nlines\nhere\n" );
 
-$buff->read_ready;
+$buff->on_read_ready;
 
 is( scalar @received, 3,         'scalar @received line' );
 is( $received[0],     "my\n",    '$recieved[0] line' );

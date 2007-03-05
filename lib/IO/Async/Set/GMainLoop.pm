@@ -7,7 +7,7 @@ package IO::Async::Set::GMainLoop;
 
 use strict;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use base qw( IO::Async::Set );
 
@@ -114,14 +114,31 @@ sub __notifier_want_writeready
    my $sourceids = ( $self->{sourceid}->{$nkey} ||= [] );
 
    if( !defined $sourceids->[0] ) {
-      $sourceids->[0] = Glib::IO->add_watch( $notifier->read_fileno, ['in', 'hup'], sub { $notifier->read_ready } );
+      $sourceids->[0] = Glib::IO->add_watch(
+         $notifier->read_fileno,
+         ['in', 'hup'],
+         sub {
+            $notifier->on_read_ready;
+            # Must yield true value or else GLib will remove this IO source
+            return 1;
+         }
+      );
    }
 
    if( !defined $sourceids->[1] and $want_writeready ) {
-      $sourceids->[1] = Glib::IO->add_watch( $notifier->write_fileno, ['out'], sub { $notifier->write_ready } );
+      $sourceids->[1] = Glib::IO->add_watch(
+         $notifier->write_fileno,
+         ['out'],
+         sub {
+            $notifier->on_write_ready;
+            # Must yield true value or else GLib will remove this IO source
+            return 1;
+         }
+      );
    }
    elsif( defined $sourceids->[1] and !$want_writeready ) {
       Glib::Source->remove( $sourceids->[1] );
+      undef $sourceids->[1];
    }
 }
 

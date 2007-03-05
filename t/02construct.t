@@ -22,16 +22,16 @@ dies_ok( sub { IO::Async::Notifier->new( handle => "Hello" ) },
    die "Cannot create socket pair - $!";
 
 dies_ok( sub { IO::Async::Notifier->new( handle => $sock ) },
-         'No read_ready' );
+         'No on_read_ready' );
 
-my $ioan = IO::Async::Notifier->new( handle => $sock, read_ready => sub { } );
+my $ioan = IO::Async::Notifier->new( handle => $sock, on_read_ready => sub { } );
 ok( defined $ioan, '$ioan defined' );
 is( ref $ioan, "IO::Async::Notifier", 'ref $ioan is IO::Async::Notifier' );
 
 dies_ok( sub { IO::Async::Buffer->new( handle => $sock ) },
-         'No incoming_data' );
+         'No on_incoming_data' );
 
-my $ioab = IO::Async::Buffer->new( handle => $sock, incoming_data => sub { } );
+my $ioab = IO::Async::Buffer->new( handle => $sock, on_incoming_data => sub { } );
 ok( defined $ioab, '$ioab defined' );
 is( ref $ioab, "IO::Async::Buffer", 'ref $ioab is IO::Async::Buffer' );
 
