@@ -21,3 +21,4 @@ t/10set-GMainLoop.t
 t/10set-IO-Poll.t
 t/10set-select.t
 t/11set-IO-Poll-timing.t
+t/20notifier-child.t

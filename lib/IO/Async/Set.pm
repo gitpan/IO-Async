@@ -7,7 +7,7 @@ package IO::Async::Set;
 
 use strict;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Carp;
 
@@ -83,17 +83,31 @@ sub add
    my $self = shift;
    my ( $notifier ) = @_;
 
-   my $nkey = $self->_nkey( $notifier );
+   if( defined $notifier->parent ) {
+      croak "Cannot add a child notifier directly - add its parent";
+   }
 
    if( defined $notifier->__memberof_set ) {
       croak "Cannot add a notifier that is already a member of a set";
    }
+
+   $self->_add_noparentcheck( $notifier );
+}
+
+sub _add_noparentcheck
+{
+   my $self = shift;
+   my ( $notifier ) = @_;
+
+   my $nkey = $self->_nkey( $notifier );
 
    $self->{notifiers}->{$nkey} = $notifier;
 
    $notifier->__memberof_set( $self );
 
    $self->__notifier_want_writeready( $notifier, $notifier->want_writeready );
+
+   $self->_add_noparentcheck( $_ ) for $notifier->children;
 
    return;
 }
@@ -109,6 +123,18 @@ sub remove
    my $self = shift;
    my ( $notifier ) = @_;
 
+   if( defined $notifier->parent ) {
+      croak "Cannot remove a child notifier directly - remove its parent";
+   }
+
+   $self->_remove_noparentcheck( $notifier );
+}
+
+sub _remove_noparentcheck
+{
+   my $self = shift;
+   my ( $notifier ) = @_;
+
    my $nkey = $self->_nkey( $notifier );
 
    exists $self->{notifiers}->{$nkey} or croak "Notifier does not exist in collection";
@@ -117,7 +143,17 @@ sub remove
 
    $notifier->__memberof_set( undef );
 
+   $self->_notifier_removed( $notifier );
+
+   $self->_remove_noparentcheck( $_ ) for $notifier->children;
+
    return;
+}
+
+# Default 'do-nothing' implementation - meant for subclasses to override
+sub _notifier_removed
+{
+   # Ignore
 }
 
 # For ::Notifier to call

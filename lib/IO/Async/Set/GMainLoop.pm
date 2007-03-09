@@ -7,7 +7,7 @@ package IO::Async::Set::GMainLoop;
 
 use strict;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use base qw( IO::Async::Set );
 
@@ -82,12 +82,10 @@ the C<IO::Async::Set> base class.
 =cut
 
 # override
-sub remove
+sub _notifier_removed
 {
    my $self = shift;
    my ( $notifier ) = @_;
-
-   $self->SUPER::remove( $notifier );
 
    my $nkey = $self->_nkey( $notifier );
 

@@ -7,7 +7,7 @@ package IO::Async::Set::IO_Poll;
 
 use strict;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use base qw( IO::Async::Set );
 
@@ -153,11 +153,13 @@ sub post_poll
    }
 }
 
-=head2 $set->loop_once( $timeout )
+=head2 $ready = $set->loop_once( $timeout )
 
 This method calls the C<poll()> method on the stored C<IO::Poll> object,
 passing in the value of C<$timeout>, and then runs the C<post_poll()> method
-on itself.
+on itself. It returns the value returned by the underlying C<poll()> method;
+which will be the number of handles that returned a result, 0 if a timeout
+occured, or C<undef> on error.
 
 =cut
 
@@ -168,19 +170,27 @@ sub loop_once
 
    my $poll = $self->{poll};
 
+   my $pollret;
+
    # There is a bug in IO::Poll at least version 0.07, where poll() with no
    # registered masks returns immediately, rather than waiting for a timeout
    # This has been reported: 
    #   http://rt.cpan.org/Ticket/Display.html?id=25049
    if( $poll->handles ) {
-      $poll->poll( $timeout );
+      $pollret = $poll->poll( $timeout );
    }
    else {
       # Workaround - we'll use select() to fake a millisecond-accurate sleep
-      select( undef, undef, undef, $timeout );
+      $pollret = select( undef, undef, undef, $timeout );
    }
 
-   $self->post_poll();
+   {
+      # Preserve whatever value poll() or select() left here
+      local $!;
+      $self->post_poll();
+   }
+
+   return $pollret;
 }
 
 =head2 $set->loop_forever()
@@ -218,14 +228,12 @@ sub loop_stop
 }
 
 # override
-sub remove
+sub _notifier_removed
 {
    my $self = shift;
    my ( $notifier ) = @_;
 
    my $poll = $self->{poll};
-
-   $self->SUPER::remove( $notifier );
 
    my $rhandle = $notifier->read_handle;
    my $whandle = $notifier->write_handle;
