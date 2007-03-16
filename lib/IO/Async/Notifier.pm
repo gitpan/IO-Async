@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006,2007 -- leonerd@leonerd.org.uk
 
 package IO::Async::Notifier;
 
 use strict;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use Carp;
 

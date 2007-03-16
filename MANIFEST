@@ -8,6 +8,7 @@ lib/IO/Async/Set/GMainLoop.pm
 lib/IO/Async/Set/IO_Poll.pm
 lib/IO/Async/Set/Select.pm
 lib/IO/Async/SignalProxy.pm
+Makefile.PL
 MANIFEST			This list of files
 META.yml
 t/01use.t

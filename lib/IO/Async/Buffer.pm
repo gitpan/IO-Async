@@ -1,15 +1,17 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006,2007 -- leonerd@leonerd.org.uk
 
 package IO::Async::Buffer;
 
 use strict;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use base qw( IO::Async::Notifier );
+
+use POSIX qw( EAGAIN EWOULDBLOCK );
 
 use Carp;
 
@@ -30,16 +32,22 @@ and receiving data buffers around a connected handle
  );
 
  my $buffer = IO::Async::Buffer->new(
-    handle => $line_socket,
+    handle => $socket,
 
     on_incoming_data => sub {
        my ( $self, $buffref, $closed ) = @_;
 
-       return 0 unless( $$buffref =~ s/^(.*\n)// );
+       if( $$buffref =~ s/^(.*\n)// ) {
+          print "Received a line $1";
 
-       print "Received a line $1";
+          return 1;
+       }
 
-       return 1;
+       if( $closed ) {
+          print "Closed; last partial line is $$buffref\n";
+       }
+
+       return 0;
     }
  );
 
@@ -56,12 +64,18 @@ Or
     on_incoming_data => sub {
        my ( $self, $buffref, $closed ) = @_;
 
-       return 0 unless( length $$buffref == 16 );
+       if( length $$buffref >= 16 ) {
+          my $record = substr( $$buffref, 0, 16, "" );
+          print "Received a 16-byte record: $record\n";
 
-       my $record = substr( $$buffref, 0, 16, "" );
-       print "Received a 16-byte record: $record\n";
+          return 1;
+       }
 
-       return 1;
+       if( $closed and length $$buffref ) {
+          print "Closed: a partial record still exists\n";
+       }
+
+       return 0;
     }
  );
 
@@ -95,13 +109,16 @@ base class.
 
 =item Callbacks
 
-If the C<on_incoming_data> or C<on_outgoing_empty> keys are supplied to the
-constructor, they should contain CODE references to callback functions
-that will be called in the following manner:
+If certain keys are supplied to the constructor, they should contain CODE
+references to callback functions that will be called in the following manner:
 
  $again = $on_incoming_data->( $self, \$buffer, $handleclosed )
 
+ $on_read_error->( $self, $errno )
+
  $on_outgoing_empty->( $self )
+
+ $on_write_error->( $self, $errno )
 
 A reference to the calling C<IO::Async::Buffer> object is passed as the first
 argument, so that the callback can access it.
@@ -113,7 +130,11 @@ C<on_outgoing_empty> methods, which will be called in the following manner:
 
  $again = $self->on_incoming_data( \$buffer, $handleclosed )
 
+ $self->on_read_error( $errno )
+
  $self->on_outgoing_empty()
+
+ $self->on_write_error( $errno )
 
 =back
 
@@ -137,6 +158,15 @@ once the handle closes. A reference to the buffer is passed to the method in
 the usual way, so it may inspect data contained in it. Once the method returns
 a false value, it will not be called again, as the handle is now closed and no
 more data can arrive.
+
+The C<on_read_error> and C<on_write_error> callbacks are passed the value of
+C<$!> at the time the error occured. (The C<$!> variable itself, by its
+nature, may have changed from the original error by the time this callback
+runs so it should always use the value passed in).
+
+If an error occurs when the corresponding error callback is not supplied, and
+there is not a subclass method for it, then the C<handle_closed()> method is
+called instead.
 
 The C<on_outgoing_empty> callback is not passed any arguments.
 
@@ -163,9 +193,17 @@ C<syswrite> methods in the way that C<IO::Handle> does.
 A CODE reference for when more data is available in the internal receiving 
 buffer.
 
+=item on_read_error => CODE
+
+A CODE reference for when the C<sysread()> method on the read handle fails.
+
 =item on_outgoing_empty => CODE
 
 A CODE reference for when the sending data buffer becomes empty.
+
+=item on_write_error => CODE
+
+A CODE reference for when the C<syswrite()> method on the write handle fails.
 
 =back
 
@@ -192,8 +230,8 @@ sub new
       }
    }
 
-   if( $params{on_outgoing_empty} ) {
-      $self->{on_outgoing_empty} = $params{on_outgoing_empty};
+   for (qw( on_outgoing_empty on_read_error on_write_error )) {
+      $self->{$_} = $params{$_} if $params{$_};
    }
 
    $self->{sendbuff} = "";
@@ -241,7 +279,23 @@ sub on_read_ready
    my $data;
    my $len = $handle->sysread( $data, 8192 );
 
-   # TODO: Deal with other types of read error
+   if( !defined $len ) {
+      my $errno = $!;
+
+      return if $errno == EAGAIN or $errno == EWOULDBLOCK;
+
+      if( defined $self->{on_read_error} ) {
+         $self->{on_read_error}->( $self, $errno );
+      }
+      elsif( $self->can( "on_read_error" ) ) {
+         $self->on_read_error( $errno );
+      }
+      else {
+         $self->handle_closed();
+      }
+
+      return;
+   }
 
    my $handleclosed = ( $len == 0 );
 
@@ -277,7 +331,23 @@ sub on_write_ready
 
    $len = $handle->syswrite( $data );
 
-   # TODO: Deal with other types of write error
+   if( !defined $len ) {
+      my $errno = $!;
+
+      return if $errno == EAGAIN or $errno == EWOULDBLOCK;
+
+      if( defined $self->{on_read_error} ) {
+         $self->{on_write_error}->( $self, $errno );
+      }
+      elsif( $self->can( "on_write_error" ) ) {
+         $self->on_write_error( $errno );
+      }
+      else {
+         $self->handle_closed();
+      }
+
+      return;
+   }
 
    if( $len == 0 ) {
       $self->handle_closed();
@@ -315,10 +385,12 @@ lines and prints them to the program's C<STDOUT> stream.
     my $self = shift;
     my ( $buffref, $handleclosed ) = @_;
 
-    return 0 unless( $$buffref =~ s/^(.*\n)// );
+    if( $$buffref =~ s/^(.*\n)// ) {
+       print "Received a line: $1";
+       return 1;
+    }
 
-    print "Received a line: $1";
-    return 1;
+    return 0;
  }
 
 Because a reference to the buffer itself is passed, it is simple to use a
