@@ -2,6 +2,7 @@ Build.PL
 Changes
 lib/IO/Async.pod
 lib/IO/Async/Buffer.pm
+lib/IO/Async/ChildManager.pm
 lib/IO/Async/Notifier.pm
 lib/IO/Async/Set.pm
 lib/IO/Async/Set/GMainLoop.pm
@@ -20,6 +21,11 @@ t/06buffer-cornercases.t
 t/07signalproxy.t
 t/10set-GMainLoop.t
 t/10set-IO-Poll.t
+t/10set-IO-Poll.t-debug
 t/10set-select.t
 t/11set-IO-Poll-timing.t
+t/12set-signal.t
 t/20notifier-child.t
+t/30childmanager.t
+t/31childmanager-spawn.t
+t/32childmanager-spawn-setup.t

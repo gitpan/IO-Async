@@ -7,13 +7,20 @@ package IO::Async::Set::IO_Poll;
 
 use strict;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use base qw( IO::Async::Set );
 
 use Carp;
 
 use IO::Poll qw( POLLIN POLLOUT POLLHUP );
+
+use POSIX qw( EINTR );
+
+# IO::Poll version 0.05 contain a bug whereby the ->remove() method doesn't
+# properly clean up all the references to the handles. If the version we're
+# using is in this range, we have to clean it up ourselves.
+use constant IO_POLL_REMOVE_BUG => ( $IO::Poll::VERSION == '0.05' );
 
 =head1 NAME
 
@@ -178,6 +185,18 @@ sub loop_once
    #   http://rt.cpan.org/Ticket/Display.html?id=25049
    if( $poll->handles ) {
       $pollret = $poll->poll( $timeout );
+
+      if( $pollret == -1 and $! == EINTR and defined $self->{sigproxy} ) {
+         # A signal occured and we have a sigproxy. Allow one more poll call
+         # with zero timeout. If it finds something, keep that result. If it
+         # finds nothing, keep -1
+
+         # Preserve $! whatever happens
+         local $!;
+
+         my $secondattempt = $poll->poll( 0 );
+         $pollret = $secondattempt if $secondattempt > 0;
+      }
    }
    else {
       # Workaround - we'll use select() to fake a millisecond-accurate sleep
@@ -239,8 +258,16 @@ sub _notifier_removed
    my $whandle = $notifier->write_handle;
 
    $poll->remove( $rhandle );
+
+   # This sort of mangling is usually frowned-upon because it relies on
+   # knowledge of the internals of IO::Poll. But we know those internals
+   # because it is conditional on a specific version number of IO::Poll, so we
+   # can rely on the internal layout for that particular version.
+   delete $poll->[0]{fileno $rhandle} if IO_POLL_REMOVE_BUG;
+
    if( defined $whandle and $whandle != $rhandle ) {
       $poll->remove( $whandle );
+      delete $poll->[0]{fileno $whandle} if IO_POLL_REMOVE_BUG;
    }
 }
 

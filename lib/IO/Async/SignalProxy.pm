@@ -7,7 +7,7 @@ package IO::Async::SignalProxy;
 
 use strict;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use base qw( IO::Async::Notifier );
 
@@ -22,6 +22,15 @@ C<IO::Async::SignalProxy> - a class to allow handling of POSIX signals with
 C<IO::Async>-based IO
 
 =head1 SYNOPSIS
+
+Usually this object would be used indirectly, via an C<IO::Async::Set>:
+
+ use IO::Async::Set::...;
+ my $set = IO::Async::Set::...
+
+ $set->attach_signal( HUP => sub { reread_config() } );
+
+It can also be used directly:
 
  use IO::Async::SignalProxy;
 
@@ -203,6 +212,10 @@ sub attach
    $SIG{$signal} = sub {
       # This signal handler is race-sensitive - read the notes in the
       # __END__ section before attempting to modify this code.
+
+      # Protect the interrupted code against unexpected modifications of $!,
+      # such as the line just after the poll() call in IO::Async::Set::IO_Poll
+      local $!;
 
       if( !@$signal_queue ) {
          syswrite( $writer, "\0" );
