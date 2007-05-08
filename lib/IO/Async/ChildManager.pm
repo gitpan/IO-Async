@@ -7,7 +7,7 @@ package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 # Not a notifier
 
@@ -364,6 +364,10 @@ Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
 
 =back
 
+=item env => HASH
+
+A reference to a hash to set as the child process's environment.
+
 =cut
 
 sub _check_setup_and_canonicise
@@ -372,6 +376,8 @@ sub _check_setup_and_canonicise
    my ( $setup ) = @_;
 
    ref $setup eq "ARRAY" or croak "'setup' must be an ARRAY reference";
+
+   return () if !@$setup;
 
    my @setup;
 
@@ -403,6 +409,9 @@ sub _check_setup_and_canonicise
          my $operation = $value->[0];
          grep { $_ eq $operation } qw( open close dup ) or 
             croak "Unrecognised operation '$operation' for file descriptor $fd";
+      }
+      elsif( $key eq "env" ) {
+         ref $value eq "HASH" or croak "Expected HASH reference for 'env' setup key";
       }
       else {
          croak "Unrecognised setup operation '$key'";
@@ -504,9 +513,9 @@ sub _spawn_in_child
          if( $writepipe_clashes ) {
             $max_fd++;
 
-            dup2( fileno $writepipe, $max_fd ) or die "Cannot dup2(writepipe to $max_fd) - $!";
+            dup2( fileno $writepipe, $max_fd ) or die "Cannot dup2(writepipe to $max_fd) - $!\n";
             undef $writepipe;
-            open( $writepipe, ">&=$max_fd" ) or die "Cannot fdopen($max_fd) as writepipe - $!";
+            open( $writepipe, ">&=$max_fd" ) or die "Cannot fdopen($max_fd) as writepipe - $!\n";
          }
 
          foreach my $i ( 0 .. $#$setup/2 ) {
@@ -525,17 +534,20 @@ sub _spawn_in_child
 
                $operation eq "dup"   and do {
                   my $from = fileno $params[0];
-                  dup2( $from, $fd ) or die "Cannot dup2($from to $fd) - $!";
+                  dup2( $from, $fd ) or die "Cannot dup2($from to $fd) - $!\n";
                };
                $operation eq "open"  and do {
                   my ( $mode, $filename ) = @params;
-                  open( my $fh, $mode, $filename ) or die "Cannot open('$mode', '$filename') - $!";
+                  open( my $fh, $mode, $filename ) or die "Cannot open('$mode', '$filename') - $!\n";
 
                   my $from = fileno $fh;
-                  dup2( $from, $fd ) or die "Cannot dup2($from to $fd) - $!";
+                  dup2( $from, $fd ) or die "Cannot dup2($from to $fd) - $!\n";
 
                   close $fh;
                };
+            }
+            elsif( $key eq "env" ) {
+               %ENV = %$value;
             }
          }
       }

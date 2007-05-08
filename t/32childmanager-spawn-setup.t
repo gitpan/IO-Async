@@ -2,7 +2,7 @@
 
 use strict;
 
-use Test::More tests => 75;
+use Test::More tests => 83;
 use Test::Exception;
 
 use IO::Async::ChildManager;
@@ -68,11 +68,26 @@ sub TEST
    }
 }
 
+# A useful utility function like blocking read() with a timeout
+sub read_timeout
+{
+   my ( $fh, undef, $len, $timeout ) = @_;
+
+   my $rvec = '';
+   vec( $rvec, fileno $fh, 1 ) = 1;
+
+   select( $rvec, undef, undef, $timeout );
+
+   return undef if !vec( $rvec, fileno $fh, 1 );
+
+   return $fh->read( $_[1], $len );
+}
+
 my $buffer;
+my $ret;
 
 {
    pipe( my( $pipe_r, $pipe_w ) ) or die "Cannot pipe() - $!";
-   $pipe_r->blocking( 0 );
 
    TEST "pipe dup to fd1",
       setup => [ fd1 => [ 'dup', $pipe_w ] ],
@@ -82,8 +97,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after pipe dup to fd1' );
-   is( $buffer,                'test', '$buffer after pipe dup to fd1' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to fd1' );
+   is( $buffer, 'test', '$buffer after pipe dup to fd1' );
 
    TEST "pipe dup to stdout shortcut",
       setup => [ stdout => $pipe_w ],
@@ -93,8 +111,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after pipe dup to stdout shortcut' );
-   is( $buffer,                'test', '$buffer after pipe dup to stdout shortcut' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to stdout shortcut' );
+   is( $buffer, 'test', '$buffer after pipe dup to stdout shortcut' );
 
    TEST "pipe dup to stdout",
       setup => [ stdout => [ 'dup', $pipe_w ] ],
@@ -104,8 +125,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after pipe dup to stdout' );
-   is( $buffer,                'test', '$buffer after pipe dup to stdout' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to stdout' );
+   is( $buffer, 'test', '$buffer after pipe dup to stdout' );
 
    TEST "pipe dup to fd2",
       setup => [ fd2 => [ 'dup', $pipe_w ] ],
@@ -115,8 +139,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after pipe dup to fd2' );
-   is( $buffer,                'test', '$buffer after pipe dup to fd2' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to fd2' );
+   is( $buffer, 'test', '$buffer after pipe dup to fd2' );
 
    TEST "pipe dup to stderr",
       setup => [ stderr => [ 'dup', $pipe_w ] ],
@@ -126,8 +153,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after pipe dup to stderr' );
-   is( $buffer,                'test', '$buffer after pipe dup to stderr' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to stderr' );
+   is( $buffer, 'test', '$buffer after pipe dup to stderr' );
 
    TEST "pipe dup to other FD",
       setup => [ fd4 => [ 'dup', $pipe_w ] ],
@@ -141,8 +171,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after pipe dup to stderr' );
-   is( $buffer,                'test', '$buffer after pipe dup to stderr' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to stderr' );
+   is( $buffer, 'test', '$buffer after pipe dup to stderr' );
 
    TEST "other FD close",
       code => sub { return $pipe_w->syswrite( "test" ); },
@@ -161,8 +194,11 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 4 ), 4, '$pipe_r->read() after writepipe clash' );
-   is( $buffer,                'test', '$buffer after writepipe clash' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$pipe_r->read() after writepipe clash' );
+   is( $buffer, 'test', '$buffer after writepipe clash' );
 
    pipe( my( $pipe2_r, $pipe2_w ) ) or die "Cannot pipe() - $!";
    $pipe2_r->blocking( 0 );
@@ -175,11 +211,17 @@ my $buffer;
       exitstatus => 1,
       dollarat   => '';
 
-   is( $pipe_r->read( $buffer, 6 ), 6, '$pipe_r->read() after pipe dup to stdout and stderr' );
-   is( $buffer,              'output', '$buffer after pipe dup to stdout and stderr' );
+   undef $buffer;
+   $ret = read_timeout( $pipe_r, $buffer, 6, 0.1 );
 
-   is( $pipe2_r->read( $buffer, 5 ), 5, '$pipe2_r->read() after pipe dup to stdout and stderr' );
-   is( $buffer,                'error', '$buffer after pipe dup to stdout and stderr' );
+   is( $ret, 6,           '$pipe_r->read() after pipe dup to stdout and stderr' );
+   is( $buffer, 'output', '$buffer after pipe dup to stdout and stderr' );
+
+   undef $buffer;
+   $ret = read_timeout( $pipe2_r, $buffer, 5, 0.1 );
+
+   is( $ret, 5,          '$pipe2_r->read() after pipe dup to stdout and stderr' );
+   is( $buffer, 'error', '$buffer after pipe dup to stdout and stderr' );
 }
 
 TEST "stdout close",
@@ -206,8 +248,11 @@ TEST "stdout close",
 
    open( my $tmpfh, "<", $name ) or die "Cannot open '$name' for reading - $!";
 
-   is( $tmpfh->read( $buffer, 4 ), 4, '$tmpfh->read() after stdout open' );
-   is( $buffer,               'test', '$buffer after stdout open' );
+   undef $buffer;
+   $ret = read_timeout( $tmpfh, $buffer, 4, 0.1 );
+
+   is( $ret, 4,         '$tmpfh->read() after stdout open' );
+   is( $buffer, 'test', '$buffer after stdout open' );
 
    TEST "stdout open append",
       setup => [ stdout => [ 'open', '>>', $name ] ],
@@ -219,6 +264,27 @@ TEST "stdout close",
 
    seek( $tmpfh, 0, 0 );
 
-   is( $tmpfh->read( $buffer, 9 ), 9, '$tmpfh->read() after stdout open append' );
-   is( $buffer,          'testvalue', '$buffer after stdout open append' );
+   undef $buffer;
+   $ret = read_timeout( $tmpfh, $buffer, 9, 0.1 );
+
+   is( $ret, 9,              '$tmpfh->read() after stdout open append' );
+   is( $buffer, 'testvalue', '$buffer after stdout open append' );
 }
+
+$ENV{TESTKEY} = "parent value";
+
+TEST "environment is preserved",
+   setup => [],
+   code => sub { return $ENV{TESTKEY} eq "parent value" ? 0 : 1 },
+
+   ready      => 3,
+   exitstatus => 0,
+   dollarat   => '';
+
+TEST "environment is overwritten",
+   setup => [ env => { TESTKEY => "child value" } ],
+   code => sub { return $ENV{TESTKEY} eq "child value" ? 0 : 1 },
+
+   ready      => 3,
+   exitstatus => 0,
+   dollarat   => '';
