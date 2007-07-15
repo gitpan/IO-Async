@@ -6,6 +6,7 @@ WriteMakefile
           'VERSION_FROM' => 'lib/IO/Async/Notifier.pm',
           'PREREQ_PM' => {
                            'IO::Poll' => '0',
+                           'Storable' => '0',
                            'Test::Exception' => '0',
                            'Test::More' => '0',
                            'Time::HiRes' => '0'

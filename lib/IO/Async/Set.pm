@@ -7,7 +7,7 @@ package IO::Async::Set;
 
 use strict;
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 use Carp;
 
@@ -311,6 +311,44 @@ sub watch_child
 
    my $childmanager = $self->get_childmanager;
    $childmanager->watch( $kid, $code );
+}
+
+=head2 $set->detach_child( %params )
+
+This method creates a new child process to run a given code block. It is 
+equivalent to calling the C<detach_child()> method on the object returned from
+the set's C<get_childmanager()> method.
+
+=cut
+
+sub detach_child
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $childmanager = $self->get_childmanager;
+   $childmanager->detach_child( %params );
+}
+
+=head2 $code = $set->detach_code( %params )
+
+This method creates a new detached code object. It is equivalent to calling
+the C<IO::Async::DetachedCode> constructor, passing in the given set. See the
+documentation on this class for more information.
+
+=cut
+
+sub detach_code
+{
+   my $self = shift;
+   my %params = @_;
+
+   require IO::Async::DetachedCode;
+
+   return IO::Async::DetachedCode->new(
+      %params,
+      set => $self
+   );
 }
 
 =head2 $set->spawn_child( %params )
