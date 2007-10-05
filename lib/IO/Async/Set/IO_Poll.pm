@@ -7,7 +7,7 @@ package IO::Async::Set::IO_Poll;
 
 use strict;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 use base qw( IO::Async::Set );
 
@@ -167,6 +167,12 @@ sub post_poll
 
    $_->on_read_ready foreach @readready;
    $_->on_write_ready foreach @writeready;
+
+   # Since we have no way to know if the timeout occured, we'll have to
+   # attempt to fire any waiting timeout events anyway
+
+   my $timequeue = $self->{timequeue};
+   $timequeue->fire if $timequeue;
 }
 
 =head2 $ready = $set->loop_once( $timeout )
@@ -184,6 +190,8 @@ sub loop_once
    my $self = shift;
    my ( $timeout ) = @_;
 
+   $self->_adjust_timeout( \$timeout );
+
    my $poll = $self->{poll};
 
    my $pollret;
@@ -195,7 +203,8 @@ sub loop_once
    if( $poll->handles ) {
       $pollret = $poll->poll( $timeout );
 
-      if( $pollret == -1 and $! == EINTR and defined $self->{sigproxy} ) {
+      if( ( $pollret == -1 and $! == EINTR ) or $pollret == 0 
+              and defined $self->{sigproxy} ) {
          # A signal occured and we have a sigproxy. Allow one more poll call
          # with zero timeout. If it finds something, keep that result. If it
          # finds nothing, keep -1

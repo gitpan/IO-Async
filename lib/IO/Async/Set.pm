@@ -7,9 +7,25 @@ package IO::Async::Set;
 
 use strict;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 use Carp;
+
+# Never sleep for more than 1 second if a signal proxy is registered, to avoid
+# a borderline race condition.
+# There is a race condition in perl involving signals interacting with XS code
+# that implements blocking syscalls. There is a slight chance a signal will
+# arrive in the XS function, before the blocking itself. Perl will not run our
+# (safe) deferred signal handler in this case. To mitigate this, if we have a
+# signal proxy, we'll adjust the maximal timeout. The signal handler will be 
+# run when the XS function returns. 
+our $MAX_SIGWAIT_TIME = 1;
+
+BEGIN {
+   if ( eval { Time::HiRes::time(); 1 } ) {
+      Time::HiRes->import( qw( time ) );
+   }
+}
 
 =head1 NAME
 
@@ -63,6 +79,7 @@ sub __new
       notifiers    => {}, # {nkey} = notifier
       sigproxy     => undef,
       childmanager => undef,
+      timequeue    => undef,
    }, $class;
 
    return $self;
@@ -366,6 +383,118 @@ sub spawn_child
 
    my $childmanager = $self->get_childmanager;
    $childmanager->spawn( %params );
+}
+
+sub __enable_timer
+{
+   my $self = shift;
+
+   defined $self->{timequeue} and
+      croak "Timer already enabled for this set";
+
+   require IO::Async::TimeQueue;
+   my $timequeue = IO::Async::TimeQueue->new();
+
+   $self->{timequeue} = $timequeue;
+}
+
+# For subclasses to call
+sub _adjust_timeout
+{
+   my $self = shift;
+   my ( $timeref ) = @_;
+
+   if( defined $self->{sigproxy} ) {
+      $$timeref = $MAX_SIGWAIT_TIME if( !defined $$timeref or $$timeref > $MAX_SIGWAIT_TIME );
+   }
+
+   my $timequeue = $self->{timequeue};
+   return unless defined $timequeue;
+
+   my $nexttime = $timequeue->next_time;
+   return unless defined $nexttime;
+
+   my $now = time();
+   my $timer_delay = $nexttime - $now;
+
+   if( $timer_delay < 0 ) {
+      $$timeref = 0;
+   }
+   elsif( $timer_delay < \$timeref ) {
+      $$timeref = $timer_delay;
+   }
+}
+
+=head2 $id = $set->enqueue_timer( %params )
+
+This method installs a callback which will be called at the specified time.
+The time may either be specified as an absolute value (the C<time> key), or
+as a delay from the time it is installed (the C<delay> key).
+
+The returned C<$id> value can be used to identify the timer in case it needs
+to be cancelled by the C<cancel_timer()> method. Note that this value may be
+an object reference, so if it is stored, it should be released after it has
+been fired or cancelled, so the object itself can be freed.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item time => NUM
+
+The absolute system timestamp to run the event.
+
+=item delay => NUM
+
+The delay after now at which to run the event.
+
+=item now => NUM
+
+The time to consider as now; defaults to C<time()> if not specified.
+
+=item code => CODE
+
+CODE reference to the callback function to run at the allotted time.
+
+=back
+
+If the C<Time::HiRes> module is loaded, then it is used to obtain the current
+time which is used for the delay calculation. If this behaviour is required,
+the C<Time::HiRes> module must be loaded before C<IO::Async::Set>:
+
+ use Time::HiRes;
+ use IO::Async::Set;
+
+=cut
+
+sub enqueue_timer
+{
+   my $self = shift;
+   my ( %params ) = @_;
+
+   defined $self->{timequeue} or $self->__enable_timer;
+
+   my $timequeue = $self->{timequeue};
+
+   $timequeue->enqueue( %params );
+}
+
+=head2 $set->canel_timer( $id )
+
+Cancels a previously-enqueued timer event by removing it from the queue.
+
+=cut
+
+sub cancel_timer
+{
+   my $self = shift;
+   my ( $id ) = @_;
+
+   defined $self->{timequeue} or $self->__enable_timer;
+
+   my $timequeue = $self->{timequeue};
+
+   $timequeue->cancel( $id );
 }
 
 # Keep perl happy; keep Britain tidy

@@ -7,7 +7,7 @@ package IO::Async::DetachedCode;
 
 use strict;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 use IO::Async::Buffer;
 
@@ -520,6 +520,20 @@ process, allow dynamic creation of more if it's busy.
 =item *
 
 Fall back on a pipe pair if socketpair doesn't work.
+
+=back
+
+=head1 BUGS
+
+=over 4
+
+=item *
+
+The child process is not shut down, and the connecting socket or pipes not
+closed when the application using the DetachedCode drops its last reference.
+This is due to an internal reference being kept. A workaround for this is to
+make sure always to call the C<shutdown()> method. A proper fix will be
+included in a later version.
 
 =back
 

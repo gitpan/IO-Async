@@ -7,7 +7,7 @@ package IO::Async::Set::GMainLoop;
 
 use strict;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 use base qw( IO::Async::Set );
 
@@ -134,6 +134,48 @@ sub __notifier_want_writeready
       Glib::Source->remove( $sourceids->[1] );
       undef $sourceids->[1];
    }
+}
+
+# override
+sub enqueue_timer
+{
+   my $self = shift;
+   my ( %params ) = @_;
+
+   # Just let GLib handle all these timer events
+   my $delay;
+   if( exists $params{time} ) {
+      my $now = exists $params{now} ? $params{now} : time();
+
+      $delay = delete($params{time}) - $now;
+   }
+   elsif( exists $params{delay} ) {
+      $delay = delete $params{delay};
+   }
+   else {
+      croak "Expected either 'time' or 'delay' keys";
+   }
+
+   my $interval = $delay * 1000; # miliseconds
+
+   my $code = delete $params{code};
+   ref $code eq "CODE" or croak "Expected 'code' to be a CODE reference";
+
+   my $callback = sub {
+      $code->();
+      return 0;
+   };
+
+   return Glib::Timeout->add( $interval, $callback );
+}
+
+# override
+sub cancel_timer
+{
+   my $self = shift;
+   my ( $id ) = @_;
+
+   Glib::Source->remove( $id );
 }
 
 # Keep perl happy; keep Britain tidy

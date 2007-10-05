@@ -12,12 +12,10 @@ use POSIX qw( WIFEXITED WEXITSTATUS ENOENT EBADF );
 
 use IO::Async::Set::IO_Poll;
 
-my $manager = IO::Async::ChildManager->new();
-
 my $set = IO::Async::Set::IO_Poll->new();
 $set->enable_childmanager;
 
-$manager = $set->get_childmanager;
+my $manager = $set->get_childmanager;
 
 dies_ok( sub { $manager->spawn( code => sub { 1 }, setup => "hello" ); },
          'Bad setup type fails' );
@@ -36,6 +34,8 @@ sub TEST
    my $dollarbang;
    my $dollarat;
 
+   my ( undef, $callerfile, $callerline ) = caller();
+
    $manager->spawn(
       code => $attr{code},
       exists $attr{setup} ? ( setup => $attr{setup} ) : (),
@@ -45,8 +45,8 @@ sub TEST
    my $ready = 0;
 
    while( !defined $exitcode ) {
-      $_ = $set->loop_once( 2 ); # Give code a generous 2 seconds to exit
-      die "Nothing was ready after 2 second wait" if $_ == 0;
+      $_ = $set->loop_once( 10 ); # Give code a generous 10 seconds to exit
+      die "Nothing was ready after 10 second wait; called at $callerfile line $callerline\n" if $_ == 0;
       $ready += $_;
    }
 
@@ -174,8 +174,8 @@ my $ret;
    undef $buffer;
    $ret = read_timeout( $pipe_r, $buffer, 4, 0.1 );
 
-   is( $ret, 4,         '$pipe_r->read() after pipe dup to stderr' );
-   is( $buffer, 'test', '$buffer after pipe dup to stderr' );
+   is( $ret, 4,         '$pipe_r->read() after pipe dup to other FD' );
+   is( $buffer, 'test', '$buffer after pipe dup to other FD' );
 
    TEST "other FD close",
       code => sub { return $pipe_w->syswrite( "test" ); },
