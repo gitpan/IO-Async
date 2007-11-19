@@ -2,7 +2,7 @@
 
 use strict;
 
-use constant MAIN_TESTS => 4;
+use constant MAIN_TESTS => 3;
 
 use Test::More tests => MAIN_TESTS;
 
@@ -22,8 +22,6 @@ if( !defined eval { require Glib } ) {
 my $set = IO::Async::Set::GMainLoop->new();
 
 my $context = Glib::MainContext->default;
-
-ok( ! $context->pending, 'nothing pending empty' );
 
 my $done = 0;
 
@@ -50,6 +48,10 @@ alarm 0;
 is( $done, 1, '$done after iteration while waiting for timer' );
 
 cmp_ok( $took, '>', 1.9, 'iteration while waiting for timer takes at least 1.9 seconds' );
-cmp_ok( $took, '<', 2.5, 'iteration while waiting for timer no more than 2.5 seconds' );
+cmp_ok( $took, '<', 10, 'iteration while waiting for timer no more than 10 seconds' );
+if( $took > 2.5 ) {
+   diag( "iteration while waiting for timer took more than 2.5 seconds.\n" .
+         "This is not itself a bug, and may just be an indication of a busy testing machine" );
+}
 
 } # for SKIP block

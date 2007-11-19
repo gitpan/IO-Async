@@ -7,7 +7,7 @@ package IO::Async::Set::IO_Poll;
 
 use strict;
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 use base qw( IO::Async::Set );
 
@@ -115,10 +115,13 @@ sub new
 
 =cut
 
-=head2 $set->post_poll( $poll )
+=head2 $count = $set->post_poll( $poll )
 
 This method checks the returned event list from a C<IO::Poll::poll()> call,
 and calls any of the notification methods or callbacks that are appropriate.
+It returns the total number of callbacks that were invoked; that is, the
+total number of C<on_read_ready> and C<on_write_ready> methods on Notifiers,
+and the total number of TimeQueue event callbacks.
 
 =over 8
 
@@ -165,6 +168,8 @@ sub post_poll
       }
    }
 
+   my $count = @readready + @writeready;
+
    $_->on_read_ready foreach @readready;
    $_->on_write_ready foreach @writeready;
 
@@ -172,16 +177,18 @@ sub post_poll
    # attempt to fire any waiting timeout events anyway
 
    my $timequeue = $self->{timequeue};
-   $timequeue->fire if $timequeue;
+   $count += $timequeue->fire if $timequeue;
+
+   return $count;
 }
 
-=head2 $ready = $set->loop_once( $timeout )
+=head2 $count = $set->loop_once( $timeout )
 
 This method calls the C<poll()> method on the stored C<IO::Poll> object,
 passing in the value of C<$timeout>, and then runs the C<post_poll()> method
-on itself. It returns the value returned by the underlying C<poll()> method;
-which will be the number of handles that returned a result, 0 if a timeout
-occured, or C<undef> on error.
+on itself. It returns the total number of callbacks invoked by the 
+C<post_poll()> method, or C<undef> if the underlying C<poll()> method returned
+an error.
 
 =cut
 
@@ -221,13 +228,9 @@ sub loop_once
       $pollret = select( undef, undef, undef, $timeout );
    }
 
-   {
-      # Preserve whatever value poll() or select() left here
-      local $!;
-      $self->post_poll();
-   }
+   return undef unless defined $pollret;
 
-   return $pollret;
+   return $self->post_poll();
 }
 
 =head2 $set->loop_forever()

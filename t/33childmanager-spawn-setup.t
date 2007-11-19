@@ -190,7 +190,7 @@ my $ret;
       code => sub { print "test"; },
       setup => [ map { +"fd$_" => $pipe_w } ( 1 .. 19 ) ],
 
-      ready      => 3,
+      ready      => 2,
       exitstatus => 1,
       dollarat   => '';
 
@@ -235,6 +235,7 @@ TEST "stdout close",
 
 {
    my $name = tmpnam();
+   END { unlink $name if defined $name and -f $name }
 
    TEST "stdout open",
       setup => [ stdout => [ 'open', '>', $name ] ],

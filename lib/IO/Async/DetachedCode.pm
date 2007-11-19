@@ -7,7 +7,7 @@ package IO::Async::DetachedCode;
 
 use strict;
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 use IO::Async::Buffer;
 
@@ -20,7 +20,7 @@ use constant LENGTH_OF_I => length( pack( "I", 0 ) );
 =head1 NAME
 
 C<IO::Async::DetachedCode> - a class that allows a block of code to execute
-asynchronously in a detached child process
+asynchronously in detached child processes
 
 =head1 SYNOPSIS
 
@@ -38,7 +38,7 @@ Usually this object would be constructed indirectly, via an C<IO::Async::Set>:
     }
  );
 
- $code->call
+ $code->call(
     args => [ 123454321 ],
     on_return => sub {
        my $isprime = shift;
@@ -64,21 +64,24 @@ an C<IO::Async::Set> object:
 =head1 DESCRIPTION
 
 This module provides a class that allows a block of code to "detach" from the
-main process, and execute independently in its own child process. The object
+main process, and execute independently in its own child processes. The object
 itself acts as a proxy to this code block, allowing arguments to be passed to
 it each time it is called, and returning results back to a callback function
 in the main process.
 
 The object represents the code block itself, rather than one specific
 invocation of it. It can be called multiple times, by the C<call()> method.
-Multiple outstanding invocations can be queued up; they will be executed in
-the order they were queued, and results returned in that order.
+Multiple outstanding invocations can be called; they will be executed in
+the order they were queued. If only one worker process is used then results
+will be returned in the order they were called. If multiple are used, then
+each request will be sent in the order called, but timing differences between
+each worker may mean results are returned in a different order.
 
 The default marshalling code can only cope with plain scalars or C<undef>
 values; no references, objects, or IO handles may be passed to the function
-each time it is called. If references are required, code based on L<Storable>
-may be used instead, to pass these. See the documentation on the C<marshaller>
-parameter of C<new()> method.
+each time it is called. If references are required then code based on
+L<Storable> may be used instead to pass these. See the documentation on the
+C<marshaller> parameter of C<new()> method.
 
 The C<IO::Async> framework generally provides mechanisms for multiplexing IO
 tasks between different handles, so there aren't many occasions when such
@@ -93,8 +96,8 @@ When a large amount of computationally-intensive work needs to be performed
 
 =item 2.
 
-When an OS or library-level function needs to be called, that will block, and
-no asynchronous version is supplied.
+When a blocking OS syscall or library-level function needs to be called, and
+no nonblocking or asynchronous version is supplied.
 
 =back
 
@@ -125,34 +128,56 @@ provided to the C<call()> method.
 
 =item stream => STRING: C<socket> or C<pipe>
 
-Optional string, specifies which sort of stream will be used to attach to the
-child process. C<socket> uses only one file descriptor in the parent process,
-but not all systems may be able to use it. If the system does not allow
-C<PF_UNIX> socket pairs, then C<pipe> can be used instead. This will use two
-file descriptors in the parent process, however.
+Optional string, specifies which sort of stream will be used to attach to each
+worker. C<socket> uses only one file descriptor per worker in the parent
+process, but not all systems may be able to use it. If the system does not
+allow C<PF_UNIX> socket pairs, then C<pipe> can be used instead. This will use
+two file descriptors per worker in the parent process, however.
 
 If not supplied, the C<socket> method is used.
 
 =item marshaller => STRING: C<flat> or C<storable>
 
 Optional string, specifies the way that call arguments and return values are
-marshalled over the stream that connects the child and parent processes.
+marshalled over the stream that connects the worker and parent processes.
 The C<flat> method is small, simple and fast, but can only cope with strings
 or C<undef>; cannot cope with any references. The C<storable> method uses the
 L<Storable> module to marshall arbitrary reference structures.
 
 If not supplied, the C<flat> method is used.
 
+=item workers => INT
+
+Optional integer, specifies the number of parallel workers to create.
+
+If not supplied, 1 is used.
+
+=item exit_on_die => BOOL
+
+Optional boolean, controls what happens after the C<code> throws an
+exception. If missing or false, the worker will continue running to process
+more requests. If true, the worker will be shut down. A new worker might be
+constructed by the C<call> method to replace it, if necessary.
+
 =back
 
 Since the code block will be called multiple times within the same child
-process, it must take care not to modify any global state that might affect
+process, it must take care not to modify any of its state that might affect
 subsequent calls. Since it executes in a child process, it cannot make any
 modifications to the state of the parent program. Therefore, all the data
 required to perform its task must be represented in the call arguments, and
 all of the result must be represented in the return values.
 
 =cut
+
+# This object class has to be careful not to leave any $self references in
+# registered callback code. To acheive this, all callbacks are plain functions
+# rather than methods, and all take a plain unblessed hashref for the state.
+# Hashrefs of this state are stored in the 'inners' arrayref of the main $self
+# object, one per worker process.
+#
+# This allows the DESTROY handler to work properly when the user code drops
+# the last reference to this object.
 
 sub new
 {
@@ -178,21 +203,56 @@ sub new
       croak "Unrecognised marshaller type '$params{marshaller}'";
    }
 
-   my $self = bless {
-      next_id => 0,
-      set     => $set,
-      code    => $code,
+   my $streamtype = $params{stream} || "socket";
 
-      result_handler => {},
-      marshaller     => $marshaller,
+   $streamtype eq "socket" or $streamtype eq "pipe" or
+      croak "Unrecognised stream type '$streamtype'";
+
+   my $workers = $params{workers} || 1;
+
+   # Squash this down to a boolean
+   my $exit_on_die =  $params{exit_on_die} ? 1 : 0;
+
+   my $self = bless {
+      next_id     => 0,
+      code        => $code,
+      set         => $set,
+      streamtype  => $streamtype,
+      marshaller  => $marshaller,
+      workers     => $workers,
+      exit_on_die => $exit_on_die,
+
+      inners => [],
+
+      queue  => [],
    }, $class;
+
+   $self->_detach_child foreach( 1 .. $workers );
+
+   return $self;
+}
+
+sub _detach_child
+{
+   my $self = shift;
+
+   # The inner object needs references to some members of the outer object
+   my $inner = {
+      set            => $self->{set},
+      result_handler => {},
+      marshaller     => $self->{marshaller},
+      busy           => 0,
+      queue          => $self->{queue},
+      inners         => $self->{inners},
+      exit_on_die    => $self->{exit_on_die},
+   };
 
    my ( $childread, $mywrite );
    my ( $myread, $childwrite );
 
-   my $streamtype = $params{stream};
+   my $streamtype = $self->{streamtype};
 
-   if( !defined $streamtype or $streamtype eq "socket" ) {
+   if( $streamtype eq "socket" ) {
       socketpair( my $myend, my $childend, PF_UNIX, SOCK_STREAM, 0 ) or
          croak "Cannot socketpair(PF_UNIX) - $!";
 
@@ -203,9 +263,8 @@ sub new
       pipe( $childread, $mywrite ) or croak "Cannot pipe() - $!";
       pipe( $myread, $childwrite ) or croak "Cannot pipe() - $!";
    }
-   else {
-      croak "Unrecognised stream type '$streamtype'";
-   }
+
+   my $set = $inner->{set};
 
    my $kid = $set->detach_child(
       code => sub { 
@@ -217,12 +276,12 @@ sub new
             POSIX::close( $_ );
          }
 
-         $self->_child_loop( $childread, $childwrite ),
+         $self->_child_loop( $childread, $childwrite, $inner ),
       },
-      on_exit => sub { $self->_child_error( 'exit', @_ ) },
+      on_exit => sub { _child_error( $inner, 'exit', @_ ) },
    );
 
-   $self->{kid} = $kid;
+   $inner->{kid} = $kid;
 
    close( $childread );
    close( $childwrite );
@@ -231,14 +290,16 @@ sub new
       read_handle  => $myread,
       write_handle => $mywrite,
 
-      on_incoming_data => sub { $self->_socket_incoming( $_[1], $_[2] ) },
+      on_read => sub { _socket_incoming( $inner, $_[1], $_[2] ) },
    );
 
-   $self->{iobuffer} = $iobuffer;
+   $inner->{iobuffer} = $iobuffer;
 
    $set->add( $iobuffer );
 
-   return $self;
+   push @{ $self->{inners} }, $inner;
+
+   return $inner;
 }
 
 sub DESTROY
@@ -254,8 +315,19 @@ sub DESTROY
 
 =head2 $code->call( %params )
 
-This method queues one invocation of the code block to be executed in the
-child process. The C<%params> hash takes the following keys:
+This method causes one invocation of the code block to be executed in a
+free worker. If there are no free workers available at the time this method is
+called, the request will be queued, to be sent to the first worker that later
+becomes available. The request will already have been serialised by the
+marshaller, so it will be safe to modify any referenced data structures in the
+arguments after this call returns.
+
+If the number of available workers is less than the number supplied to the
+constructor (perhaps because some of them were shut down because of
+C<exit_on_die>) and they are all busy, then a new one will be created to
+perform this request.
+
+The C<%params> hash takes the following keys:
 
 =over 8
 
@@ -325,23 +397,30 @@ sub call
    my $callid = $self->{next_id}++;
 
    my $data = $self->{marshaller}->marshall_args( $callid, $args );
-   my $request = $self->_marshall_record( 'c', $callid, $data );
+   my $request = _marshall_record( 'c', $callid, $data );
 
-   $self->{iobuffer}->send( pack( "I", length $request ) . $request );
+   my $inner;
+   foreach( @{ $self->{inners} } ) {
+      $inner = $_, last if !$_->{busy};
+   }
 
-   my $handlermap = $self->{result_handler};
-   $handlermap->{$callid} = $on_result;
+   if( !$inner and @{ $self->{inners} } < $self->{workers} ) {
+      $inner = $self->_detach_child;
+   }
+
+   if( $inner ) {
+      _send_request( $inner, $callid, $request, $on_result );
+   }
+   else {
+      push @{ $self->{queue} }, [ $callid, $request, $on_result ];
+   }
 }
 
 =head2 $code->shutdown
 
-This method requests that the detached child process stops running. All
-pending calls to the code are finished with a 'shutdown' error, and the child
-process itself exits.
-
-It is not normally necessary to call this method during normal exit of the
-containing program. It is only required if the detact code is to be dropped,
-and recreated in a different way.
+This method requests that the detached worker processes stop running. All
+pending calls to the code are finished with a 'shutdown' error, and the worker
+processes exit.
 
 =cut
 
@@ -349,29 +428,65 @@ sub shutdown
 {
    my $self = shift;
 
-   $self->{shutting_down} = 1;
+   foreach my $inner ( @{ $self->{inners} } ) {
+      if( defined $inner->{iobuffer} ) {
+         $inner->{set}->remove( $inner->{iobuffer} );
+         undef $inner->{iobuffer};
+      }
 
-   if( defined $self->{iobuffer} ) {
-      $self->{set}->remove( $self->{iobuffer} );
-      undef $self->{iobuffer};
-   }
+      my $handlermap = $inner->{result_handler};
 
-   my $handlermap = $self->{result_handler};
-
-   foreach my $id ( keys %$handlermap ) {
-      $handlermap->{$id}->( 'shutdown' );
-      delete $handlermap->{$id};
+      foreach my $id ( keys %$handlermap ) {
+         $handlermap->{$id}->( 'shutdown' );
+         delete $handlermap->{$id};
+      }
    }
 }
 
-# Internal
-sub _socket_incoming
+=head2 $n_workers = $code->workers
+
+This method in scalar context returns the number of workers currently running.
+
+=head2 @worker_pids = $code->workers
+
+This method in list context returns a list of the PID numbers of all the
+currently running worker processes.
+
+=cut
+
+sub workers
 {
    my $self = shift;
-   my ( $buffref, $closed ) = @_;
+
+   return scalar @{ $self->{inners} } unless wantarray;
+   return map { $_->{kid} } @{ $self->{inners} };
+}
+
+# INNER FUNCTION
+sub _send_request
+{
+   my ( $inner, $callid, $request, $on_result ) = @_;
+
+   my $handlermap = $inner->{result_handler};
+   $handlermap->{$callid} = $on_result;
+
+   $inner->{iobuffer}->write( pack( "I", length $request ) . $request );
+   $inner->{busy} = 1;
+}
+
+# INNER FUNCTION
+sub _socket_incoming
+{
+   my ( $inner, $buffref, $closed ) = @_;
+
+   my $handlermap = $inner->{result_handler};
 
    if( $closed ) {
-      $self->_child_error( 'closed' );
+      _child_error( $inner, 'closed' );
+
+      $inner->{set}->remove( $inner->{iobuffer} );
+      undef $inner->{iobuffer};
+
       return 0;
    }
 
@@ -383,49 +498,63 @@ sub _socket_incoming
    substr( $$buffref, 0, LENGTH_OF_I, "" );
    my $record = substr( $$buffref, 0, $reclen, "" );
 
-   my ( $type, $id, $data ) = $self->_unmarshall_record( $record );
+   my ( $type, $id, $data ) = _unmarshall_record( $record );
 
-   my $handlermap = $self->{result_handler};
    if( !exists $handlermap->{$id} ) {
-      $self->_child_error( 'badretid', $id );
+      # Child returned a result for an ID we don't recognise
+      carp "Unrecognised return ID $id from detached code child";
       return 1;
    }
-   my $handler = $handlermap->{$id};
+
+   my $handler = delete $handlermap->{$id};
+   $inner->{busy} = 0;
 
    if( $type eq "r" ) {
-      my $ret = $self->{marshaller}->unmarshall_ret( $id, $data );
+      my $ret = $inner->{marshaller}->unmarshall_ret( $id, $data );
       $handler->( "return", @$ret );
    }
    elsif( $type eq "e" ) {
       $handler->( "error", $data );
+
+      if( $inner->{exit_on_die} ) {
+         _child_error( $inner, 'die' );
+
+         $inner->{set}->remove( $inner->{iobuffer} );
+         undef $inner->{iobuffer};
+      }
    }
 
-   delete $handlermap->{$id};
+   if( @{ $inner->{queue} } ) {
+      my ( $callid, $request, $on_result ) = @{ shift @{ $inner->{queue} } };
+      _send_request( $inner, $callid, $request, $on_result );
+   }
+
    return 1;
 }
 
+# INNER FUNCTION
 sub _child_error
 {
-   my $self = shift;
-   my ( $cause, @args ) = @_;
+   my ( $inner, $cause, @args ) = @_;
 
-   return if $self->{shutting_down};
-
-   my $handlermap = $self->{result_handler};
+   my $handlermap = $inner->{result_handler};
 
    foreach my $id ( keys %$handlermap ) {
       $handlermap->{$id}->( 'error', $cause, @args );
       delete $handlermap->{$id};
    }
 
-   $self->shutdown;
+   # Remove myself from the parent's inners list
+   @{ $inner->{inners} } = grep { $_ != $inner } @{ $inner->{inners} };
 
    return 0;
 }
 
+# These are FUNCTIONS, not methods
+# They don't need $self
+
 sub _marshall_record
 {
-   my $self = shift;
    my ( $type, $id, $data ) = @_;
 
    return pack( "a1 I a*", $type, $id, $data );
@@ -433,7 +562,6 @@ sub _marshall_record
 
 sub _unmarshall_record
 {
-   my $self = shift;
    my ( $record ) = @_;
 
    return unpack( "a1 I a*", $record );
@@ -455,7 +583,7 @@ sub _read_exactly
 sub _child_loop
 {
    my $self = shift;
-   my ( $inhandle, $outhandle ) = @_;
+   my ( $inhandle, $outhandle, $inner ) = @_;
 
    my $code = $self->{code};
 
@@ -468,22 +596,22 @@ sub _child_loop
       $n = _read_exactly( $inhandle, my $record, $reclen );
       defined $n or die "Cannot read - $!";
 
-      my ( $type, $id, $data ) = $self->_unmarshall_record( $record );
+      my ( $type, $id, $data ) = _unmarshall_record( $record );
       $type eq "c" or die "Unexpected record type $type\n";
 
-      my $args = $self->{marshaller}->unmarshall_args( $id, $data );
+      my $args = $inner->{marshaller}->unmarshall_args( $id, $data );
 
       my @ret;
       my $ok = eval { @ret = $code->( @$args ); 1 };
 
       my $result;
       if( $ok ) {
-         my $data = $self->{marshaller}->marshall_ret( $id, \@ret );
-         $result = $self->_marshall_record( 'r', $id, $data );
+         my $data = $inner->{marshaller}->marshall_ret( $id, \@ret );
+         $result = _marshall_record( 'r', $id, $data );
       }
       else {
          my $e = "$@"; # Force stringification
-         $result = $self->_marshall_record( 'e', $id, $e );
+         $result = _marshall_record( 'e', $id, $e );
       }
 
       # Prepend record length
@@ -514,26 +642,11 @@ object.
 
 =item *
 
-Pooling of multiple child processes - perhaps even dynamic. Default one
-process, allow dynamic creation of more if it's busy.
+Dynamic pooling of multiple worker processes, with min/max watermarks.
 
 =item *
 
 Fall back on a pipe pair if socketpair doesn't work.
-
-=back
-
-=head1 BUGS
-
-=over 4
-
-=item *
-
-The child process is not shut down, and the connecting socket or pipes not
-closed when the application using the DetachedCode drops its last reference.
-This is due to an internal reference being kept. A workaround for this is to
-make sure always to call the C<shutdown()> method. A proper fix will be
-included in a later version.
 
 =back
 

@@ -7,7 +7,7 @@ package IO::Async::Notifier;
 
 use strict;
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 use Carp;
 
@@ -61,7 +61,7 @@ called when the underlying IO handle becomes readable or writable:
  $on_write_ready->( $self )
 
 Optionally, an C<on_closed> key can also be specified, which will be called
-when the C<handle_closed> method is invoked. This is intended for subclasses.
+when the C<close> method is invoked. This is intended for subclasses.
 
  $on_closed->( $self )
 
@@ -77,7 +77,7 @@ should not call the C<SUPER::> versions of those methods.
 
 =back
 
-If either of the readyness methods calls the C<handle_closed()> method, then
+If either of the readyness methods calls the C<close()> method, then
 the handle is internally marked as closed within the object.
 
 =cut
@@ -140,7 +140,7 @@ sub new
 
       # Test if we've got a fileno. We put it in an eval block in case what
       # we were passed in can't do fileno. We can't just test if 
-      # $read_handle->can( "fileno" ) because this is true for bare
+      # $read_handle->can( "fileno" ) because this is not true for bare
       # filehandles like \*STDIN, whereas STDIN->fileno still works.
       unless( defined eval { $read_handle->fileno } ) {
          croak 'Expected that read_handle can fileno()';
@@ -204,6 +204,33 @@ sub new
 =head1 METHODS
 
 =cut
+
+=head2 $notifier->close
+
+This method calls C<close> on the underlying IO handles. This method will will
+remove the notifier from its containing set.
+
+=cut
+
+sub close
+{
+   my $self = shift;
+
+   my $read_handle = $self->{read_handle};
+   return unless( defined $read_handle );
+
+   $self->{on_closed}->( $self ) if $self->{on_closed};
+
+   if( my $set = $self->{set} ) {
+      $set->remove( $self );
+   }
+
+   delete $self->{read_handle};
+   $read_handle->close;
+
+   my $write_handle = delete $self->{write_handle};
+   $write_handle->close if defined $write_handle and $write_handle != $read_handle;
+}
 
 =head2 $handle = $notifier->read_handle
 
@@ -311,34 +338,6 @@ sub on_write_ready
    my $self = shift;
    my $callback = $self->{on_write_ready};
    $callback->( $self ) if defined $callback;
-}
-
-=head2 $notifier->handle_closed()
-
-This method marks that the handle has been closed. After this has been called,
-the object will no longer mark any bits in the C<pre_select()> call, nor
-respond to any set bits in the C<post_select()> call.
-
-=cut
-
-sub handle_closed
-{
-   my $self = shift;
-
-   my $read_handle = $self->{read_handle};
-   return unless( defined $read_handle );
-
-   $self->{on_closed}->( $self ) if $self->{on_closed};
-
-   $read_handle->close;
-   undef $read_handle;
-   delete $self->{read_handle};
-
-   my $write_handle = $self->{write_handle};
-   if( defined $write_handle ) {
-      undef $write_handle;
-      delete $self->{write_handle};
-   }
 }
 
 =head1 CHILD NOTIFIERS

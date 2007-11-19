@@ -31,6 +31,7 @@ t/10set-select.t
 t/11set-GMainLoop-timing.t
 t/11set-IO-Poll-timing.t
 t/11set-select-timing.t
+t/12set-buffer.t
 t/12set-signal.t
 t/20notifier-child.t
 t/30childmanager.t
@@ -39,3 +40,4 @@ t/32childmanager-spawn.t
 t/33childmanager-spawn-setup.t
 t/40detachedcode-marshall.t
 t/41detachedcode-call.t
+t/TestAsync.pm

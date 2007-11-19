@@ -2,8 +2,14 @@
 
 use strict;
 
-use Test::More tests => 29;
+use lib 't';
+use TestAsync;
+
+use Test::More tests => 47;
 use Test::Exception;
+
+use File::Temp qw( tempdir );
+use Time::HiRes qw( sleep );
 
 use IO::Async::DetachedCode;
 
@@ -12,6 +18,8 @@ use IO::Async::Set::IO_Poll;
 my $set = IO::Async::Set::IO_Poll->new();
 $set->enable_childmanager;
 
+testing_set( $set );
+
 my $code = IO::Async::DetachedCode->new(
    set  => $set,
    code => sub { return $_[0] + $_[1] },
@@ -19,6 +27,11 @@ my $code = IO::Async::DetachedCode->new(
 
 ok( defined $code, '$code defined' );
 is( ref $code, "IO::Async::DetachedCode", 'ref $code is IO::Async::DetachedCode' );
+
+is( scalar $code->workers, 1, '$code->workers is 1' );
+my @workers = $code->workers;
+is( scalar @workers, 1, '@workers has 1 value' );
+ok( kill( 0, $workers[0] ), '$workers[0] is a PID' );
 
 dies_ok( sub { $code->call( args => [], on_result => "hello" ) },
          'call with on_result not CODE ref fails' );
@@ -37,24 +50,6 @@ dies_ok( sub { $code->call( args => [], on_return => sub {}, on_error => "hello"
 
 my $result;
 
-sub wait_for(&)
-{
-   my ( $cond ) = @_;
-
-   my $ready = 0;
-   undef $result;
-
-   my ( undef, $callerfile, $callerline ) = caller();
-
-   while( !$cond->() ) {
-      $_ = $set->loop_once( 10 ); # Give code a generous 10 seconds to do something
-      die "Nothing was ready after 10 second wait; called at $callerfile line $callerline\n" if $_ == 0;
-      $ready += $_;
-   }
-
-   $ready;
-}
-
 $code->call(
    args => [ 10, 20 ],
    on_return => sub { $result = shift },
@@ -63,7 +58,11 @@ $code->call(
 
 is( $result, undef, '$result before call returns' );
 
+is( scalar $code->workers, 1, '$code->workers is still 1 after call' );
+
 my $ready;
+
+undef $result;
 $ready = wait_for { defined $result };
 
 cmp_ok( $ready, '>=', 2, '$ready after call returns' );
@@ -82,19 +81,23 @@ $code->call(
    on_error  => sub { die "Test failed early - @_" },
 );
 
+is( scalar $code->workers, 1, '$code->workers is still 1 after 2 calls' );
+
+undef @result;
 $ready = wait_for { @result == 2 };
 
-cmp_ok( $ready, '>=', 2, '$ready after both calls return' );
+cmp_ok( $ready, '>=', 4, '$ready after both calls return' );
 is_deeply( \@result, [ 3, 7 ], '@result after both calls return' );
 
-$code->shutdown;
-undef $code;
+is( scalar $code->workers, 1, '$code->workers is still 1 after 2 calls return' );
 
 $code = IO::Async::DetachedCode->new(
    set  => $set,
    code => sub { return $_[0] + $_[1] },
    stream => "socket",
 );
+
+is( scalar $code->workers, 1, '$code->workers is 1 for socket stream' );
 
 $code->call(
    args => [ 5, 6 ],
@@ -108,9 +111,6 @@ $ready = wait_for { defined $result };
 cmp_ok( $ready, '>=', 2, '$ready after call to code over socket' );
 is( $result, 11, '$result of code over socket' );
 
-$code->shutdown;
-undef $code;
-
 $code = IO::Async::DetachedCode->new(
    set  => $set,
    code => sub { return $_[0] + $_[1] },
@@ -123,14 +123,13 @@ $code->call(
    on_error  => sub { die "Test failed early - @_" },
 );
 
+is( scalar $code->workers, 1, '$code->workers is 1 for pipe stream' );
+
 undef $result;
 $ready = wait_for { defined $result };
 
 cmp_ok( $ready, '>=', 2, '$ready after call to code over pipe' );
 is( $result, 11, '$result of code over pipe' );
-
-$code->shutdown;
-undef $code;
 
 dies_ok( sub { IO::Async::DetachedCode->new(
                   set  => $set,
@@ -165,9 +164,6 @@ dies_ok( sub { $code->call(
             },
          'call with reference arguments using flat marshaller dies' );
 
-$code->shutdown;
-undef $code;
-
 dies_ok( sub { IO::Async::DetachedCode->new(
                   set  => $set,
                   code => sub { return $_[0] },
@@ -193,9 +189,6 @@ $ready = wait_for { scalar @result };
 cmp_ok( $ready, '>=', 2, '$ready after call to code over storable marshaller' );
 is_deeply( \@result, [ 'SCALAR', \'b' ], '@result after call to code over storable marshaller' );
 
-$code->shutdown;
-undef $code;
-
 my $err;
 
 $code = IO::Async::DetachedCode->new(
@@ -209,22 +202,68 @@ $code->call(
    on_error  => sub { $err = shift },
 );
 
+undef $err;
 $ready = wait_for { defined $err };
 
 cmp_ok( $ready, '>=', 2, '$ready after exception' );
 like( $err, qr/^exception name at $0 line \d+\.$/, '$err after exception' );
 
-$code->shutdown;
-undef $code;
+my $count = 0;
+$code = IO::Async::DetachedCode->new(
+   set => $set,
+   code => sub { $count++; die "$count\n" },
+   exit_on_die => 0,
+);
+
+my @errs;
+$code->call(
+   args => [],
+   on_return => sub { },
+   on_error  => sub { push @errs, shift },
+);
+$code->call(
+   args => [],
+   on_return => sub { },
+   on_error  => sub { push @errs, shift },
+);
+
+undef @errs;
+wait_for { scalar @errs == 2 };
+
+is_deeply( \@errs, [ "1\n", "2\n" ], 'Closed variables preserved when exit_on_die => 0' );
 
 $code = IO::Async::DetachedCode->new(
    set => $set,
-   code => sub { exit shift },
+   code => sub { $count++; die "$count\n" },
+   exit_on_die => 1,
+);
+
+undef @errs;
+
+$code->call(
+   args => [],
+   on_return => sub { },
+   on_error  => sub { push @errs, shift },
+);
+wait_for { scalar @errs == 1 };
+
+$code->call(
+   args => [],
+   on_return => sub { },
+   on_error  => sub { push @errs, shift },
+);
+wait_for { scalar @errs == 2 };
+
+is_deeply( \@errs, [ "1\n", "1\n" ], 'Closed variables no preserved when exit_on_die => 1' );
+
+$code = IO::Async::DetachedCode->new(
+   set => $set,
+   code => sub { $_[0] ? exit shift : return 0 },
 );
 
 $code->call(
    args => [ 16 ],
-   on_return => sub { },
+   on_return => sub { $err = "" },
    on_error  => sub { $err = [ @_ ] },
 );
 
@@ -235,8 +274,21 @@ cmp_ok( $ready, '>=', 2, '$ready after child death' );
 # Not sure what reason we might get - need to check both
 ok( $err->[0] eq "closed" || $err->[0] eq "exit", '$err->[0] after child death' );
 
-$code->shutdown;
-undef $code;
+is( scalar $code->workers, 0, '$code->workers is now 0' );
+
+$code->call(
+   args => [ 0 ],
+   on_return => sub { $err = "return" },
+   on_error  => sub { $err = [ @_ ] },
+);
+
+is( scalar $code->workers, 1, '$code->workers is now 1 again' );
+
+undef $err;
+$ready = wait_for { defined $err };
+
+cmp_ok( $ready, '>=', 2, '$ready after child nondeath' );
+is( $err, "return", '$err is "return" after child nondeath' );
 
 $code = $set->detach_code(
    code => sub { return join( "+", @_ ) },
@@ -253,3 +305,59 @@ $ready = wait_for { defined $result };
 
 cmp_ok( $ready, '>=', 2, '$ready after call to Set-constructed code' );
 is( $result, "a+b+c", '$result of Set-constructed code' );
+
+## Now test that parallel runs really are parallel
+
+$code = $set->detach_code(
+   code => sub {
+      my ( $file, $ret ) = @_;
+
+      open( my $fh, ">", $file ) or die "Cannot write $file - $!";
+      close( $file );
+
+      # Wait for synchronisation
+      sleep 0.1 while -e $file;
+
+      return $ret;
+   },
+   workers => 3,
+);
+
+is( scalar $code->workers, 3, '$code->workers is 3' );
+
+my $dir = tempdir( CLEANUP => 1 );
+
+my %ret;
+
+foreach my $id ( 1, 2, 3 ) {
+   $code->call(
+      args => [ "$dir/$id", $id ],
+      on_return => sub { $ret{$id} = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+}
+
+my $start = time();
+
+while( not( -e "$dir/1" and -e "$dir/2" and -e "$dir/3" ) ) {
+   if( time() - $start > 10 ) {
+      die "Not all child processes ready after 10second wait";
+   }
+
+   $set->loop_once( 0.1 );
+}
+
+ok( 1, 'synchronise files created' );
+
+# Synchronize deleting them;
+
+for my $f ( "$dir/1", "$dir/2", "$dir/3" ) {
+   unlink $f or die "Cannot unlink $f - $!";
+}
+
+undef %ret;
+wait_for { keys %ret == 3 };
+
+is_deeply( \%ret, { 1 => 1, 2 => 2, 3 => 3 }, 'ret keys after parallel run' );
+
+is( scalar $code->workers, 3, '$code->workers is still 3' );

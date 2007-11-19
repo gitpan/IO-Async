@@ -5,6 +5,7 @@ WriteMakefile
           'NAME' => 'IO::Async',
           'VERSION_FROM' => 'lib/IO/Async/Notifier.pm',
           'PREREQ_PM' => {
+                           'File::Temp' => '0',
                            'Heap' => '0',
                            'IO::Poll' => '0',
                            'Storable' => '0',
@@ -13,6 +14,7 @@ WriteMakefile
                            'Time::HiRes' => '0'
                          },
           'INSTALLDIRS' => 'site',
+          'EXE_FILES' => [],
           'PL_FILES' => {}
         )
 ;
