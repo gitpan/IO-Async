@@ -2,7 +2,7 @@
 
 use strict;
 
-use Test::More tests => 28;
+use Test::More tests => 29;
 use Test::Exception;
 
 use IO::Socket::UNIX;
@@ -45,7 +45,7 @@ is( $ioan->write_fileno, fileno($S1), '->write_fileno returns fileno(S1)' );
 
 is( $ioan->want_writeready, 0, 'wantwriteready 0' );
 
-is( $ioan->__memberof_set, undef, '__memberof_set undef' );
+is( $ioan->get_loop, undef, '__memberof_loop undef' );
 
 $ioan->want_writeready( 1 );
 is( $ioan->want_writeready, 1, 'wantwriteready 1' );
@@ -111,3 +111,12 @@ $ioan = IO::Async::Notifier->new(
 $ioan->close;
 
 is( $closed, 1, '$closed after ->close' );
+
+undef $ioan;
+$ioan = IO::Async::Notifier->new(
+   write_handle => \*STDOUT,
+   want_writeready => 1,
+   on_write_ready => sub {},
+);
+
+ok( defined $ioan, 'defined $ioan for only write_handle/on_write_ready' );

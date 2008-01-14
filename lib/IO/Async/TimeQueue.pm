@@ -7,7 +7,7 @@ package IO::Async::TimeQueue;
 
 use strict;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 use Carp;
 use Heap::Fibonacci;
@@ -20,13 +20,12 @@ BEGIN {
 
 =head1 NAME
 
-C<IO::Async::TimeQueue> - a class which implements a queue of future timed
-event callbacks
+C<IO::Async::TimeQueue> - a queue of future timed event callbacks
 
 =head1 DESCRIPTION
 
 This class is not intended to be used by external code; it is used by
-C<IO::Async::Set::Select> and C<IO::Async::Set::IO_Poll> to implement the
+C<IO::Async::Loop::Select> and C<IO::Async::Loop::IO_Poll> to implement the
 timer features.
 
 =cut

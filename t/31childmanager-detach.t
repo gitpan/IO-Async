@@ -10,14 +10,12 @@ use Test::Exception;
 
 use POSIX qw( SIGINT WEXITSTATUS WIFSIGNALED WTERMSIG );
 
-use IO::Async::Set::IO_Poll;
+use IO::Async::Loop::IO_Poll;
 
-my $set = IO::Async::Set::IO_Poll->new();
-$set->enable_childmanager;
+my $loop = IO::Async::Loop::IO_Poll->new();
+$loop->enable_childmanager;
 
-testing_set( $set );
-
-my $manager = $set->get_childmanager;
+testing_loop( $loop );
 
 my $exitcode;
 
@@ -27,7 +25,7 @@ sub wait_for_exit
    return wait_for { defined $exitcode };
 }
 
-$manager->detach_child(
+$loop->detach_child(
    code    => sub { return 5; },
    on_exit => sub { ( undef, $exitcode ) = @_ },
 );
@@ -38,7 +36,7 @@ $ready = wait_for_exit;
 is( $ready, 1, '$ready after child exit' );
 is( WEXITSTATUS($exitcode), 5, 'WEXITSTATUS($exitcode) after child exit' );
 
-$manager->detach_child(
+$loop->detach_child(
    code    => sub { die "error"; },
    on_exit => sub { ( undef, $exitcode ) = @_ },
 );
@@ -50,7 +48,7 @@ is( WEXITSTATUS($exitcode), 255, 'WEXITSTATUS($exitcode) after child die' );
 
 $SIG{INT} = sub { exit( 22 ) };
 
-$manager->detach_child(
+$loop->detach_child(
    code    => sub { kill SIGINT, $$ },
    on_exit => sub { ( undef, $exitcode ) = @_ },
 );
@@ -60,7 +58,7 @@ wait_for_exit;
 is( WIFSIGNALED($exitcode), 1, 'WIFSIGNALED($exitcode) after child SIGINT' );
 is( WTERMSIG($exitcode), SIGINT, 'WTERMSIG($exitcode) after child SIGINT' );
 
-$manager->detach_child(
+$loop->detach_child(
    code    => sub { kill SIGINT, $$ },
    on_exit => sub { ( undef, $exitcode ) = @_ },
    keep_signals => 1,

@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
 
 package IO::Async::Set::GMainLoop;
 
@@ -9,36 +9,33 @@ use strict;
 
 our $VERSION = '0.10';
 
-use base qw( IO::Async::Set );
+use base qw( IO::Async::Loop::Glib IO::Async::Set );
 
-use Carp;
+use warnings qw();
 
 =head1 NAME
 
-C<IO::Async::Set::GMainLoop> - a class that maintains a set of
-C<IO::Async::Notifier> objects by using the C<Glib::MainLoop> object.
+C<IO::Async::Set::GMainLoop> - backward-compatibility wrapper around
+C<IO::Async::Loop::Glib>
 
 =head1 SYNOPSIS
 
+This class should not be used in new code, and is provided for backward
+compatibility for older applications that still use it. It has been renamed
+to C<IO::Async::Loop::Glib>. Any application using this class should simply
+change
+
  use IO::Async::Set::GMainLoop;
 
- my $set = IO::Async::Set::GMainLoop->new();
+ my $set = IO::Async::Set::GMainLoop->new( .... );
 
- $set->add( ... );
+into
 
- ...
- # Rest of GLib/Gtk program that uses GLib::MainContext
+ use IO::Async::Loop::Glib;
 
-=head1 DESCRIPTION
+ my $loop = IO::Async::Loop::Glib->new( .... );
 
-This subclass of C<IO::Async::Notifier> uses the C<Glib::MainLoop> to perform
-read-ready and write-ready tests.
-
-The appropriate C<Glib::IO> sources are added or removed from the
-C<Glib::MainLoop> when notifiers are added or removed from the set, or when
-they change their C<want_writeready> status. The callbacks are called
-automatically by Glib itself; no special methods on this set object are
-required.
+The behaviour has not otherwise changed.
 
 =cut
 
@@ -46,136 +43,21 @@ required.
 
 =cut
 
-=head2 $set = IO::Async::Set::GMainLoop->new()
+=head2 $set = IO::Async::Set::GMainLoop->new( %params )
 
-This function returns a new instance of a C<IO::Async::Set::GMainLoop> object.
-It takes no special arguments.
+This function wraps a call to C<< IO::Async::Set::GMainLoop->new() >>.
 
 =cut
 
 sub new
 {
    my $class = shift;
-   my ( %args ) = @_;
-
-   # Test if Glib is loaded
-   unless( exists $INC{'Glib.pm'} ) {
-      croak 'Cannot construct '.__PACKAGE__.' unless a Glib is loaded';
-   }
-
-   my $self = $class->__new( %args );
-
-   $self->{sourceid} = {};  # {$nkey} -> [ $readid, $writeid ]
-
-   return $self;
-}
-
-=head1 METHODS
-
-There are no special methods in this subclass, other than those provided by
-the C<IO::Async::Set> base class.
-
-=cut
-
-# override
-sub _notifier_removed
-{
-   my $self = shift;
-   my ( $notifier ) = @_;
-
-   my $nkey = $self->_nkey( $notifier );
-
-   my $sourceids = delete $self->{sourceid}->{$nkey};
-
-   Glib::Source->remove( $sourceids->[0] );
-
-   if( defined $sourceids->[1] ) {
-      Glib::Source->remove( $sourceids->[1] );
-   }
-}
-
-# override
-# For ::Notifier to call
-sub __notifier_want_writeready
-{
-   my $self = shift;
-   my ( $notifier, $want_writeready ) = @_;
-
-   my $nkey = $self->_nkey( $notifier );
-
-   # Fetch the IDs array from storage, or build and store a new one if it's
-   # not found
-   my $sourceids = ( $self->{sourceid}->{$nkey} ||= [] );
-
-   if( !defined $sourceids->[0] ) {
-      $sourceids->[0] = Glib::IO->add_watch(
-         $notifier->read_fileno,
-         ['in', 'hup'],
-         sub {
-            $notifier->on_read_ready;
-            # Must yield true value or else GLib will remove this IO source
-            return 1;
-         }
-      );
-   }
-
-   if( !defined $sourceids->[1] and $want_writeready ) {
-      $sourceids->[1] = Glib::IO->add_watch(
-         $notifier->write_fileno,
-         ['out'],
-         sub {
-            $notifier->on_write_ready;
-            # Must yield true value or else GLib will remove this IO source
-            return 1;
-         }
-      );
-   }
-   elsif( defined $sourceids->[1] and !$want_writeready ) {
-      Glib::Source->remove( $sourceids->[1] );
-      undef $sourceids->[1];
-   }
-}
-
-# override
-sub enqueue_timer
-{
-   my $self = shift;
    my ( %params ) = @_;
 
-   # Just let GLib handle all these timer events
-   my $delay;
-   if( exists $params{time} ) {
-      my $now = exists $params{now} ? $params{now} : time();
+   warnings::warnif 'deprecated',
+      "Use of IO::Async::Set::GMainLoop is deprecated; use IO::Async::Loop::Glib instead";
 
-      $delay = delete($params{time}) - $now;
-   }
-   elsif( exists $params{delay} ) {
-      $delay = delete $params{delay};
-   }
-   else {
-      croak "Expected either 'time' or 'delay' keys";
-   }
-
-   my $interval = $delay * 1000; # miliseconds
-
-   my $code = delete $params{code};
-   ref $code eq "CODE" or croak "Expected 'code' to be a CODE reference";
-
-   my $callback = sub {
-      $code->();
-      return 0;
-   };
-
-   return Glib::Timeout->add( $interval, $callback );
-}
-
-# override
-sub cancel_timer
-{
-   my $self = shift;
-   my ( $id ) = @_;
-
-   Glib::Source->remove( $id );
+   return $class->SUPER::new( %params );
 }
 
 # Keep perl happy; keep Britain tidy
@@ -189,11 +71,7 @@ __END__
 
 =item *
 
-L<Glib> - Perl wrappers for the GLib utility and Object libraries
-
-=item *
-
-L<Gtk2> - Perl interface to the 2.x series of the Gimp Toolkit library
+L<IO::Async::Loop::Glib> - a Loop using the C<Glib::MainLoop> object
 
 =back
 

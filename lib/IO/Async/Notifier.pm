@@ -7,14 +7,13 @@ package IO::Async::Notifier;
 
 use strict;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 use Carp;
 
 =head1 NAME
 
-C<IO::Async::Notifier> - a class which implements event callbacks for a
-non-blocking file descriptor
+C<IO::Async::Notifier> - event callbacks for a non-blocking file descriptor
 
 =head1 SYNOPSIS
 
@@ -32,17 +31,17 @@ non-blocking file descriptor
     },
  );
 
- my $set = IO::Async::Set::...
- $set->add( $notifier );
+ my $loop = IO::Async::Loop::...
+ $loop->add( $notifier );
 
 For most other uses with sockets, pipes or other filehandles that carry a byte
-stream, the C<IO::Async::Buffer> class is likely to be more suitable.
+stream, the C<IO::Async::Stream> class is likely to be more suitable.
 
 =head1 DESCRIPTION
 
 This module provides a base class for implementing non-blocking IO on file
 descriptors. The object provides ways to integrate with existing asynchronous
-IO handling code, by way of the various C<IO::Async::Set::*> collection
+IO handling code, by way of the various C<IO::Async::Loop::*> collection
 classes.
 
 This object may be used in one of two ways; with callback functions, or as a
@@ -98,9 +97,9 @@ The C<%params> hash takes the following keys:
 =item write_handle => IO
 
 The reading and writing IO handles. Each must implement the C<fileno> method.
-C<read_handle> must be defined, C<write_handle> is allowed to be C<undef>.
+At most one of C<read_handle> or C<write_handle> is allowed to be C<undef>.
 Primarily used for passing C<STDIN> / C<STDOUT>; see the SYNOPSIS section of
-C<IO::Async::Buffer> for an example.
+C<IO::Async::Stream> for an example.
 
 =item handle => IO
 
@@ -121,10 +120,11 @@ CODE reference to the handler for when the handle becomes closed.
 
 =back
 
-It is required that either a C<on_read_ready> callback reference is passed, or
-that the object is actually a subclass that overrides the C<on_read_ready>
-method. It is optional whether either is true for C<on_write_ready>; if
-neither is supplied then write-readiness notifications will be ignored.
+It is required that at C<on_read_ready> or C<on_write_ready> are provided for
+any handle that is provided; either as a callback reference or that the object
+is a subclass that overrides the method. I.e. if only a C<read_handle> is
+given, then C<on_write_ready> can be absent. If C<handle> is used as a
+shortcut, then both read and write-ready callbacks or methods are required.
 
 =cut
 
@@ -136,14 +136,16 @@ sub new
    my ( $read_handle, $write_handle );
 
    if( defined $params{read_handle} or defined $params{write_handle} ) {
-      $read_handle  = $params{read_handle};
-
       # Test if we've got a fileno. We put it in an eval block in case what
       # we were passed in can't do fileno. We can't just test if 
       # $read_handle->can( "fileno" ) because this is not true for bare
       # filehandles like \*STDIN, whereas STDIN->fileno still works.
-      unless( defined eval { $read_handle->fileno } ) {
-         croak 'Expected that read_handle can fileno()';
+
+      $read_handle  = $params{read_handle};
+      if( defined $read_handle ) {
+         unless( defined eval { $read_handle->fileno } ) {
+            croak 'Expected that read_handle can fileno()';
+         }
       }
 
       $write_handle = $params{write_handle};
@@ -166,6 +168,19 @@ sub new
       croak "Expected either 'handle' or 'read_handle' and 'write_handle' keys";
    }
 
+   if( defined $read_handle ) {
+      if( !$params{on_read_ready} and $class->can( 'on_read_ready' ) == \&on_read_ready ) {
+         croak 'Expected either a on_read_ready callback or an ->on_read_ready method';
+      }
+   }
+
+   if( defined $write_handle ) {
+      if( !$params{on_write_ready} and $class->can( 'on_write_ready' ) == \&on_write_ready ) {
+         # This used not to be fatal. Make it just a warning for now.
+         carp 'A write handle was provided but neither a on_write_ready callback nor an ->on_write_ready method were. Perhaps you mean \'read_handle\' instead?';
+      }
+   }
+
    my $self = bless {
       read_handle     => $read_handle,
       write_handle    => $write_handle,
@@ -174,29 +189,13 @@ sub new
       parent          => undef,
    }, $class;
 
-   if( $params{on_read_ready} ) {
-      $self->{on_read_ready} = $params{on_read_ready};
-   }
-   else {
-      # No callback was passed. But don't worry; perhaps we're really a
-      # subclass that overrides it
-      if( $self->can( 'on_read_ready' ) == \&on_read_ready ) {
-         croak 'Expected either a on_read_ready callback or to be a subclass that can ->on_read_ready';
-      }
+   $self->{on_read_ready}  = $params{on_read_ready}  if defined $params{on_read_ready};
+   $self->{on_write_ready} = $params{on_write_ready} if defined $params{on_write_ready};
+   $self->{on_closed}      = $params{on_closed}      if defined $params{on_closed};
 
-      # Don't need to store anything - if an overridden method exists, we know
-      # our own won't be called
-   }
-
-   if( $params{on_write_ready} ) {
-      $self->{on_write_ready} = $params{on_write_ready};
-   }
-   # No problem if it doesn't exist
-
-   if( $params{on_closed} ) {
-      $self->{on_closed} = $params{on_closed};
-   }
-   # No problem if it doesn't exist
+   # Slightly asymmetric
+   $self->want_readready( defined $read_handle );
+   $self->want_writeready( $self->{want_writeready} );
 
    return $self;
 }
@@ -208,7 +207,7 @@ sub new
 =head2 $notifier->close
 
 This method calls C<close> on the underlying IO handles. This method will will
-remove the notifier from its containing set.
+remove the notifier from its containing loop.
 
 =cut
 
@@ -216,17 +215,14 @@ sub close
 {
    my $self = shift;
 
-   my $read_handle = $self->{read_handle};
-   return unless( defined $read_handle );
-
    $self->{on_closed}->( $self ) if $self->{on_closed};
 
-   if( my $set = $self->{set} ) {
-      $set->remove( $self );
+   if( my $loop = $self->{loop} ) {
+      $loop->remove( $self );
    }
 
-   delete $self->{read_handle};
-   $read_handle->close;
+   my $read_handle = delete $self->{read_handle};
+   $read_handle->close if defined $read_handle;
 
    my $write_handle = delete $self->{write_handle};
    $write_handle->close if defined $write_handle and $write_handle != $read_handle;
@@ -275,30 +271,65 @@ sub write_fileno
    return $handle->fileno;
 }
 
-# For ::Sets to call
-sub __memberof_set
+=head2 $notifier->get_loop
+
+This accessor returns the C<IO::Async::Loop> object to which this notifier
+belongs.
+
+=cut
+
+sub get_loop
 {
    my $self = shift;
-   if( @_ ) {
-      my $old = $self->{set};
-      $self->{set} = $_[0];
-      return $old;
-   }
-   else {
-      return $self->{set};
-   }
+   return $self->{loop}
 }
+
+# Only called by IO::Async::Loop, not external interface
+sub __set_loop
+{
+   my $self = shift;
+   my ( $loop ) = @_;
+   $self->{loop} = $loop;
+}
+
+=head2 $value = $notifier->want_readready
+
+=head2 $oldvalue = $notifier->want_readready( $newvalue )
 
 =head2 $value = $notifier->want_writeready
 
 =head2 $oldvalue = $notifier->want_writeready( $newvalue )
 
-This is the accessor for the C<want_writeready> property, which defines
-whether the object will register interest in the write-ready bitvector in a
-C<select()> call, or whether to register the C<POLLOUT> bit in a C<IO::Poll>
-mask.
+These are the accessor for the C<want_readready> and C<want_writeready>
+properties, which define whether the object is interested in knowing about 
+read- or write-readiness on the underlying file handle.
 
 =cut
+
+sub want_readready
+{
+   my $self = shift;
+   if( @_ ) {
+      my ( $new ) = @_;
+
+      if( $new ) {
+         defined $self->read_handle or
+            croak 'Cannot want_readready in a Notifier with no read_handle';
+      }
+
+      my $old = $self->{want_readready};
+      $self->{want_readready} = $new;
+
+      if( $self->{loop} ) {
+         $self->{loop}->__notifier_want_readready( $self, $self->{want_readready} );
+      }
+
+      return $old;
+   }
+   else {
+      return $self->{want_readready};
+   }
+}
 
 sub want_writeready
 {
@@ -306,15 +337,16 @@ sub want_writeready
    if( @_ ) {
       my ( $new ) = @_;
 
-      if( $new and !defined $self->write_handle ) {
-         croak 'Cannot want_writeready in a Notifier with no write_handle';
+      if( $new ) {
+         defined $self->write_handle or
+            croak 'Cannot want_writeready in a Notifier with no write_handle';
       }
 
       my $old = $self->{want_writeready};
       $self->{want_writeready} = $new;
 
-      if( $self->{set} ) {
-         $self->{set}->__notifier_want_writeready( $self, $self->{want_writeready} );
+      if( $self->{loop} ) {
+         $self->{loop}->__notifier_want_writeready( $self, $self->{want_writeready} );
       }
 
       return $old;
@@ -324,15 +356,15 @@ sub want_writeready
    }
 }
 
-# For ::Sets to call
+# For ::Loops to call
 sub on_read_ready
 {
    my $self = shift;
    my $callback = $self->{on_read_ready};
-   $callback->( $self );
+   $callback->( $self ) if defined $callback;
 }
 
-# For ::Sets to call
+# For ::Loops to call
 sub on_write_ready
 {
    my $self = shift;
@@ -346,7 +378,7 @@ During the execution of a program, it may be the case that certain IO handles
 cause other handles to be created; for example, new sockets that have been
 C<accept()>ed from a listening socket. To facilitate these, a notifier may
 contain child notifier objects, that are automatically added to or removed
-from the C<IO::Async::Set> that manages their parent.
+from the C<IO::Async::Loop> that manages their parent.
 
 =cut
 
@@ -376,11 +408,11 @@ sub children
 
 =head2 $notifier->add_child( $child )
 
-Adds a child notifier. This notifier will be added to the containing set, if
+Adds a child notifier. This notifier will be added to the containing loop, if
 the parent has one. Only a notifier that does not currently have a parent and
-is not currently a member of any set may be added as a child. If the child
+is not currently a member of any loop may be added as a child. If the child
 itself has grandchildren, these will be recursively added to the containing
-set.
+loop.
 
 =cut
 
@@ -391,10 +423,10 @@ sub add_child
 
    croak "Cannot add a child that already has a parent" if defined $child->{parent};
 
-   croak "Cannot add a child that is already a member of a set" if defined $child->{set};
+   croak "Cannot add a child that is already a member of a loop" if defined $child->{loop};
 
-   if( defined( my $set = $self->{set} ) ) {
-      $set->add( $child );
+   if( defined( my $loop = $self->{loop} ) ) {
+      $loop->add( $child );
    }
 
    push @{ $self->{children} }, $child;
@@ -405,9 +437,9 @@ sub add_child
 
 =head2 $notifier->remove_child( $child )
 
-Removes a child notifier. The child will be removed from the containing set,
+Removes a child notifier. The child will be removed from the containing loop,
 if the parent has one. If the child itself has grandchildren, these will be
-recurively removed from the set.
+recurively removed from the loop.
 
 =cut
 
@@ -429,8 +461,8 @@ sub remove_child
 
    undef $child->{parent};
 
-   if( defined( my $set = $self->{set} ) ) {
-      $set->remove( $child );
+   if( defined( my $loop = $self->{loop} ) ) {
+      $loop->remove( $child );
    }
 }
 

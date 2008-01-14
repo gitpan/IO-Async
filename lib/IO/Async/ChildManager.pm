@@ -7,11 +7,11 @@ package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 # Not a notifier
 
-use IO::Async::Buffer;
+use IO::Async::Stream;
 
 use Carp;
 use Fcntl qw( F_GETFL F_SETFL FD_CLOEXEC );
@@ -22,23 +22,22 @@ use constant OPEN_MAX_FD => sysconf(_SC_OPEN_MAX);
 
 =head1 NAME
 
-C<IO::Async::ChildManager> - a class which facilitates the execution of child
-processes
+C<IO::Async::ChildManager> - facilitates the execution of child processes
 
 =head1 SYNOPSIS
 
-Usually this object would be used indirectly, via an C<IO::Async::Set>:
+Usually this object would be used indirectly, via an C<IO::Async::Loop>:
 
- use IO::Async::Set::...;
- my $set = IO::Async::Set::...
+ use IO::Async::Loop::...;
+ my $loop = IO::Async::Loop::...
 
- $set->enable_childmanager;
+ $loop->enable_childmanager;
 
  ...
 
- $set->watch_child( 1234 => sub { print "Child 1234 exited\n" } );
+ $loop->watch_child( 1234 => sub { print "Child 1234 exited\n" } );
 
- $set->spawn_child(
+ $loop->spawn_child(
     command => "/usr/bin/something",
     on_exit => \&exit_handler,
     setup => [
@@ -47,15 +46,17 @@ Usually this object would be used indirectly, via an C<IO::Async::Set>:
  );
 
 It can also be used directly. In this case, extra effort must be taken to
-ensure a C<IO::Async::Set> object is available if the C<spawn()> method is
+ensure a C<IO::Async::Loop> object is available if the C<spawn()> method is
 used:
 
+ use IO::Async::Loop;
  use IO::Async::ChildManager;
 
- my $manager = IO::Async::ChildManager->new();
+ my $loop = IO::Async::Loop::...
 
- my $set = IO::Async::Set::...
- $set->attach_signal( CHLD => sub { $manager->SIGCHLD } );
+ my $manager = IO::Async::ChildManager->new( loop => $loop );
+
+ $loop->attach_signal( CHLD => sub { $manager->SIGCHLD } );
 
  ...
 
@@ -63,16 +64,10 @@ used:
 
  ...
 
- $manager->associate_set( $set );
- $manager->spawn( ... );
-
- # Alternatively
- 
- my $manager = IO::Async::ChildManager->new( set => $set );
  $manager->spawn( ... );
 
 It is therefore usually easiest to just use the convenience methods provided
-by the C<IO::Async::Set> object.
+by the C<IO::Async::Loop> object.
 
 =head1 DESCRIPTION
 
@@ -103,9 +98,9 @@ The C<%params> hash takes the following keys:
 
 =over 8
 
-=item set => IO::Async::Set
+=item loop => IO::Async::Loop
 
-A reference to an C<IO::Async::Set> object. This is required to be able to use
+A reference to an C<IO::Async::Loop> object. This is required to be able to use
 the C<spawn()> method.
 
 =back
@@ -117,27 +112,14 @@ sub new
    my $class = shift;
    my ( %params ) = @_;
 
+   my $loop = delete $params{loop} or croak "Expected a 'loop'";
+
    my $self = bless {
       childdeathhandlers => {},
-      containing_set     => $params{set},
+      loop => $loop,
    }, $class;
 
    return $self;
-}
-
-=head2 $manager->associate_set( $set )
-
-This method associates an C<IO::Async::Set> with the manager. This is required
-for the IO handle code in the C<spawn()> method to work.
-
-=cut
-
-sub associate_set
-{
-   my $self = shift;
-   my ( $set ) = @_;
-
-   $self->{containing_set} = $set;
 }
 
 =head1 METHODS
@@ -368,10 +350,6 @@ sub spawn
    my $self = shift;
    my %params = @_;
 
-   # We can only spawn if we've got a containing set
-   defined $self->{containing_set} or
-      croak "Cannot spawn in a ChildManager with no containing set";
-
    my $command = delete $params{command};
    my $code    = delete $params{code};
    my $setup   = delete $params{setup};
@@ -529,7 +507,7 @@ sub _spawn_in_parent
    my $self = shift;
    my ( $readpipe, $kid, $on_exit ) = @_;
 
-   my $set = $self->{containing_set};
+   my $loop = $self->{loop};
 
    # We need to wait for both the errno pipe to close, and for waitpid()
    # to give us an exit code. We'll form two closures over these two
@@ -540,7 +518,7 @@ sub _spawn_in_parent
    my $exitcode;
    my $pipeclosed = 0;
 
-   $set->add( IO::Async::Buffer->new(
+   $loop->add( IO::Async::Stream->new(
       read_handle => $readpipe,
 
       on_read => sub {
@@ -574,7 +552,7 @@ sub _spawn_in_parent
                $on_exit->( $kid, $exitcode, $!, $dollarat );
             }
 
-            $set->remove( $self );
+            $loop->remove( $self );
          }
 
          return 0;

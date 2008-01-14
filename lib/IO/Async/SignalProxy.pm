@@ -7,7 +7,7 @@ package IO::Async::SignalProxy;
 
 use strict;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 use base qw( IO::Async::Notifier );
 
@@ -16,57 +16,24 @@ use Carp;
 use POSIX qw( EAGAIN SIG_BLOCK SIG_SETMASK sigprocmask );
 use IO::Handle;
 
+use warnings qw();
+
 =head1 NAME
 
-C<IO::Async::SignalProxy> - a class to allow handling of POSIX signals with
-C<IO::Async>-based IO
+C<IO::Async::SignalProxy> - handle POSIX signals with C<IO::Async>-based IO
 
 =head1 SYNOPSIS
 
-Usually this object would be used indirectly, via an C<IO::Async::Set>:
-
- use IO::Async::Set::...;
- my $set = IO::Async::Set::...
-
- $set->attach_signal( HUP => sub { reread_config() } );
-
-It can also be used directly:
-
- use IO::Async::SignalProxy;
-
- my $sigproxy = IO::Async::SignalProxy->new(
-    signal_HUP => sub { reread_config() },
- );
-
- $sigproxy->attach( TERM => sub { print STDERR "I should exit now\n" } );
-
- my $set = IO::Async::Set::...
- $set->add( $sigproxy );
+This object class is for internal use by C<IO::Async::Loop> subclasses. It is
+not intended for use externally.
 
 =head1 DESCRIPTION
 
 This module provides a class that allows POSIX signals to be handled safely
-alongside other IO operations on filehandles in an C<IO::Async::Set>. Because
+alongside other IO operations on filehandles in an C<IO::Async::Loop>. Because
 signals could arrive at any time, care must be taken that they do not
 interrupt the normal flow of the program, and are handled at the same time as
-other events in the C<IO::Async::Set>'s results.
-
-=cut
-
-=head1 CONSTRUCTOR
-
-=cut
-
-=head2 $proxy = IO::Async::SignalProxy->new( %params )
-
-This function returns a new instance of a C<IO::Async::SignalProxy> object.
-The C<%params> hash takes keys that specify callback functions to run when
-signals arrive. They are all of the form
-
- signal_$NAME => sub { ... }
-
-where C<$NAME> is the basic POSIX name for the signal, such as C<TERM> or
-C<CHLD>.
+other events in the C<IO::Async::Loop>'s results.
 
 =cut
 
@@ -74,6 +41,11 @@ sub new
 {
    my $class = shift;
    my ( %params ) = @_;
+
+   unless( caller =~ m/^IO::Async::Loop/ ) {
+      warnings::warnif "deprecated", 
+         "Use of IO::Async::SignalProxy outside of IO::Async::Loop is deprecated";
+   }
 
    pipe( my ( $reader, $writer ) ) or croak "Cannot pipe() - $!";
 
@@ -95,11 +67,6 @@ sub new
    $self->{signal_queue} = [];
 
    $self->{sigset_block} = POSIX::SigSet->new();
-
-   # Find all the signal handler callbacks
-   foreach my $signame ( map { m/^signal_(.*)$/ ? $1 : () } keys %params ) {
-      $self->attach( $signame, $params{"signal_$signame"} );
-   }
 
    return $self;
 }
@@ -166,29 +133,6 @@ sub on_read_ready
    }
 }
 
-=head1 METHODS
-
-=cut
-
-=head2 $proxy->attach( $signal, $code )
-
-This method adds a new signal handler to the proxy object, and associates the
-given code reference with it.
-
-=over 8
-
-=item $signal
-
-The name of the signal to attach to. This should be a bare name like C<TERM>.
-
-=item $code
-
-A CODE reference to the handling function.
-
-=back
-
-=cut
-
 sub attach
 {
    my $self = shift;
@@ -214,7 +158,7 @@ sub attach
       # __END__ section before attempting to modify this code.
 
       # Protect the interrupted code against unexpected modifications of $!,
-      # such as the line just after the poll() call in IO::Async::Set::IO_Poll
+      # such as the line just after the poll() call in IO::Async::Loop::IO_Poll
       local $!;
 
       if( !@$signal_queue ) {
@@ -233,22 +177,6 @@ sub attach
    my $sigset_block = $self->{sigset_block};
    $sigset_block->addset( $signum );
 }
-
-=head2 $proxy->detach( $signal )
-
-This method removes a signal handler from the proxy object. Any signal that
-has previously been C<attach()>ed or was passed into the constructor may be
-detached.
-
-=over 8
-
-=item $signal
-
-The name of the signal to attach to. This should be a bare name like C<TERM>.
-
-=back
-
-=cut
 
 sub detach
 {
@@ -275,7 +203,7 @@ Some notes on implementation
 ============================
 
 The purpose of this object class is to safely call the required signal-
-handling callback code as part of the usual IO::Async::Set loop. This is done 
+handling callback code as part of the usual IO::Async::Loop loop. This is done 
 by keeping a queue of incoming signal names in the array referenced by 
 $self->{signal_queue}. The object installs its own signal handler which pushes
 the signal name to this array, and the on_read_ready method then replays them
@@ -313,16 +241,6 @@ in the way indicated above, then all that will happen is that the pipe will
 remain non-empty while the signal queue array is empty. In this case, the
 on_read_ready handler will be fired again, read up-to 8192 more bytes, then
 find the queue to be empty, and return again.
-
-=head1 SEE ALSO
-
-=over 4
-
-=item *
-
-L<POSIX> for the C<SIGI<name>> constants
-
-=back
 
 =head1 AUTHOR
 

@@ -8,6 +8,7 @@ WriteMakefile
                            'File::Temp' => '0',
                            'Heap' => '0',
                            'IO::Poll' => '0',
+                           'Socket::GetAddrInfo' => '0',
                            'Storable' => '0',
                            'Test::Exception' => '0',
                            'Test::More' => '0',
