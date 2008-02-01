@@ -1,6 +1,6 @@
 ---
 name: IO-Async
-version: 0.11
+version: 0.12
 author:
   - 'Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>'
 abstract: a collection of modules that implement asynchronous filehandle IO
@@ -23,43 +23,37 @@ provides:
     version: 0.10
   IO::Async::ChildManager:
     file: lib/IO/Async/ChildManager.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Connector:
     file: lib/IO/Async/Connector.pm
-    version: 0.11
+    version: 0.12
   IO::Async::DetachedCode:
     file: lib/IO/Async/DetachedCode.pm
-    version: 0.11
+    version: 0.12
   IO::Async::DetachedCode::FlatMarshaller:
     file: lib/IO/Async/DetachedCode/FlatMarshaller.pm
   IO::Async::DetachedCode::StorableMarshaller:
     file: lib/IO/Async/DetachedCode/StorableMarshaller.pm
   IO::Async::Loop:
     file: lib/IO/Async/Loop.pm
-    version: 0.11
-  IO::Async::Loop::Glib:
-    file: lib/IO/Async/Loop/Glib.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Loop::IO_Poll:
     file: lib/IO/Async/Loop/IO_Poll.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Loop::Select:
     file: lib/IO/Async/Loop/Select.pm
-    version: 0.11
+    version: 0.12
   IO::Async::MergePoint:
     file: lib/IO/Async/MergePoint.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Notifier:
     file: lib/IO/Async/Notifier.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Resolver:
     file: lib/IO/Async/Resolver.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Set:
     file: lib/IO/Async/Set.pm
-    version: 0.10
-  IO::Async::Set::GMainLoop:
-    file: lib/IO/Async/Set/GMainLoop.pm
     version: 0.10
   IO::Async::Set::IO_Poll:
     file: lib/IO/Async/Set/IO_Poll.pm
@@ -69,13 +63,13 @@ provides:
     version: 0.10
   IO::Async::SignalProxy:
     file: lib/IO/Async/SignalProxy.pm
-    version: 0.11
+    version: 0.12
   IO::Async::Stream:
     file: lib/IO/Async/Stream.pm
-    version: 0.11
+    version: 0.12
   IO::Async::TimeQueue:
     file: lib/IO/Async/TimeQueue.pm
-    version: 0.11
+    version: 0.12
   IO::Async::TimeQueue::Elem:
     file: lib/IO/Async/TimeQueue.pm
 generated_by: Module::Build version 0.2808

@@ -7,12 +7,14 @@ package IO::Async::Connector;
 
 use strict;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 use IO::Async::Notifier;
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
+
+use IO::Socket; # For the actual connections that are created
 
 use Carp;
 
@@ -24,12 +26,15 @@ C<IO::Async::Connector> - perform non-blocking socket connections
 
 Usually this object would be used indirectly via an C<IO::Async::Loop>:
 
+ use Socket qw( SOCK_STREAM );
+
  use IO::Async::Loop::...;
  my $loop = IO::Async::Loop::...
 
  $loop->connect(
-    host => "www.example.com",
-    service => "http",
+    host     => "www.example.com",
+    service  => "http",
+    socktype => SOCK_STREAM,
 
     on_connected => sub {
        my ( $sock ) = @_;
@@ -283,9 +288,11 @@ The hostname and service name to connect to.
 
 =item family => INT
 
-=item type => INT
+=item socktype => INT
 
 =item protocol => INT
+
+=item flags => INT
 
 Optional. Other arguments to pass along with C<host> and C<service> to the
 C<getaddrinfo()> call.
@@ -296,6 +303,10 @@ A callback that is invoked when the name resolution attempt fails. This is
 invoked in the same way as the C<on_error> callback for the C<resolve> method.
 
 =back
+
+It is sometimes necessary to pass the C<socktype> hint to the resolver when
+resolving the host/service names into an address, as some OS's C<getaddrinfo>
+functions require this hint.
 
 =cut
 
@@ -321,9 +332,23 @@ sub connect
 
       my $loop = $self->{loop};
 
+      my $family   = $params{family}   || 0;
+
+      my $socktype;
+      if( $params{type} ) {
+         carp( "'type' deprecated, use 'socktype' instead" );
+         $socktype = $params{type} || 0;
+      }
+      else {
+         $socktype = $params{socktype} || 0;
+      }
+
+      my $protocol = $params{protocol} || 0;
+      my $flags    = $params{flags}    || 0;
+
       $loop->resolve(
          type => 'getaddrinfo',
-         data => [ $host, $service, $params{family} || 0, $params{type} || 0, $params{protocol} || 0 ],
+         data => [ $host, $service, $family, $socktype, $protocol, $flags ],
 
          on_error => $on_resolve_error,
 

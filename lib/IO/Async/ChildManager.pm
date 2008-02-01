@@ -7,11 +7,12 @@ package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 # Not a notifier
 
 use IO::Async::Stream;
+use IO::Async::MergePoint;
 
 use Carp;
 use Fcntl qw( F_GETFL F_SETFL FD_CLOEXEC );
@@ -45,30 +46,6 @@ Usually this object would be used indirectly, via an C<IO::Async::Loop>:
     ]
  );
 
-It can also be used directly. In this case, extra effort must be taken to
-ensure a C<IO::Async::Loop> object is available if the C<spawn()> method is
-used:
-
- use IO::Async::Loop;
- use IO::Async::ChildManager;
-
- my $loop = IO::Async::Loop::...
-
- my $manager = IO::Async::ChildManager->new( loop => $loop );
-
- $loop->attach_signal( CHLD => sub { $manager->SIGCHLD } );
-
- ...
-
- $manager->watch( 1234 => sub { print "Child 1234 exited\n" } );
-
- ...
-
- $manager->spawn( ... );
-
-It is therefore usually easiest to just use the convenience methods provided
-by the C<IO::Async::Loop> object.
-
 =head1 DESCRIPTION
 
 This module provides a class that manages the execution of child processes. It
@@ -100,8 +77,7 @@ The C<%params> hash takes the following keys:
 
 =item loop => IO::Async::Loop
 
-A reference to an C<IO::Async::Loop> object. This is required to be able to use
-the C<spawn()> method.
+A reference to an C<IO::Async::Loop> object.
 
 =back
 
@@ -119,18 +95,21 @@ sub new
       loop => $loop,
    }, $class;
 
+   $loop->attach_signal( CHLD => sub { $self->SIGCHLD } );
+
    return $self;
 }
 
+sub disable
+{
+   my $self = shift;
+
+   my $loop = $self->{loop};
+
+   $loop->detach_signal( 'CHLD' );
+}
+
 =head1 METHODS
-
-=cut
-
-=head2 $count = $manager->SIGCHLD
-
-This method notifies the manager that one or more child processes may have
-terminated, and that it should check using C<waitpid()>. It returns the number
-of child process terminations that were handled.
 
 =cut
 
@@ -262,6 +241,8 @@ Optional boolean. If missing or false, any CODE references in the C<%SIG> hash
 will be removed and restored back to C<DEFAULT> in the child process. If true,
 no adjustment of the C<%SIG> hash will be performed.
 
+=back
+
 =cut
 
 sub detach_child
@@ -288,8 +269,10 @@ sub detach_child
       _exit( $exitvalue );
    }
 
+   my $loop = $self->{loop};
+
    if( defined $params{on_exit} ) {
-      $self->watch( $kid => $params{on_exit} );
+      $loop->watch_child( $kid => $params{on_exit} );
    }
 
    return $kid;
@@ -343,6 +326,10 @@ exception).
  $code returns   |     return value       |     $!      |    ""
  $code dies      |         255            |     $!      |    $@
 
+It is usually more convenient to use the C<open()> method in simple cases
+where an external program is being started in order to interact with it via
+file IO.
+
 =cut
 
 sub spawn
@@ -384,7 +371,9 @@ sub spawn
       };
    }
 
-   my $kid = $self->detach_child( 
+   my $loop = $self->{loop};
+
+   my $kid = $loop->detach_child( 
       code => sub {
          # Child
          close( $readpipe );
@@ -559,7 +548,7 @@ sub _spawn_in_parent
       }
    ) );
 
-   $self->watch( $kid => sub { 
+   $loop->watch_child( $kid => sub { 
       ( my $kid, $exitcode ) = @_;
 
       if( $pipeclosed ) {
@@ -671,6 +660,323 @@ sub _spawn_in_child
    syswrite( $writepipe, $writebuffer );
 
    return $exitvalue;
+}
+
+=head2 $pid = $manager->open( %params )
+
+This creates a new child process to run the given code block or command, and
+attaches filehandles to it that the parent will watch. The C<%params> hash
+takes the following keys:
+
+=over 8
+
+=item command => ARRAY or STRING
+
+=item code => CODE
+
+The command or code to run in the child process (as per the C<spawn> method)
+
+=item on_finish => CODE
+
+A callback function to be called when the child process exits and has closed
+all of the filehandles that were set up for it. It will be invoked in the
+following way:
+
+ $on_finish->( $pid, $exitcode )
+
+=item on_error => CODE
+
+Optional callback to be called when the child code block throws an exception,
+or the command could not be C<exec()>ed. It will be invoked in the following
+way (as per C<spawn>)
+
+ $on_error->( $pid, $exitcode, $dollarbang, $dollarat )
+
+If this callback is not supplied, then C<on_finish> is used instead. The value
+of C<$!> and C<$@> will not be reported.
+
+=item setup => ARRAY
+
+Optional reference to an array to pass to the underlying C<spawn> method.
+
+=back
+
+In addition, the hash takes keys that define how to set up file descriptors in
+the child process. (If the C<setup> array is also given, these operations will
+be performed after those specified by C<setup>.)
+
+=over 8
+
+=item fdI<n> => HASH
+
+A hash describing how to set up file descriptor I<n>. The hash may contain one
+of the following sets of keys:
+
+=over 4
+
+=item on_read => CODE
+
+The child will be given the writing end of a pipe. The reading end will be
+wrapped by an C<IO::Async::Stream> using this C<on_read> callback function.
+
+=item from => STRING
+
+The child will be given the reading end of a pipe. The string given by the
+C<from> parameter will be written to the child. When all of the data has been
+written the pipe will be closed.
+
+=back
+
+=item stdin => ...
+
+=item stdout => ...
+
+=item stderr => ...
+
+Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
+
+=back
+
+=cut
+
+sub open
+{
+   my $self = shift;
+   my %params = @_;
+
+   my %subparams;
+   my @setup;
+   my %filehandles;
+
+   my $on_finish = delete $params{on_finish};
+   ref $on_finish eq "CODE" or croak "Expected 'on_finish' to be a CODE ref";
+
+   my $on_error = delete $params{on_error};
+   if( $on_error ) {
+      ref $on_error eq "CODE" or croak "Expected 'on_error' to be a CODE ref";
+   }
+
+   $params{on_exit} and croak "Cannot pass 'on_exit' parameter through ChildManager->open";
+
+   if( $params{setup} ) {
+      ref $params{setup} eq "ARRAY" or croak "Expected 'setup' to be an ARRAY ref";
+      @setup = @{ $params{setup} };
+      delete $params{setup};
+   }
+
+   foreach my $key ( keys %params ) {
+      my $value = $params{$key};
+
+      my $orig_key = $key;
+
+      # Rewrite stdin/stdout/stderr
+      $key eq "stdin"  and $key = "fd0";
+      $key eq "stdout" and $key = "fd1";
+      $key eq "stderr" and $key = "fd2";
+
+      if( $key =~  m/^fd\d+$/ ) {
+         ref $value eq "HASH" or croak "Expected '$orig_key' to be a HASH ref";
+
+         pipe( my ( $pipe_r, $pipe_w ) ) or croak "Unable to pipe() - $!";
+
+         my ( $myfd, $childfd );
+
+         if( exists $value->{on_read} ) {
+            ref $value->{on_read} eq "CODE" or croak "Expected 'on_read' for '$orig_key' be a CODE ref";
+            scalar keys %$value == 1 or croak "Found other keys than 'on_read' for '$orig_key'";
+
+            $myfd    = $pipe_r;
+            $childfd = $pipe_w;
+         }
+         elsif( exists $value->{from} ) {
+            ref $value->{from} eq "" or croak "Expected 'from' for '$orig_key' not to be a reference";
+            scalar keys %$value == 1 or croak "Found other keys than 'from' for '$orig_key'";
+
+            $myfd    = $pipe_w;
+            $childfd = $pipe_r;
+         }
+         else {
+            croak "Cannot recognise what to do with '$orig_key'";
+         }
+
+         $filehandles{$key} = [ $myfd, $childfd, $value ];
+         push @setup, $key => [ dup => $childfd ];
+      }
+      else {
+         $subparams{$orig_key} = $value;
+      }
+   }
+
+   my $pid;
+
+   my $mergepoint = IO::Async::MergePoint->new(
+      needs => [ "exit", keys %filehandles ],
+
+      on_finished => sub {
+         my %items = @_;
+         my ( $exitcode, $dollarbang, $dollarat ) = @{ $items{exit} };
+
+         if( $params{code} and $dollarat eq "" or $params{command} and $dollarbang == 0 ) {
+            $on_finish->( $pid, $exitcode );
+         }
+         else {
+            if( $on_error ) {
+               $on_error->( $pid, $exitcode, $dollarbang, $dollarat );
+            }
+            else {
+               $on_finish->( $pid, $exitcode ); # Don't have a way to report dollarbang/dollarat
+            }
+         }
+      },
+   );
+
+   my $loop = $self->{loop};
+
+   $pid = $loop->spawn_child( %subparams, 
+      setup => \@setup,
+      on_exit => sub {
+         my ( undef, $exitcode, $dollarbang, $dollarat ) = @_;
+         $mergepoint->done( "exit", [ $exitcode, $dollarbang, $dollarat ] );
+      },
+   );
+
+   return undef unless defined $pid;
+
+   # Now install the handlers
+
+   foreach my $fd ( keys %filehandles ) {
+      my ( $myfd, $childfd, $fdopts ) = @{ $filehandles{$fd} };
+
+      close( $childfd );
+
+      my $notifier;
+
+      if( exists $fdopts->{on_read} ) {
+         my $on_read = $fdopts->{on_read};
+
+         $notifier = IO::Async::Stream->new(
+            read_handle => $myfd,
+
+            on_read => $on_read,
+
+            on_closed => sub {
+               $mergepoint->done( $fd );
+            },
+         );
+      }
+      elsif( exists $fdopts->{from} ) {
+         $notifier = IO::Async::Stream->new(
+            write_handle => $myfd,
+
+            on_outgoing_empty => sub {
+               $notifier->close;
+            },
+
+            on_closed => sub {
+               $mergepoint->done( $fd );
+            },
+         );
+
+         $notifier->write( $fdopts->{from} );
+      }
+
+      $loop->add( $notifier );
+   }
+
+   return $pid;
+}
+
+=head2 $pid = $manager->run( %params )
+
+This creates a new child process to run the given code block or command,
+capturing its STDOUT and STDERR streams. When the process exits, the callback
+is invoked being passed the exitcode, and content of the streams.
+
+=over 8
+
+=item command => ARRAY or STRING
+
+=item code => CODE
+
+The command or code to run in the child process (as per the C<spawn> method)
+
+=item on_finish => CODE
+
+A callback function to be called when the child process exits and closed its
+STDOUT and STDERR streams. It will be invoked in the following way:
+
+ $on_finish->( $pid, $exitcode, $stdout, $stderr )
+
+=item stdin => STRING
+
+Optional. String to pass in to the child process's STDIN stream.
+
+=back
+
+This function is intended mainly as an IO::Async-compatible replacement for
+the perl C<readpipe> function (`backticks`), allowing it to replace
+
+  my $output = `command here`;
+
+with
+
+ $loop->run(
+    command => "command here", 
+    on_finish => sub {
+       my ( undef, $exitcode, $output ) = @_;
+       ...
+    }
+ );
+
+=cut
+
+sub run
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $on_finish = delete $params{on_finish};
+   ref $on_finish eq "CODE" or croak "Expected 'on_finish' to be a CODE ref";
+
+   my $child_out;
+   my $child_err;
+
+   my %subparams;
+
+   if( my $child_stdin = delete $params{stdin} ) {
+      ref $child_stdin and croak "Expected 'stdin' not to be a reference";
+      $subparams{stdin} = { from => $child_stdin };
+   }
+
+   $subparams{code}    = delete $params{code};
+   $subparams{command} = delete $params{command};
+
+   croak "Unrecognised parameters " . join( ", ", keys %params ) if keys %params;
+
+   my $loop = $self->{loop};
+   $loop->open_child(
+      %subparams,
+      stdout => {
+         on_read => sub { 
+            my ( $stream, $buffref, $closed ) = @_;
+            $child_out = $$buffref if $closed;
+            return 0;
+         }
+      },
+
+      stderr => { 
+         on_read => sub {
+            my ( $stream, $buffref, $closed ) = @_;
+            $child_err = $$buffref if $closed;
+            return 0;
+         }
+      },
+
+      on_finish => sub {
+         my ( $kid, $exitcode ) = @_;
+         $on_finish->( $kid, $exitcode, $child_out, $child_err );
+      },
+   );
 }
 
 # Keep perl happy; keep Britain tidy

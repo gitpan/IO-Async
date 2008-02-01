@@ -2,7 +2,7 @@
 
 use strict;
 
-use Test::More tests => 28;
+use Test::More tests => 29;
 use Test::Exception;
 
 use POSIX qw( EAGAIN ECONNRESET );
@@ -19,6 +19,9 @@ $S2->blocking( 0 );
 
 dies_ok( sub { IO::Async::Stream->new( handle => $S1 ) },
          'No on_read' );
+
+lives_ok( sub { IO::Async::Stream->new( write_handle => \*STDOUT ) },
+          'Write-only Stream works' );
 
 sub read_data($)
 {
@@ -124,6 +127,7 @@ sub DESTROY  { }
 sub fileno   { 100; }
 sub sysread  { $! = $errno; undef; }
 sub syswrite { $! = $errno; undef; }
+sub close    { }
 
 package main;
 
@@ -172,13 +176,19 @@ $stream = IO::Async::Stream->new(
    handle => ErrorSocket->new(),
    on_read => sub {},
 
-   on_read_error  => sub { ( undef, $read_errno  ) = @_ },
-   on_write_error => sub { ( undef, $write_errno ) = @_ },
+   on_read_error  => sub { ( undef, $read_errno ) = @_ },
 );
 
 $stream->on_read_ready;
 
 cmp_ok( $read_errno, "==", ECONNRESET, 'errno after failed read' );
+
+$stream = IO::Async::Stream->new(
+   handle => ErrorSocket->new(),
+   on_read => sub {},
+
+   on_write_error  => sub { ( undef, $write_errno ) = @_ },
+);
 
 $stream->on_write_ready;
 

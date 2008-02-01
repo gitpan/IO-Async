@@ -7,7 +7,7 @@ package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 use Carp;
 
@@ -41,9 +41,10 @@ This module would not be used directly; see the subclasses:
 
 =item L<IO::Async::Loop::IO_Perl>
 
-=item L<IO::Async::Loop::Glib>
-
 =back
+
+Or other subclasses that may appear on CPAN which are not part of the core
+C<IO::Async> distribution.
 
 =head1 DESCRIPTION
 
@@ -266,9 +267,8 @@ sub detach_signal
 
 =head2 $loop->enable_childmanager
 
-This method creates a new C<IO::Async::ChildManager> object and attaches the
-C<SIGCHLD> signal to call the manager's C<SIGCHLD()> method. The manager is
-stored in the loop and can be obtained using the C<get_childmanager()> method.
+This method enables the child manager, which allows use of the
+C<watch_child()>, C<detach_child()> and C<spawn_child()> methods.
 
 =cut
 
@@ -281,16 +281,13 @@ sub enable_childmanager
 
    require IO::Async::ChildManager;
    my $childmanager = IO::Async::ChildManager->new( loop => $self );
-   $self->attach_signal( CHLD => sub { $childmanager->SIGCHLD } );
 
    $self->{childmanager} = $childmanager;
 }
 
 =head2 $loop->disable_childmanager
 
-This method detaches the contained C<IO::Async::ChildManager> from the
-C<SIGCHLD> signal and destroys it. After this method is called, the C<SIGCHLD>
-slot is released.
+This method disables the child manager.
 
 =cut
 
@@ -301,7 +298,9 @@ sub disable_childmanager
    defined $self->{childmanager} or
       croak "ChildManager not enabled for this loop";
 
-   $self->detach_signal( 'CHLD' );
+   my $childmanager = $self->{childmanager};
+   $childmanager->disable;
+
    undef $self->{childmanager};
 }
 
@@ -379,6 +378,45 @@ sub spawn_child
       croak "ChildManager not enabled in Loop";
 
    $childmanager->spawn( %params );
+}
+
+=head2 $loop->open_child( %params )
+
+This method creates a new child process to run the given code block or command,
+and attaches filehandles to it that the parent will watch. For more detail,
+see the C<open_child()> method on the L<IO::Async::ChildManager> class.
+
+=cut
+
+sub open_child
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $childmanager = $self->{childmanager} or
+      croak "ChildManager not enabled in Loop";
+
+   $childmanager->open( %params );
+}
+
+=head2 $loop->run_child( %params )
+
+This method creates a new child process to run the given code block or command,
+captures its STDOUT and STDERR streams, and passes them to the given callback
+function. For more detail see the C<run_child()> method on the
+L<IO::Async::ChildManager> class.
+
+=cut
+
+sub run_child
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $childmanager = $self->{childmanager} or
+      croak "ChildManager not enabled in Loop";
+
+   $childmanager->run( %params );
 }
 
 sub __enable_timer

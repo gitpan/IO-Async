@@ -8,14 +8,12 @@ lib/IO/Async/DetachedCode.pm
 lib/IO/Async/DetachedCode/FlatMarshaller.pm
 lib/IO/Async/DetachedCode/StorableMarshaller.pm
 lib/IO/Async/Loop.pm
-lib/IO/Async/Loop/Glib.pm
 lib/IO/Async/Loop/IO_Poll.pm
 lib/IO/Async/Loop/Select.pm
 lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
 lib/IO/Async/Resolver.pm
 lib/IO/Async/Set.pm
-lib/IO/Async/Set/GMainLoop.pm
 lib/IO/Async/Set/IO_Poll.pm
 lib/IO/Async/Set/Select.pm
 lib/IO/Async/SignalProxy.pm
@@ -32,10 +30,8 @@ t/02stream.t
 t/03stream-split.t
 t/04stream-cornercases.t
 t/05signalproxy.t
-t/10loop-Glib.t
 t/10loop-IO-Poll.t
 t/10loop-select.t
-t/11loop-Glib-timing.t
 t/11loop-IO-Poll-timing.t
 t/11loop-select-timing.t
 t/12loop-signal.t

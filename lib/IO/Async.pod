@@ -76,8 +76,10 @@ L<IO::Async::Loop::IO_Poll> uses an C<IO::Poll> object for this test.
 L<IO::Async::Loop::Select> provides methods to prepare and test three
 bitvectors for a C<select()> syscall.
 
-L<IO::Async::Loop::Glib> acts as a proxy for the C<Glib::MainLoop> of a
-L<Glib>-based program.
+Other subclasses of loop may appear on CPAN under their own dists; such
+as L<IO::Async::Loop::Glib> which acts as a proxy for the C<Glib::MainLoop> of
+a L<Glib>-based program, or L<IO::Async::Loop::IO_Ppoll> which uses the
+L<IO::Ppoll> object to handle signals safely on Linux.
 
 =head2 Detached Code
 
@@ -148,7 +150,16 @@ some of the potentially-useful parts or features currently missing are:
 
 =item *
 
-A C<IO::Async::Loop> subclass to perform integration with L<Event>.
+A C<IO::Async::Loop> subclass to perform integration with L<Event>. Consider
+further ideas on Linux's I<epoll>, Solaris' I<ports>, BSD's I<Kevents> and
+anything that might be useful on Win32.
+
+=item *
+
+A consideration on how to provide per-OS versions of the utility classes. For
+example, Win32 would probably need an extensively-different C<ChildManager>,
+or OSes may have specific ways to perform asynchronous name resolution
+operations better than the generic C<DetachedCode> approach.
 
 =item *
 
