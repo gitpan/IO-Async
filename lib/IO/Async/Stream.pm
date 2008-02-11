@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006,2007 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2008 -- leonerd@leonerd.org.uk
 
 package IO::Async::Stream;
 
 use strict;
 
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 
 use base qw( IO::Async::Notifier );
 
@@ -95,10 +95,10 @@ Or
 
 =head1 DESCRIPTION
 
-This module provides a class for implementing asynchronous communications
-buffers behind stream handles. It provides buffering for both incoming and
-outgoing data, which are transferred to or from the actual handle as
-appropriate.
+This module provides a subclass of C<IO::Async::Notifier> which implements
+asynchronous communications buffers around stream handles. It provides
+buffering for both incoming and outgoing data, which are transferred to or
+from the actual handle when it is read- or write-ready.
 
 Data can be added to the outgoing buffer at any time using the C<write()>
 method, and will be flushed whenever the underlying handle is notified as
@@ -348,49 +348,47 @@ sub on_write_ready
 
    my $handle = $self->write_handle;
 
-   my $len = length( $self->{writebuff} );
-   $len = $WRITELEN if( $len > $WRITELEN );
+   while( length $self->{writebuff} ) {
+      my $len = $handle->syswrite( $self->{writebuff}, $WRITELEN );
 
-   my $data = substr( $self->{writebuff}, 0, $len );
+      if( !defined $len ) {
+         my $errno = $!;
 
-   $len = $handle->syswrite( $data );
+         return if $errno == EAGAIN or $errno == EWOULDBLOCK;
 
-   if( !defined $len ) {
-      my $errno = $!;
+         if( defined $self->{on_write_error} ) {
+            $self->{on_write_error}->( $self, $errno );
+         }
+         elsif( $self->can( "on_write_error" ) ) {
+            $self->on_write_error( $errno );
+         }
+         else {
+            $self->close();
+         }
 
-      return if $errno == EAGAIN or $errno == EWOULDBLOCK;
-
-      if( defined $self->{on_write_error} ) {
-         $self->{on_write_error}->( $self, $errno );
+         return;
       }
-      elsif( $self->can( "on_write_error" ) ) {
-         $self->on_write_error( $errno );
-      }
-      else {
+
+      if( $len == 0 ) {
          $self->close();
+         return;
       }
 
-      return;
-   }
-
-   if( $len == 0 ) {
-      $self->close();
-   }
-   else {
       substr( $self->{writebuff}, 0, $len ) = "";
+   }
 
-      if( length( $self->{writebuff} ) == 0 ) {
-         $self->want_writeready( 0 );
+   # All data successfully flushed
+   if( length( $self->{writebuff} ) == 0 ) {
+      $self->want_writeready( 0 );
 
-         if( defined( my $callback = $self->{on_outgoing_empty} ) ) {
-            $callback->( $self );
-         }
-         elsif( $self->can( 'on_outgoing_empty' ) ) {
-            $self->on_outgoing_empty();
-         }
-
-         $self->close if $self->{closing};
+      if( defined( my $callback = $self->{on_outgoing_empty} ) ) {
+         $callback->( $self );
       }
+      elsif( $self->can( 'on_outgoing_empty' ) ) {
+         $self->on_outgoing_empty();
+      }
+
+      $self->close if $self->{closing};
    }
 }
 

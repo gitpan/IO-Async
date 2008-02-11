@@ -3,12 +3,12 @@
 use strict;
 
 use lib 't';
-use TestAsync;
+use IO::Async::Test;
 
-use Test::More tests => 37;
+use Test::More tests => 36;
 use Test::Exception;
 
-use POSIX qw( WIFEXITED WEXITSTATUS ENOENT );
+use POSIX qw( WIFEXITED WEXITSTATUS ENOENT EBADF );
 
 use IO::Async::Loop::IO_Poll;
 
@@ -53,10 +53,7 @@ $spawned_pid = $loop->spawn_child(
    on_exit => \&on_exit,
 );
 
-my $ready;
-$ready = wait_for_exit;
-
-cmp_ok( $ready, '>=', 3, '$ready after spawn CODE' );
+wait_for_exit;
 
 is( $exited_pid, $spawned_pid,  '$exited_pid == $spawned_pid after spawn CODE' );
 ok( WIFEXITED($exitcode),       'WIFEXITED($exitcode) after spawn CODE' );
@@ -72,9 +69,7 @@ $spawned_pid = $loop->spawn_child(
    on_exit => \&on_exit,
 );
 
-$ready = wait_for_exit;
-
-cmp_ok( $ready, '>=', 3, '$ready after spawn CODE with END' );
+wait_for_exit;
 
 is( $exited_pid, $spawned_pid, '$exited_pid == $spawned_pid after spawn CODE with END' );
 ok( WIFEXITED($exitcode),      'WIFEXITED($exitcode) after spawn CODE with END' );
@@ -88,9 +83,7 @@ $spawned_pid = $loop->spawn_child(
    on_exit => \&on_exit,
 );
 
-$ready = wait_for_exit;
-
-cmp_ok( $ready, '>=', 3, '$ready after spawn CODE with die with END' );
+wait_for_exit;
 
 is( $exited_pid, $spawned_pid,   '$exited_pid == $spawned_pid after spawn CODE with die with END' );
 ok( WIFEXITED($exitcode),        'WIFEXITED($exitcode) after spawn CODE with die with END' );
@@ -114,9 +107,7 @@ $spawned_pid = $loop->spawn_child(
    on_exit => \&on_exit,
 );
 
-$ready = wait_for_exit;
-
-is( $ready, 2, '$ready after spawn '.$true );
+wait_for_exit;
 
 is( $exited_pid, $spawned_pid, '$exited_pid == $spawned_pid after spawn '.$true );
 ok( WIFEXITED($exitcode),      'WIFEXITED($exitcode) after spawn '.$true );
@@ -133,9 +124,7 @@ $spawned_pid = $loop->spawn_child(
    on_exit => \&on_exit,
 );
 
-$ready = wait_for_exit;
-
-cmp_ok( $ready, '>=', 3, '$ready after spawn donotexist' );
+wait_for_exit;
 
 is( $exited_pid, $spawned_pid,   '$exited_pid == $spawned_pid after spawn donotexist' );
 ok( WIFEXITED($exitcode),        'WIFEXITED($exitcode) after spawn donotexist' );
@@ -149,12 +138,27 @@ $spawned_pid = $loop->spawn_child(
    on_exit => \&on_exit,
 );
 
-$ready = wait_for_exit;
-
-is( $ready, 2, '$ready after spawn ARRAY' );
+wait_for_exit;
 
 is( $exited_pid, $spawned_pid,  '$exited_pid == $spawned_pid after spawn ARRAY' );
 ok( WIFEXITED($exitcode),       'WIFEXITED($exitcode) after spawn ARRAY' );
 is( WEXITSTATUS($exitcode), 14, 'WEXITSTATUS($exitcode) after spawn ARRAY' );
 is( $dollarbang+0,           0, '$dollarbang after spawn ARRAY' );
 is( $dollarat,              '', '$dollarat after spawn ARRAY' );
+
+{
+   pipe( my( $pipe_r, $pipe_w ) ) or die "Cannot pipe() - $!";
+
+   $spawned_pid = $loop->spawn_child(
+      code => sub { return $pipe_w->syswrite( "test" ); },
+      on_exit => \&on_exit,
+   );
+
+   wait_for_exit;
+
+   is( $exited_pid, $spawned_pid,   '$exited_pid == $spawned_pid after pipe close test' );
+   ok( WIFEXITED($exitcode),        'WIFEXITED($exitcode) after pipe close test' );
+   is( WEXITSTATUS($exitcode), 255, 'WEXITSTATUS($exitcode) after pipe close test' );
+   is( $dollarbang+0,        EBADF, '$dollarbang numerically after pipe close test' );
+   is( $dollarat,               '', '$dollarat after pipe close test' );
+}

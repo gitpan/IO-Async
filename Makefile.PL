@@ -3,7 +3,7 @@ use ExtUtils::MakeMaker;
 WriteMakefile
 (
           'NAME' => 'IO::Async',
-          'VERSION_FROM' => 'lib/IO/Async/Loop.pm',
+          'VERSION_FROM' => 'lib/IO/Async.pm',
           'PREREQ_PM' => {
                            'File::Temp' => '0',
                            'Heap' => '0',
