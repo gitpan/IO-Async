@@ -2,7 +2,6 @@
 
 use strict;
 
-use lib 't';
 use IO::Async::Test;
 
 use Test::More tests => 22;
@@ -40,7 +39,7 @@ sub wait_for_exit
    return wait_for { defined $exitcode };
 }
 
-$manager->watch( $kid => sub { ( undef, $exitcode ) = @_; } );
+$manager->watch_child( $kid => sub { ( undef, $exitcode ) = @_; } );
 
 ok( $manager->is_watching( $kid ), 'is_watching after adding $kid' );
 is_deeply( [ $manager->list_watching ], [ $kid ], 'list_watching after adding $kid' );
@@ -62,7 +61,7 @@ if( $kid == 0 ) {
    exit( 0 );
 }
 
-$manager->watch( $kid => sub { ( undef, $exitcode ) = @_; } );
+$manager->watch_child( $kid => sub { ( undef, $exitcode ) = @_; } );
 
 ok( $manager->is_watching( $kid ), 'is_watching after adding $kid' );
 is_deeply( [ $manager->list_watching ], [ $kid ], 'list_watching after adding $kid' );

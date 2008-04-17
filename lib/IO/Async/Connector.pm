@@ -7,7 +7,7 @@ package IO::Async::Connector;
 
 use strict;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14_1';
 
 use IO::Async::Notifier;
 
@@ -24,12 +24,14 @@ C<IO::Async::Connector> - perform non-blocking socket connections
 
 =head1 SYNOPSIS
 
-Usually this object would be used indirectly via an C<IO::Async::Loop>:
+This object is used indirectly via an C<IO::Async::Loop>:
 
  use Socket qw( SOCK_STREAM );
 
- use IO::Async::Loop::...;
- my $loop = IO::Async::Loop::...
+ use IO::Async::Loop::IO_Poll;
+ my $loop = IO::Async::Loop::IO_Poll->new();
+
+ $loop->enable_childmanager;
 
  $loop->connect(
     host     => "www.example.com",
@@ -48,13 +50,13 @@ Usually this object would be used indirectly via an C<IO::Async::Loop>:
 
 =head1 DESCRIPTION
 
-This module provides a class that creates socket connections in a non-blocking
-manner.
+This module extends an C<IO::Async::Loop> to give it the ability to create
+socket connections in a non-blocking manner.
 
 There are two modes of operation. Firstly, a list of addresses can be provided
-which will be tried in turn. Alternatively as a convenience, if a host an
+which will be tried in turn. Alternatively as a convenience, if a host and
 service name are provided instead of a list of addresses, these will be
-resolved using the uderlying loop's C<resolve()> method into the list of
+resolved using the underlying loop's C<resolve()> method into the list of
 addresses.
 
 When attempting to connect to any among a list of addresses, there may be
@@ -77,27 +79,7 @@ failure, which may be useful for debugging or logging.
 
 =cut
 
-=head1 CONSTRUCTOR
-
-=cut
-
-=head2 $connector = IO::Async::Connector->new( %params )
-
-This function returns a new instance of a C<IO::Async::Connector> object. The
-C<%params> hash takes the following keys:
-
-=over 8
-
-=item loop => IO::Async::Loop
-
-A reference to an C<IO::Async::Loop> object. This loop must have the child
-manager enabled if name-based connections will be attempted (as opposed to
-simple connections to addresses).
-
-=back
-
-=cut
-
+# Internal constructor
 sub new
 {
    my $class = shift;
@@ -115,6 +97,36 @@ sub new
 =head1 METHODS
 
 =cut
+
+## Utility function
+sub _get_sock_err
+{
+   my ( $sock ) = @_;
+
+   my $err_packed = getsockopt( $sock, SOL_SOCKET, SO_ERROR );
+
+   if( defined $err_packed ) {
+      my $err = unpack( "I", $err_packed );
+
+      return undef if !$err;
+
+      $! = $err;
+      return $!;
+   }
+
+   # It seems we can't call getsockopt to query SO_ERROR. We'll try getpeername
+   if( defined getpeername( $sock ) ) {
+      return undef;
+   }
+
+   # Not connected so we know this ought to fail
+   if( read( $sock, my $buff, 1 ) ) {
+      print STDERR "Oops - getpeername() fails but read() returns!\n";
+      # TODO
+   }
+
+   return $!;
+}
 
 sub _connect_addresses
 {
@@ -172,38 +184,14 @@ sub _connect_addresses
 
          $loop->remove( $notifier );
 
-         my $err_packed = getsockopt( $sock, SOL_SOCKET, SO_ERROR );
+         my $err = _get_sock_err( $sock );
 
-         if( defined $err_packed ) {
-            my $err = unpack( "I", $err_packed );
-
-            if( $err == 0 ) {
-                $on_connected->( $sock );
-                return;
-            }
-
-            $! = $err;
-            my $errstr = "$!";
-
-            $on_fail->( "connect", $sock, $address, $errstr ) if $on_fail;
+         if( !defined $err ) {
+             $on_connected->( $sock );
+             return;
          }
-         else {
-            # It seems we can't call getsockopt to query SO_ERROR. We'll try getpeername
-            if( defined getpeername( $sock ) ) {
-               $on_connected->( $sock );
-               return;
-            }
 
-            # Not connected so we know this ought to fail
-            if( read( $sock, my $buff, 1 ) ) {
-               print STDERR "Oops - getpeername() fails but read() returns!\n";
-               # TODO
-            }
-
-            my $errstr = "$!";
-
-            $on_fail->( "connect", $sock, $address, $errstr ) if $on_fail;
-         }
+         $on_fail->( "connect", $sock, $address, $err ) if $on_fail;
 
          # Try the next one
          $self->_connect_addresses( $addrlist, $on_connected, $on_connect_error, $on_fail );
@@ -217,7 +205,7 @@ sub _connect_addresses
    return;
 }
 
-=head2 $connector->connect( %params )
+=head2 $loop->connect( %params )
 
 This method performs a non-blocking connection to a given address or set of
 addresses, and invokes a callback when the socket is connected.

@@ -7,7 +7,7 @@ package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14_1';
 
 use Carp;
 
@@ -197,17 +197,15 @@ sub __notifier_want_writeready
 # Features #
 ############
 
-sub _get_sigproxy
+sub __new_feature
 {
    my $self = shift;
+   my ( $classname ) = @_;
 
-   return $self->{sigproxy} if defined $self->{sigproxy};
+   ( my $filename = "$classname.pm" ) =~ s{::}{/}g;
+   require $filename;
 
-   require IO::Async::SignalProxy;
-   my $sigproxy = IO::Async::SignalProxy->new();
-   $self->add( $sigproxy );
-
-   return $self->{sigproxy} = $sigproxy;
+   return $classname->new( loop => $self );
 }
 
 =head2 $loop->attach_signal( $signal, $code )
@@ -235,7 +233,7 @@ sub attach_signal
    my $self = shift;
    my ( $signal, $code ) = @_;
 
-   my $sigproxy = $self->_get_sigproxy;
+   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::SignalProxy" );
    $sigproxy->attach( $signal, $code );
 }
 
@@ -258,7 +256,7 @@ sub detach_signal
    my $self = shift;
    my ( $signal ) = @_;
 
-   my $sigproxy = $self->_get_sigproxy;
+   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::SignalProxy" );
    $sigproxy->detach( $signal );
 
    # TODO: Consider "refcount" signals and cleanup if zero. How do we know if
@@ -279,10 +277,7 @@ sub enable_childmanager
    defined $self->{childmanager} and
       croak "ChildManager already enabled for this loop";
 
-   require IO::Async::ChildManager;
-   my $childmanager = IO::Async::ChildManager->new( loop => $self );
-
-   $self->{childmanager} = $childmanager;
+   $self->{childmanager} = $self->__new_feature( "IO::Async::ChildManager" );
 }
 
 =head2 $loop->disable_childmanager
@@ -318,10 +313,10 @@ sub watch_child
    my $childmanager = $self->{childmanager} or
       croak "ChildManager not enabled in Loop";
 
-   $childmanager->watch( $kid, $code );
+   $childmanager->watch_child( $kid, $code );
 }
 
-=head2 $loop->detach_child( %params )
+=head2 $pid = $loop->detach_child( %params )
 
 This method creates a new child process to run a given code block. For more
 detail, see the C<detach_child()> method on the L<IO::Async::ChildManager>
@@ -377,7 +372,7 @@ sub spawn_child
    my $childmanager = $self->{childmanager} or
       croak "ChildManager not enabled in Loop";
 
-   $childmanager->spawn( %params );
+   $childmanager->spawn_child( %params );
 }
 
 =head2 $loop->open_child( %params )
@@ -396,7 +391,7 @@ sub open_child
    my $childmanager = $self->{childmanager} or
       croak "ChildManager not enabled in Loop";
 
-   $childmanager->open( %params );
+   $childmanager->open_child( %params );
 }
 
 =head2 $loop->run_child( %params )
@@ -416,20 +411,7 @@ sub run_child
    my $childmanager = $self->{childmanager} or
       croak "ChildManager not enabled in Loop";
 
-   $childmanager->run( %params );
-}
-
-sub __enable_timer
-{
-   my $self = shift;
-
-   defined $self->{timequeue} and
-      croak "Timer already enabled for this loop";
-
-   require IO::Async::TimeQueue;
-   my $timequeue = IO::Async::TimeQueue->new();
-
-   $self->{timequeue} = $timequeue;
+   $childmanager->run_child( %params );
 }
 
 # For subclasses to call
@@ -506,9 +488,7 @@ sub enqueue_timer
    my $self = shift;
    my ( %params ) = @_;
 
-   defined $self->{timequeue} or $self->__enable_timer;
-
-   my $timequeue = $self->{timequeue};
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
 
    $timequeue->enqueue( %params );
 }
@@ -524,19 +504,9 @@ sub cancel_timer
    my $self = shift;
    my ( $id ) = @_;
 
-   defined $self->{timequeue} or $self->__enable_timer;
-
-   my $timequeue = $self->{timequeue};
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
 
    $timequeue->cancel( $id );
-}
-
-sub __new_resolver
-{
-   my $self = shift;
-
-   require IO::Async::Resolver;
-   return IO::Async::Resolver->new( loop => $self );
 }
 
 =head2 $loop->resolve( %params )
@@ -552,17 +522,9 @@ sub resolve
    my $self = shift;
    my ( %params ) = @_;
 
-   my $resolver = ( $self->{resolver} ||= $self->__new_resolver );
+   my $resolver = $self->{resolver} ||= $self->__new_feature( "IO::Async::Resolver" );
 
    $resolver->resolve( %params );
-}
-
-sub __new_connector
-{
-   my $self = shift;
-
-   require IO::Async::Connector;
-   return IO::Async::Connector->new( loop => $self );
 }
 
 =head2 $loop->connect( %params )
@@ -578,9 +540,27 @@ sub connect
    my $self = shift;
    my ( %params ) = @_;
 
-   my $connector = ( $self->{connector} ||= $self->__new_connector );
+   my $connector = $self->{connector} ||= $self->__new_feature( "IO::Async::Connector" );
 
    $connector->connect( %params );
+}
+
+=head2 $loop->listen( %params )
+
+This method sets up a listening socket. It uses an internally-stored
+C<IO::Async::Listener> object. For more detail, see the C<listen()> method on
+the L<IO::Async::Listener> class.
+
+=cut
+
+sub listen
+{
+   my $self = shift;
+   my ( %params ) = @_;
+
+   my $listener = $self->{listener} ||= $self->__new_feature( "IO::Async::Listener" );
+
+   $listener->listen( %params );
 }
 
 ###################

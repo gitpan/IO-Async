@@ -7,7 +7,7 @@ package IO::Async::DetachedCode;
 
 use strict;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14_1';
 
 use IO::Async::Stream;
 
@@ -23,10 +23,10 @@ C<IO::Async::DetachedCode> - execute code asynchronously in child processes
 
 =head1 SYNOPSIS
 
-Usually this object would be constructed indirectly, via an C<IO::Async::Loop>:
+This object is used indirectly via an C<IO::Async::Loop>:
 
- use IO::Async::Loop::...;
- my $loop = IO::Async::Loop::...
+ use IO::Async::Loop::IO_Poll;
+ my $loop = IO::Async::Loop::IO_Poll->new();
 
  $loop->enable_childmanager;
 
@@ -49,16 +49,6 @@ Usually this object would be constructed indirectly, via an C<IO::Async::Loop>:
  );
 
  $loop->loop_forever;
-
-It can also be used directly. In this case, extra effort must be taken to pass
-an C<IO::Async::Loop> object:
-
- my $loop = IO::Async::Loop::...
-
- my $code = IO::Async::DetachedCode->new(
-    loop => $loop,
-    code => sub { ... },
- );
 
 =head1 DESCRIPTION
 
@@ -106,17 +96,12 @@ no nonblocking or asynchronous version is supplied.
 
 =cut
 
-=head2 $code = IO::Async::DetachedCode->new( %params )
+=head2 $code = $loop->detach_code( %params )
 
 This function returns a new instance of a C<IO::Async::DetachedCode> object.
 The C<%params> hash takes the following keys:
 
 =over 8
-
-=item loop => IO::Async::Loop
-
-A reference to an C<IO::Async::Loop> object. The loop must have the child
-manager enabled.
 
 =item code => CODE
 

@@ -7,7 +7,7 @@ package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14_1';
 
 # Not a notifier
 
@@ -27,10 +27,10 @@ C<IO::Async::ChildManager> - facilitates the execution of child processes
 
 =head1 SYNOPSIS
 
-Usually this object would be used indirectly, via an C<IO::Async::Loop>:
+This object is used indirectly via an C<IO::Async::Loop>:
 
- use IO::Async::Loop::...;
- my $loop = IO::Async::Loop::...
+ use IO::Async::Loop::IO_Poll;
+ my $loop = IO::Async::Loop::IO_Poll->new();
 
  $loop->enable_childmanager;
 
@@ -48,41 +48,14 @@ Usually this object would be used indirectly, via an C<IO::Async::Loop>:
 
 =head1 DESCRIPTION
 
-This module provides a class that manages the execution of child processes. It
-acts as a central point to store PID values of currently-running children, and
-to call the appropriate callback handler code when the process terminates.
-
-=head2 Callbacks
-
-When the C<waitpid()> call returns a PID that the manager is observing, the
-registered callback function is invoked with its PID and the current value of
-the C<$?> variable.
-
- $code->( $pid, $? )
-
-After invocation, the handler is automatically removed from the manager.
+This module extends the functionallity of the containing C<IO::Async::Loop> to
+manage the execution of child processes. It acts as a central point to store
+PID values of currently-running children, and to call the appropriate callback
+handler code when the process terminates.
 
 =cut
 
-=head1 CONSTRUCTOR
-
-=cut
-
-=head2 $manager = IO::Async::ChildManager->new( %params )
-
-This function returns a new instance of a C<IO::Async::ChildManager> object.
-The C<%params> hash takes the following keys:
-
-=over 8
-
-=item loop => IO::Async::Loop
-
-A reference to an C<IO::Async::Loop> object.
-
-=back
-
-=cut
-
+# Internal constructor
 sub new
 {
    my $class = shift;
@@ -110,6 +83,9 @@ sub disable
 }
 
 =head1 METHODS
+
+When active, the following methods are available on the containing C<Loop>
+object.
 
 =cut
 
@@ -140,7 +116,7 @@ sub SIGCHLD
    return $count;
 }
 
-=head2 $manager->watch( $kid, $code )
+=head2 $loop->watch_child( $kid, $code )
 
 This method adds a new handler for the termination of the given child PID.
 
@@ -152,13 +128,17 @@ The PID to watch.
 
 =item $code
 
-A CODE reference to the handling function.
+A CODE reference to the handling function. It will be invoked as
+
+ $code->( $pid, $? )
+
+After invocation, the handler is automatically removed from the manager.
 
 =back
 
 =cut
 
-sub watch
+sub watch_child
 {
    my $self = shift;
    my ( $kid, $code ) = @_;
@@ -212,7 +192,7 @@ sub list_watching
    return keys %$handlermap;
 }
 
-=head2 $pid = $manager->detach_child( %params )
+=head2 $pid = $loop->detach_child( %params )
 
 This method creates a new child process to run a given code block.
 
@@ -278,7 +258,7 @@ sub detach_child
    return $kid;
 }
 
-=head2 $pid = $manager->spawn( %params )
+=head2 $pid = $loop->spawn_child( %params )
 
 This method creates a new child process to run a given code block or command.
 The C<%params> hash takes the following keys:
@@ -332,7 +312,7 @@ file IO.
 
 =cut
 
-sub spawn
+sub spawn_child
 {
    my $self = shift;
    my %params = @_;
@@ -416,6 +396,10 @@ The file descriptor will be opened from the named file in the given mode. The
 C<$mode> string should be in the form usually given to the C<open()> function;
 such as '<' or '>>'.
 
+=item [ 'keep' ]
+
+The file descriptor will not be closed; it will be left as-is.
+
 =back
 
 =item fdI<n> => IO
@@ -430,11 +414,15 @@ A shortcut for the C<dup> case given above.
 
 Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
 
-=back
-
 =item env => HASH
 
 A reference to a hash to set as the child process's environment.
+
+=back
+
+If no directions for what to do with C<stdin>, C<stdout> and C<stderr> are
+given, a default of C<keep> is implied. All other file descriptors will be
+closed, unless a C<keep> operation is given for them.
 
 =cut
 
@@ -475,7 +463,7 @@ sub _check_setup_and_canonicise
          }
 
          my $operation = $value->[0];
-         grep { $_ eq $operation } qw( open close dup ) or 
+         grep { $_ eq $operation } qw( open close dup keep ) or 
             croak "Unrecognised operation '$operation' for file descriptor $fd";
       }
       elsif( $key eq "env" ) {
@@ -566,7 +554,11 @@ sub _spawn_in_child
    my ( $writepipe, $code, $setup ) = @_;
 
    my $exitvalue = eval {
-      my %keep_fds = ( 0 => 1, 1 => 1, 2 => 1 ); # Keep STDIN, STDOUT, STDERR
+      # Map of which handles will be in use by the end
+      my %fd_in_use = ( 0 => 1, 1 => 1, 2 => 1 ); # Keep STDIN, STDOUT, STDERR
+
+      # Count of how many times we'll need to use the current handles.
+      my %fds_refcount = %fd_in_use;
 
       my $max_fd = 0;
       my $writepipe_clashes = 0;
@@ -585,22 +577,28 @@ sub _spawn_in_child
             my ( $operation, @params ) = @$value;
 
             $operation eq "close" and do {
-               delete $keep_fds{$fd};
+               delete $fd_in_use{$fd};
+               delete $fds_refcount{$fd};
             };
 
             $operation eq "dup" and do {
+               $fd_in_use{$fd} = 1;
+
                my $fileno = fileno $params[0];
                # Keep a count of how many times it will be dup()ed from so we
                # can close it once we've finished
-               $keep_fds{$fileno}++;
+               $fds_refcount{$fileno}++;
+            };
+
+            $operation eq "keep" and do {
+               $fds_refcount{$fd} = 1;
             };
          }
       }
 
-      $keep_fds{fileno $writepipe} = 1;
-
       foreach ( 0 .. OPEN_MAX_FD ) {
-         next if exists $keep_fds{$_};
+         next if $fds_refcount{$_};
+         next if $_ == fileno $writepipe;
          POSIX::close( $_ );
       }
 
@@ -628,8 +626,8 @@ sub _spawn_in_child
                      dup2( $from, $fd ) or die "Cannot dup2($from to $fd) - $!\n";
                   }
 
-                  $keep_fds{$from}--;
-                  if( !$keep_fds{$from} ) {
+                  $fds_refcount{$from}--;
+                  if( !$fds_refcount{$from} and !$fd_in_use{$from} ) {
                      POSIX::close( $from );
                   }
                };
@@ -662,7 +660,7 @@ sub _spawn_in_child
    return $exitvalue;
 }
 
-=head2 $pid = $manager->open( %params )
+=head2 $pid = $loop->open_child( %params )
 
 This creates a new child process to run the given code block or command, and
 attaches filehandles to it that the parent will watch. The C<%params> hash
@@ -739,7 +737,7 @@ Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
 
 =cut
 
-sub open
+sub open_child
 {
    my $self = shift;
    my %params = @_;
@@ -886,7 +884,7 @@ sub open
    return $pid;
 }
 
-=head2 $pid = $manager->run( %params )
+=head2 $pid = $loop->run_child( %params )
 
 This creates a new child process to run the given code block or command,
 capturing its STDOUT and STDERR streams. When the process exits, the callback
@@ -920,7 +918,7 @@ the perl C<readpipe> function (`backticks`), allowing it to replace
 
 with
 
- $loop->run(
+ $loop->run_child(
     command => "command here", 
     on_finish => sub {
        my ( undef, $exitcode, $output ) = @_;
@@ -930,7 +928,7 @@ with
 
 =cut
 
-sub run
+sub run_child
 {
    my $self = shift;
    my %params = @_;

@@ -7,14 +7,17 @@ package IO::Async::Test;
 
 use strict;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14_1';
 
 use Exporter;
 our @ISA = qw( Exporter );
 our @EXPORT = qw(
    testing_loop
    wait_for
+   wait_for_stream
 );
+
+use IO::Async::Stream;
 
 =head1 NAME
 
@@ -25,9 +28,8 @@ C<IO::Async::Test> - Utility functions for use in test scripts
  use Test::More tests => 1;
  use IO::Async::Test;
 
- use IO::Async::Loop::...
-
- my $loop = IO::Async::Loop::...->new( ... );
+ use IO::Async::Loop::IO_Poll;
+ my $loop = IO::Async::Loop::IO_Poll->new();
  testing_loop( $loop );
 
  my $result;
@@ -44,6 +46,15 @@ C<IO::Async::Test> - Utility functions for use in test scripts
 
  is( $result, what_we_expected, 'The event happened' );
 
+ ...
+
+ my $buffer = "";
+ my $handle = IO::Handle-> ...
+
+ wait_for_stream { length $buffer >= 10 } $handle => $buffer;
+
+ is( substr( $buffer, 0, 10, "" ), "0123456789", 'Buffer was correct' );
+
 =head1 DESCRIPTION
 
 This module provides utility functions that may be useful when writing test
@@ -59,6 +70,11 @@ In order to write a test, the C<wait_for()> function provides a way of
 synchronising the code, so that a given condition is known to hold, which
 would typically signify that some event has occured, the outcome of which can
 now be tested using the usual testing primitives.
+
+Because the primary purpose of C<IO::Async> is to provide IO operations on
+filehandles, a great many tests will likely be based around connected pipes or
+socket handles. The C<wait_for_stream()> function provides a convenient way
+to wait for some content to be written through such a connected stream.
 
 =cut
 
@@ -106,6 +122,40 @@ sub wait_for(&)
          die "Nothing was ready after 10 second wait; called at $callerfile line $callerline\n" if $retries == 0;
       }
    }
+}
+
+=head2 wait_for_stream( $condfunc, $handle, $buffer )
+
+Set up an C<IO::Async::Stream> object around the given $handle. Data read from
+the stream will be appended into $buffer (which is NOT initialised when the
+function is entered, in case data remains from a previous call). The
+C<loop_once> method is then repeatedly called until the condition function
+callback returns true. After this, the temporary stream will be removed from
+the loop.
+
+=cut
+
+sub wait_for_stream(&$$)
+{
+   my ( $cond, $handle, $DUMMY ) = @_;
+   my $varref = \$_[2]; # So that we can modify it from the on_read callback
+
+   my $stream = IO::Async::Stream->new(
+      read_handle => $handle,
+
+      on_read => sub {
+         $$varref .= ${$_[1]};
+         ${$_[1]} = "";
+         return 0;
+      }
+   );
+
+   $loop->add( $stream );
+
+   # Have to defeat the prototype... grr I hate these
+   &wait_for( $cond );
+
+   $loop->remove( $stream );
 }
 
 # Keep perl happy; keep Britain tidy
