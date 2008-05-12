@@ -7,7 +7,7 @@ package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.14_1';
+our $VERSION = '0.14_2';
 
 # Not a notifier
 
@@ -19,7 +19,10 @@ use Fcntl qw( F_GETFL F_SETFL FD_CLOEXEC );
 use POSIX qw( WNOHANG _exit sysconf _SC_OPEN_MAX dup2 );
 
 use constant LENGTH_OF_I => length( pack( "I", 0 ) );
-use constant OPEN_MAX_FD => sysconf(_SC_OPEN_MAX);
+
+# Win32 [and maybe other places] don't have an _SC_OPEN_MAX. About the best we
+# can do really is just make up some largeish number and hope for the best.
+use constant OPEN_MAX_FD => eval { sysconf(_SC_OPEN_MAX) } || 1024;
 
 =head1 NAME
 
@@ -402,6 +405,10 @@ The file descriptor will not be closed; it will be left as-is.
 
 =back
 
+A non-reference value may be passed as a shortcut, where it would contain the
+name of the operation with no arguments (i.e. for the C<close> and C<keep>
+operations).
+
 =item fdI<n> => IO
 
 A shortcut for the C<dup> case given above.
@@ -450,7 +457,7 @@ sub _check_setup_and_canonicise
          my $ref = ref $value;
 
          if( !$ref ) {
-            croak "Operation for file descriptor $fd must be a reference";
+            $value = [ $value ];
          }
          elsif( $ref eq "ARRAY" ) {
             # Already OK

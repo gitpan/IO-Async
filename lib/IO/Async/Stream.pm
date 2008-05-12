@@ -7,7 +7,7 @@ package IO::Async::Stream;
 
 use strict;
 
-our $VERSION = '0.14_1';
+our $VERSION = '0.14_2';
 
 use base qw( IO::Async::Notifier );
 
@@ -194,15 +194,15 @@ The C<%params> hash takes the following keys:
 
 =over 8
 
-=item read_handle => $handle
+=item read_handle => IO
 
 The IO handle to read from. Must implement C<fileno> and C<sysread> methods.
 
-=item write_handle => $handle
+=item write_handle => IO
 
 The IO handle to write to. Must implement C<fileno> and C<syswrite> methods.
 
-=item handle => $handle
+=item handle => IO
 
 Shortcut to specifying the same IO handle for both of the above.
 

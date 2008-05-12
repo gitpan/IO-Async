@@ -14,6 +14,7 @@ lib/IO/Async/Loop/Select.pm
 lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
 lib/IO/Async/Resolver.pm
+lib/IO/Async/Sequencer.pm
 lib/IO/Async/Set/IO_Poll.pm
 lib/IO/Async/Set/Select.pm
 lib/IO/Async/SignalProxy.pm
@@ -50,3 +51,5 @@ t/41detachedcode-call.t
 t/50loop-resolve.t
 t/51loop-connect.t
 t/52loop-listen.t
+t/60sequencer-client.t
+t/60sequencer-server.t
