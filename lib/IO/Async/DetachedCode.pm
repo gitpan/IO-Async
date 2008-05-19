@@ -7,7 +7,7 @@ package IO::Async::DetachedCode;
 
 use strict;
 
-our $VERSION = '0.14_2';
+our $VERSION = '0.14';
 
 use IO::Async::Stream;
 
@@ -143,6 +143,13 @@ exception. If missing or false, the worker will continue running to process
 more requests. If true, the worker will be shut down. A new worker might be
 constructed by the C<call> method to replace it, if necessary.
 
+=item setup => ARRAY
+
+Optional array reference. Specifies the C<setup> key to pass to the underlying
+C<detach_child> when detaching the code block. If not supplied, a default one
+will be created which just closes C<STDIN> and C<STDOUT>; C<STDERR> will be
+left unaffected.
+
 =back
 
 Since the code block will be called multiple times within the same child
@@ -197,6 +204,15 @@ sub new
    # Squash this down to a boolean
    my $exit_on_die =  $params{exit_on_die} ? 1 : 0;
 
+   # Provide a child setup list if one wasn't given
+   my $setup = $params{setup};
+
+   $setup ||= [
+      stdin  => 'close',
+      stdout => 'close',
+      # stderr is kept by default
+   ];
+
    my $self = bless {
       next_id     => 0,
       code        => $code,
@@ -204,6 +220,7 @@ sub new
       streamtype  => $streamtype,
       marshaller  => $marshaller,
       workers     => $workers,
+      setup       => $setup,
       exit_on_die => $exit_on_die,
 
       inners => [],
@@ -250,19 +267,14 @@ sub _detach_child
 
    my $loop = $inner->{loop};
 
-   my $fdread  = "fd" . fileno( $childread ); # TODO: Make this neater
-   my $fdwrite = "fd" . fileno( $childwrite );
-
    my $kid = $loop->spawn_child(
       code => sub { 
          $self->_child_loop( $childread, $childwrite, $inner ),
       },
       setup => [
-         stdin  => 'close',
-         stdout => 'close',
-         # stderr is kept by default
-         $fdread  => 'keep',
-         $fdwrite => 'keep',
+         @{ $self->{setup} },
+         $childread  => 'keep',
+         $childwrite => 'keep',
       ],
       on_exit => sub { 
          my ( $pid, $exitcode, undef, undef ) = @_;
