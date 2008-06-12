@@ -5,14 +5,14 @@ WriteMakefile
           'NAME' => 'IO::Async',
           'VERSION_FROM' => 'lib/IO/Async.pm',
           'PREREQ_PM' => {
-                           'File::Temp' => '0',
-                           'Heap' => '0',
-                           'IO::Poll' => '0',
+                           'File::Temp' => 0,
+                           'Heap' => 0,
+                           'IO::Poll' => 0,
                            'Socket::GetAddrInfo' => '0.08',
-                           'Storable' => '0',
-                           'Test::Exception' => '0',
-                           'Test::More' => '0',
-                           'Time::HiRes' => '0'
+                           'Storable' => 0,
+                           'Test::Exception' => 0,
+                           'Test::More' => 0,
+                           'Time::HiRes' => 0
                          },
           'INSTALLDIRS' => 'site',
           'EXE_FILES' => [],

@@ -6,7 +6,7 @@ use strict;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 =head1 NAME
 
@@ -34,7 +34,9 @@ IO
           handle => $socket,
 
           on_read => sub {
-             return 0 unless( $$_[0] =~ s/^(.*\n)// );
+             my ( $self, $buffref, $closed ) = @_;
+
+             return 0 unless( $buffref =~ s/^(.*\n)// );
 
              print "Received a line $1";
 

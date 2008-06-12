@@ -7,7 +7,7 @@ package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 use Carp;
 
@@ -205,6 +205,12 @@ sub __new_feature
    ( my $filename = "$classname.pm" ) =~ s{::}{/}g;
    require $filename;
 
+   # These features aren't supposed to be "user visible", so if methods called
+   # on it carp or croak, the shortmess line ought to skip IO::Async::Loop and
+   # go on report its caller. To make this work, add the feature class to our
+   # @CARP_NOT list.
+   push our(@CARP_NOT), $classname;
+
    return $classname->new( loop => $self );
 }
 
@@ -223,6 +229,12 @@ The name of the signal to attach to. This should be a bare name like C<TERM>.
 A CODE reference to the handling function.
 
 =back
+
+Attaching to C<SIGCHLD> is not recommended because of the way all child
+processes use it to report their termination. Instead, the C<watch_child>
+method should be used to watch for termination of a given child process. A
+warning will be printed if C<SIGCHLD> is passed here, but in future versions
+of C<IO::Async> this behaviour may be disallowed altogether.
 
 See also L<POSIX> for the C<SIGI<name>> constants.
 
@@ -266,7 +278,10 @@ sub detach_signal
 =head2 $loop->enable_childmanager
 
 This method enables the child manager, which allows use of the
-C<watch_child()>, C<detach_child()> and C<spawn_child()> methods.
+C<watch_child()> methods without a race condition.
+
+The child manager will be automatically enabled if required; so this method
+does not need to be explicitly called for other C<*_child()> methods.
 
 =cut
 
@@ -274,10 +289,7 @@ sub enable_childmanager
 {
    my $self = shift;
 
-   defined $self->{childmanager} and
-      croak "ChildManager already enabled for this loop";
-
-   $self->{childmanager} = $self->__new_feature( "IO::Async::ChildManager" );
+   $self->{childmanager} ||= $self->__new_feature( "IO::Async::ChildManager" );
 }
 
 =head2 $loop->disable_childmanager
@@ -290,18 +302,21 @@ sub disable_childmanager
 {
    my $self = shift;
 
-   defined $self->{childmanager} or
-      croak "ChildManager not enabled for this loop";
-
-   my $childmanager = $self->{childmanager};
-   $childmanager->disable;
-
-   undef $self->{childmanager};
+   if( my $childmanager = $self->{childmanager} ) {
+      $childmanager->disable;
+      undef $self->{childmanager};
+   }
 }
 
 =head2 $loop->watch_child( $pid, $code )
 
 This method adds a new handler for the termination of the given child PID.
+
+Because the process represented by C<$pid> may already have exited by the time
+this method is called, the child manager should already have been enabled
+before it was C<fork()>ed, by calling C<enable_childmanager>. If this is not
+done, then a C<SIGCHLD> signal may have been missed, and the exit of this
+child process will not be reported.
 
 =cut
 
@@ -310,8 +325,8 @@ sub watch_child
    my $self = shift;
    my ( $kid, $code ) = @_;
 
-   my $childmanager = $self->{childmanager} or
-      croak "ChildManager not enabled in Loop";
+   my $childmanager = $self->{childmanager} ||=
+      $self->__new_feature( "IO::Async::ChildManager" );
 
    $childmanager->watch_child( $kid, $code );
 }
@@ -329,8 +344,8 @@ sub detach_child
    my $self = shift;
    my %params = @_;
 
-   my $childmanager = $self->{childmanager} or
-      croak "ChildManager not enabled in Loop";
+   my $childmanager = $self->{childmanager} ||=
+      $self->__new_feature( "IO::Async::ChildManager" );
 
    $childmanager->detach_child( %params );
 }
@@ -369,8 +384,8 @@ sub spawn_child
    my $self = shift;
    my %params = @_;
 
-   my $childmanager = $self->{childmanager} or
-      croak "ChildManager not enabled in Loop";
+   my $childmanager = $self->{childmanager} ||=
+      $self->__new_feature( "IO::Async::ChildManager" );
 
    $childmanager->spawn_child( %params );
 }
@@ -388,8 +403,8 @@ sub open_child
    my $self = shift;
    my %params = @_;
 
-   my $childmanager = $self->{childmanager} or
-      croak "ChildManager not enabled in Loop";
+   my $childmanager = $self->{childmanager} ||=
+      $self->__new_feature( "IO::Async::ChildManager" );
 
    $childmanager->open_child( %params );
 }
@@ -408,8 +423,8 @@ sub run_child
    my $self = shift;
    my %params = @_;
 
-   my $childmanager = $self->{childmanager} or
-      croak "ChildManager not enabled in Loop";
+   my $childmanager = $self->{childmanager} ||=
+      $self->__new_feature( "IO::Async::ChildManager" );
 
    $childmanager->run_child( %params );
 }
@@ -436,7 +451,7 @@ sub _adjust_timeout
    if( $timer_delay < 0 ) {
       $$timeref = 0;
    }
-   elsif( $timer_delay < \$timeref ) {
+   elsif( !defined $$timeref or $timer_delay < $$timeref ) {
       $$timeref = $timer_delay;
    }
 }

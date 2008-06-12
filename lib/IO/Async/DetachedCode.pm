@@ -7,7 +7,7 @@ package IO::Async::DetachedCode;
 
 use strict;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 use IO::Async::Stream;
 
@@ -27,8 +27,6 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
  use IO::Async::Loop::IO_Poll;
  my $loop = IO::Async::Loop::IO_Poll->new();
-
- $loop->enable_childmanager;
 
  my $code = $loop->detach_code(
     code => sub {

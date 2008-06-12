@@ -7,7 +7,7 @@ package IO::Async::Notifier;
 
 use strict;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 use Carp;
 
@@ -189,7 +189,8 @@ sub new
    my $self = bless {
       read_handle     => $read_handle,
       write_handle    => $write_handle,
-      want_writeready => $params{want_writeready} || 0,
+      want_readready  => 0,
+      want_writeready => 0,
       children        => [],
       parent          => undef,
    }, $class;
@@ -200,7 +201,7 @@ sub new
 
    # Slightly asymmetric
    $self->want_readready( defined $read_handle );
-   $self->want_writeready( $self->{want_writeready} );
+   $self->want_writeready( $params{want_writeready} || 0 );
 
    return $self;
 }
@@ -288,9 +289,12 @@ sub close
 {
    my $self = shift;
 
-   $self->{on_closed}->( $self ) if $self->{on_closed};
+   return unless defined $self->read_handle or defined $self->write_handle;
 
-   if( my $loop = $self->{loop} ) {
+   if( my $parent = $self->{parent} ) {
+      $parent->remove_child( $self );
+   }
+   elsif( my $loop = $self->{loop} ) {
       $loop->remove( $self );
    }
 
@@ -299,6 +303,8 @@ sub close
 
    my $write_handle = delete $self->{write_handle};
    $write_handle->close if defined $write_handle and ( not defined $read_handle or $write_handle != $read_handle );
+
+   $self->{on_closed}->( $self ) if $self->{on_closed};
 }
 
 =head2 $handle = $notifier->read_handle
@@ -385,6 +391,9 @@ sub want_readready
    if( @_ ) {
       my ( $new ) = @_;
 
+      $new = $new ?1:0; # Squash to boolean
+      return $new if $new == $self->{want_readready};
+
       if( $new ) {
          defined $self->read_handle or
             croak 'Cannot want_readready in a Notifier with no read_handle';
@@ -409,6 +418,9 @@ sub want_writeready
    my $self = shift;
    if( @_ ) {
       my ( $new ) = @_;
+
+      $new = $new ?1:0; # Squash to boolean
+      return $new if $new == $self->{want_writeready};
 
       if( $new ) {
          defined $self->write_handle or
