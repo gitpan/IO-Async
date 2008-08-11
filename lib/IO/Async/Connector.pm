@@ -7,7 +7,7 @@ package IO::Async::Connector;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use IO::Async::Notifier;
 
@@ -28,8 +28,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
  use Socket qw( SOCK_STREAM );
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  $loop->connect(
     host     => "www.example.com",
@@ -117,10 +117,18 @@ sub _get_sock_err
       return undef;
    }
 
+   my $peername_errno = $!+0;
+   my $peername_errstr = "$!";
+
    # Not connected so we know this ought to fail
    if( read( $sock, my $buff, 1 ) ) {
-      print STDERR "Oops - getpeername() fails but read() returns!\n";
-      # TODO
+      # That was most unexpected. getpeername() fails because we're not
+      # connected, yet read() succeeds.
+      warn "getpeername() fails with $peername_errno ($peername_errstr) but read() is successful\n";
+      warn "Please see http://rt.cpan.org/Ticket/Display.html?id=38382\n";
+
+      $! = $peername_errno;
+      return $!;
    }
 
    return $!;

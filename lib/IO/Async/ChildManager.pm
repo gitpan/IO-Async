@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
 
 package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 # Not a notifier
 
@@ -15,9 +15,10 @@ use IO::Async::Stream;
 use IO::Async::MergePoint;
 
 use Carp;
+use Scalar::Util qw( weaken );
 
 use Fcntl qw( F_GETFL F_SETFL FD_CLOEXEC );
-use POSIX qw( WNOHANG _exit sysconf _SC_OPEN_MAX dup2 );
+use POSIX qw( WNOHANG _exit sysconf _SC_OPEN_MAX dup2 nice );
 
 use constant LENGTH_OF_I => length( pack( "I", 0 ) );
 
@@ -33,8 +34,8 @@ C<IO::Async::ChildManager> - facilitates the execution of child processes
 
 This object is used indirectly via an C<IO::Async::Loop>:
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  ...
 
@@ -69,6 +70,8 @@ sub new
       childdeathhandlers => {},
       loop => $loop,
    }, $class;
+
+   weaken( $self->{loop} );
 
    $loop->attach_signal( CHLD => sub { $self->SIGCHLD } );
 
@@ -432,6 +435,14 @@ Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
 
 A reference to a hash to set as the child process's environment.
 
+=item nice => INT
+
+Change the child process's scheduling priority using C<POSIX::nice()>.
+
+=item chdir => STRING
+
+Change the child process's working directory using C<chdir()>.
+
 =back
 
 If no directions for what to do with C<stdin>, C<stdout> and C<stderr> are
@@ -485,6 +496,15 @@ sub _check_setup_and_canonicise
       }
       elsif( $key eq "env" ) {
          ref $value eq "HASH" or croak "Expected HASH reference for 'env' setup key";
+      }
+      elsif( $key eq "nice" ) {
+         $value =~ m/^\d+$/ or croak "Expected integer for 'nice' setup key";
+      }
+      elsif( $key eq "chdir" ) {
+         # This isn't a purely watertight test, but it does guard against
+         # silly things like passing a reference - directories such as
+         # ARRAY(0x12345) are unlikely to exist
+         -d $value or croak "Working directory '$value' does not exist";
       }
       else {
          croak "Unrecognised setup operation '$key'";
@@ -545,8 +565,6 @@ sub _spawn_in_parent
                local $! = $dollarbang;
                $on_exit->( $kid, $exitcode, $!, $dollarat );
             }
-
-            $loop->remove( $self );
          }
 
          return 0;
@@ -661,6 +679,12 @@ sub _spawn_in_child
             }
             elsif( $key eq "env" ) {
                %ENV = %$value;
+            }
+            elsif( $key eq "nice" ) {
+               nice( $value ) or die "Cannot nice($value) - $!";
+            }
+            elsif( $key eq "chdir" ) {
+               chdir( $value ) or die "Cannot chdir('$value') - $!";
             }
          }
       }

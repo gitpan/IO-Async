@@ -4,11 +4,11 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 101;
+use Test::More tests => 107;
 use Test::Exception;
 
 use File::Temp qw( tmpnam );
-use POSIX qw( WIFEXITED WEXITSTATUS ENOENT EBADF );
+use POSIX qw( WIFEXITED WEXITSTATUS ENOENT EBADF getcwd );
 
 use IO::Async::Loop::IO_Poll;
 
@@ -353,6 +353,31 @@ TEST "environment is preserved",
 TEST "environment is overwritten",
    setup => [ env => { TESTKEY => "child value" } ],
    code => sub { return $ENV{TESTKEY} eq "child value" ? 0 : 1 },
+
+   exitstatus => 0,
+   dollarat   => '';
+
+SKIP: {
+   # Some of the CPAN smoke testers might run test scripts under modified nice
+   # anyway. We'd better get our starting value to check for difference, not 
+   # absolute
+   my $prio_now = getpriority(0,0);
+
+   # If it's already quite high, we don't want to hit the limit and be
+   # clamped. Just skip the tests if it's too high before we start.
+   skip "getpriority() is already above 15, so I won't try renicing upwards", 3 if $prio_now > 15;
+
+   TEST "nice works",
+      setup => [ nice => 3 ],
+      code  => sub { return getpriority(0,0) == $prio_now + 3 ? 0 : 1 },
+
+      exitstatus => 0,
+      dollarat   => '';
+}
+
+TEST "chdir works",
+   setup => [ chdir => "/" ],
+   code  => sub { return getcwd() eq "/" ? 0 : 1 },
 
    exitstatus => 0,
    dollarat   => '';

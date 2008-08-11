@@ -1,3 +1,8 @@
+#  You may distribute under the terms of either the GNU General Public License
+#  or the Artistic License (the same terms as Perl itself)
+#
+#  (C) Paul Evans, 2008 -- leonerd@leonerd.org.uk
+
 package IO::Async;
 
 use strict;
@@ -6,7 +11,7 @@ use strict;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 =head1 NAME
 
@@ -16,11 +21,11 @@ IO
 =head1 SYNOPSIS
 
  use IO::Async::Stream;
- use IO::Async::Loop::IO_Poll;
+ use IO::Async::Loop;
 
  use Socket qw( SOCK_STREAM );
 
- my $loop = IO::Async::Loop::IO_Poll->new();
+ my $loop = IO::Async::Loop->new();
 
  $loop->connect(
     host     => "some.other.host",

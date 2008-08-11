@@ -37,6 +37,7 @@ t/11loop-select-timing.t
 t/12loop-signal.t
 t/12loop-stream.t
 t/13loop-deferredhandle.t
+t/14loop-magic.t
 t/19test.t
 t/20notifier-child.t
 t/30childmanager.t
@@ -52,3 +53,4 @@ t/51loop-connect.t
 t/52loop-listen.t
 t/60sequencer-client.t
 t/60sequencer-server.t
+t/StupidLoop.pm

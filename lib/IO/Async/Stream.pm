@@ -7,7 +7,7 @@ package IO::Async::Stream;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use base qw( IO::Async::Notifier );
 
@@ -29,8 +29,8 @@ C<IO::Async::Stream> - read and write buffers around an IO handle
  use IO::Socket::INET;
  use IO::Async::Stream;
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  my $socket = IO::Socket::INET->new(
     PeerHost => "some.other.host",

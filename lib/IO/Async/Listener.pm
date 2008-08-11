@@ -7,7 +7,7 @@ package IO::Async::Listener;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use IO::Async::Notifier;
 
@@ -29,8 +29,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
  use IO::Async::Stream;
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  $loop->listen(
     service  => "echo",
@@ -202,6 +202,8 @@ the arguments that were passed to it, and the error generated. I.e.
 
  $on_fail->( "socket", $family, $socktype, $protocol, $! );
 
+ $on_fail->( "sockopt", $sock, $optname, $optval, $! );
+
  $on_fail->( "bind", $sock, $address, $! );
 
  $on_fail->( "listen", $sock, $queuesize, $! );
@@ -276,24 +278,24 @@ sub listen
          my $sock = IO::Socket->new();
 
          unless( $sock->socket( $family, $socktype, $proto ) ) {
-            $on_fail->( "socket", $family, $socktype, $proto, $! );
+            $on_fail->( "socket", $family, $socktype, $proto, $! ) if $on_fail;
             next;
          }
 
          if( $reuseaddr ) {
             unless( $sock->sockopt( SO_REUSEADDR, 1 ) ) {
-               $on_fail->( "sockopt", $sock, SO_REUSEADDR, 1 );
+               $on_fail->( "sockopt", $sock, SO_REUSEADDR, 1, $! ) if $on_fail;
                next;
             }
          }
 
          unless( $sock->bind( $address ) ) {
-            $on_fail->( "bind", $sock, $address, $! );
+            $on_fail->( "bind", $sock, $address, $! ) if $on_fail;
             next;
          }
 
          unless( $sock->listen( $queuesize ) ) {
-            $on_fail->( "listen", $sock, $queuesize, $! );
+            $on_fail->( "listen", $sock, $queuesize, $! ) if $on_fail;
             next;
          }
 

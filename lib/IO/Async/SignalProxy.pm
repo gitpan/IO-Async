@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
 
 package IO::Async::SignalProxy;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use base qw( IO::Async::Notifier );
 
@@ -197,6 +197,13 @@ sub detach
    $SIG{$signal} = $restore_SIG->{$signal} || 'DEFAULT';
 
    delete $restore_SIG->{$signal};
+   delete $self->{callbacks}->{$signal};
+}
+
+sub signals
+{
+   my $self = shift;
+   return keys %{ $self->{callbacks} };
 }
 
 # Keep perl happy; keep Britain tidy

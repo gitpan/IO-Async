@@ -7,7 +7,7 @@ my $build = Module::Build->new
   (
    module_name => 'IO::Async',
    requires => {
-                 'Heap'                => 0,
+                 'Heap'                => 0.80,
                  'IO::Poll'            => 0,
                  'Socket::GetAddrInfo' => '0.08',
                  'Storable'            => 0,
@@ -16,6 +16,7 @@ my $build = Module::Build->new
                  'File::Temp' => 0,
                  'Test::More' => 0,
                  'Test::Exception' => 0,
+                 'Test::Refcount' => 0,
                  'Time::HiRes' => 0,
                },
    license => 'perl',

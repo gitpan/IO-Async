@@ -7,7 +7,7 @@ package IO::Async::Test;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use Exporter;
 our @ISA = qw( Exporter );
@@ -28,8 +28,8 @@ C<IO::Async::Test> - Utility functions for use in test scripts
  use Test::More tests => 1;
  use IO::Async::Test;
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
  testing_loop( $loop );
 
  my $result;

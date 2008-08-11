@@ -4,9 +4,10 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 5;
+use Test::More tests => 6;
 use Test::Exception;
 
+use Socket qw( AF_INET SOCK_STREAM );
 use Socket::GetAddrInfo qw( :Socket6api getaddrinfo );
 
 use IO::Async::Loop::IO_Poll;
@@ -87,13 +88,17 @@ SKIP: {
 
 # getaddrinfo is a little more difficult, as it will mangle the result
 
-my @gai = getaddrinfo( "localhost", "www" );
+# Also, some systems seem to mangle the order of results between PF_INET and
+# PF_INET6 depending on who asks. We'll hint AF_INET + SOCK_STREAM to minimise
+# the risk of a spurious test failure because of ordering issues
+
+my @gai = getaddrinfo( "localhost", "www", AF_INET, SOCK_STREAM );
 
 undef $result;
 
 $loop->resolve(
    type => 'getaddrinfo',
-   data => [ "localhost", "www" ],
+   data => [ "localhost", "www", AF_INET, SOCK_STREAM ],
    on_resolved => sub { $result = [ 'resolved', @_ ] },
    on_error    => sub { $result = [ 'error',    @_ ] },
 );
@@ -101,9 +106,21 @@ $loop->resolve(
 wait_for { $result };
 
 if( @gai == 1 ) {
-   is_deeply( $result, [ error => "$gai[0]\n" ], 'getaddrinfo - error' );
+   is( $result->[0], "error", 'getaddrinfo - error' );
+   is_deeply( $result->[1], "$gai[0]\n", 'getaddrinfo - error message' );
 }
 else {
+   is( $result->[0], "resolved", 'getaddrinfo - resolved' );
+   my @addrs = @{$result}[1..$#$result];
+
    my @expect = map { [ splice @gai, 0, 5 ] } ( 0 .. $#gai/5 );
-   is_deeply( $result, [ resolved => @expect ], 'getaddrinfo - result' );
+
+   # There's a chance that system resolvers have randomised the order in these
+   # results, in order to roundrobin properly. We should sort them so we get
+   # consistent results
+
+   @addrs  = sort { $a->[0] <=> $b->[0] or $a->[1] <=> $b->[1] or $a->[2] <=> $b->[2] or $a->[3] cmp $b->[3] } @addrs;
+   @expect = sort { $a->[0] <=> $b->[0] or $a->[1] <=> $b->[1] or $a->[2] <=> $b->[2] or $a->[3] cmp $b->[3] } @expect;
+
+   is_deeply( \@addrs, \@expect, 'getaddrinfo - resolved addresses' );
 }

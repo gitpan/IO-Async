@@ -7,7 +7,7 @@ package IO::Async::Resolver;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use Socket::GetAddrInfo qw( :Socket6api getaddrinfo getnameinfo );
 
@@ -24,8 +24,8 @@ C<IO::Async::Resolver> - performing name resolutions asynchronously
 
 This object is used indirectly via an C<IO::Async::Loop>:
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  $loop->resolve( type => 'getpwuid', data => [ $< ],
     on_resolved => 

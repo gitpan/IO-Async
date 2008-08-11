@@ -7,7 +7,7 @@ package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use Carp;
 
@@ -21,6 +21,15 @@ use Carp;
 # run when the XS function returns. 
 our $MAX_SIGWAIT_TIME = 1;
 
+# Maybe our calling program will have a suggested hint of a specific Loop
+# class or list of classes to use
+our $LOOP;
+
+# Undocumented; used only by the test scripts.
+# Setting this value true will avoid the IO::Async::Loop::$^O candidate in the
+# magic constructor
+our $LOOP_NO_OS;
+
 BEGIN {
    if ( eval { Time::HiRes::time(); 1 } ) {
       Time::HiRes->import( qw( time ) );
@@ -33,7 +42,25 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 
 =head1 SYNOPSIS
 
-This module would not be used directly; see the subclasses:
+ use IO::Async::Loop;
+
+ my $loop = IO::Async::Loop->new();
+
+ $loop->add( ... );
+
+ $loop->loop_forever();
+
+=head1 DESCRIPTION
+
+This module provides an abstract class which implements the core loop of the
+C<IO::Async> framework. Its primary purpose is to store a set of
+C<IO::Async::Notifier> objects or subclasses of them. It handles all of the
+lower-level set manipulation actions, and leaves the actual IO readiness 
+testing/notification to the concrete class that implements it. It also
+provides other functionallity such as signal handling, child process managing,
+and timers.
+
+See also the two bundled Loop subclasses:
 
 =over 4
 
@@ -45,16 +72,6 @@ This module would not be used directly; see the subclasses:
 
 Or other subclasses that may appear on CPAN which are not part of the core
 C<IO::Async> distribution.
-
-=head1 DESCRIPTION
-
-This module provides an abstract class which implements the core loop of the
-C<IO::Async> framework. Its primary purpose is to store a set of
-C<IO::Async::Notifier> objects or subclasses of them. It handles all of the
-lower-level set manipulation actions, and leaves the actual IO readiness 
-testing/notification to the concrete class that implements it. It also
-provides other functionallity such as signal handling, child process managing,
-and timers.
 
 =cut
 
@@ -71,6 +88,87 @@ sub __new
    }, $class;
 
    return $self;
+}
+
+=head1 MAGIC CONSTRUCTOR
+
+=head2 $loop = IO::Async::Loop->new()
+
+This function attempts to find a good subclass to use, then calls its
+constructor. It works by making a list of likely candidate classes, then
+trying each one in turn, C<require>ing the module then calling its C<new>
+method. If either of these operations fails, the next subclass is tried. If
+no class was successful, then an exception is thrown.
+
+The list of candidates is formed from the following choices, in this order:
+
+=over 4
+
+=item * $ENV{IO_ASYNC_LOOP}
+
+If this environment variable is set, it should contain a comma-separated list
+of subclass names. These names may or may not be fully-qualified; if a name
+does not contain C<::> then it will have C<IO::Async::Loop::> prepended to it.
+This allows the end-user to specify a particular choice to fit the needs of
+his use of a program using C<IO::Async>.
+
+=item * $IO::Async::Loop::LOOP
+
+If this scalar is set, it should contain a comma-separated list of subclass
+names. These may or may not be fully-qualified, as with the above case. This
+allows a program author to suggest a loop module to use.
+
+In cases where the module subclass is a hard requirement, such as GTK programs
+using C<Glib>, it would be better to use the module specifically and invoke
+its constructor directly.
+
+=item * $^O
+
+The module called C<IO::Async::Loop::$^O> is tried next. This allows specific
+OSes, such as the ever-tricky C<MSWin32>, to provide an implementation that
+might be more efficient than the generic ones, or even work at all.
+
+=item * IO_Poll and Select
+
+Finally, if no other choice has been made by now, the built-in C<IO_Poll>
+module is chosen. This should always work, but in case it doesn't, the
+C<Select> module will be chosen afterwards as a last-case attempt. If this
+also fails, then the magic constructor itself will throw an exception.
+
+=back
+
+=cut
+
+sub new
+{
+   shift;  # We're going to ignore the class name actually given
+
+   my @candidates;
+
+   push @candidates, split( m/,/, $ENV{IO_ASYNC_LOOP} ) if defined $ENV{IO_ASYNC_LOOP};
+
+   push @candidates, split( m/,/, $LOOP ) if defined $LOOP;
+
+   push @candidates, "$^O" unless $LOOP_NO_OS;
+
+   push @candidates, "IO_Poll", "Select";
+
+   $_ =~ m/::/ or $_ = "IO::Async::Loop::$_" for @candidates;
+
+   foreach my $class ( @candidates ) {
+      ( my $file = "$class.pm" ) =~ s{::}{/}g;
+
+      eval { require $file } or next;
+
+      my $self;
+      $self = eval { $class->new } and return $self;
+
+      # Oh dear. We've loaded the code OK but for some reason the constructor
+      # wasn't happy. Being polite we ought really to unload the file again,
+      # but perl doesn't actually provide us a way to do this.
+   }
+
+   croak "Cannot find a suitable candidate class";
 }
 
 =head1 METHODS
@@ -271,8 +369,11 @@ sub detach_signal
    my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::SignalProxy" );
    $sigproxy->detach( $signal );
 
-   # TODO: Consider "refcount" signals and cleanup if zero. How do we know if
-   # anyone else has a reference to the signal proxy though? Tricky...
+   if( !$sigproxy->signals ) {
+      $self->remove( $sigproxy );
+      undef $sigproxy;
+      undef $self->{sigproxy};
+   }
 }
 
 =head2 $loop->enable_childmanager
@@ -456,6 +557,28 @@ sub _adjust_timeout
    }
 }
 
+# For subclasses to call
+sub _build_time
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $time;
+   if( exists $params{time} ) {
+      $time = $params{time};
+   }
+   elsif( exists $params{delay} ) {
+      my $now = exists $params{now} ? $params{now} : time();
+
+      $time = $now + $params{delay};
+   }
+   else {
+      croak "Expected either 'time' or 'delay' keys";
+   }
+
+   return $time;
+}
+
 =head2 $id = $loop->enqueue_timer( %params )
 
 This method installs a callback which will be called at the specified time.
@@ -505,6 +628,8 @@ sub enqueue_timer
 
    my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
 
+   $params{time} = $self->_build_time( %params );
+
    $timequeue->enqueue( %params );
 }
 
@@ -522,6 +647,32 @@ sub cancel_timer
    my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
 
    $timequeue->cancel( $id );
+}
+
+=head2 $newid = $loop->requeue_timer( $id, %params )
+
+Reschedule an existing timer, moving it to a new time. The old timer is
+removed and will not be invoked.
+
+The C<%params> hash takes the same keys as C<enqueue_timer()>, except for the
+C<code> argument.
+
+The requeue operation may be implemented as a cancel + enqueue, which may
+mean the ID changes. Be sure to store the returned C<$newid> value if it is
+required.
+
+=cut
+
+sub requeue_timer
+{
+   my $self = shift;
+   my ( $id, %params ) = @_;
+
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
+
+   $params{time} = $self->_build_time( %params );
+
+   $timequeue->requeue( $id, %params );
 }
 
 =head2 $loop->resolve( %params )

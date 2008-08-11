@@ -1,15 +1,16 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006,2007 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2008 -- leonerd@leonerd.org.uk
 
 package IO::Async::Notifier;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use Carp;
+use Scalar::Util qw( weaken );
 
 =head1 NAME
 
@@ -20,8 +21,8 @@ C<IO::Async::Notifier> - event callbacks for a non-blocking file descriptor
  use IO::Socket::INET;
  use IO::Async::Notifier;
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  my $socket = IO::Socket::INET->new( LocalPort => 1234, Listen => 1 );
 
@@ -369,6 +370,7 @@ sub __set_loop
    my $self = shift;
    my ( $loop ) = @_;
    $self->{loop} = $loop;
+   weaken( $self->{loop} ); # To avoid a cycle
 }
 
 =head2 $value = $notifier->want_readready

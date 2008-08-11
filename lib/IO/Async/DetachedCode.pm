@@ -7,11 +7,12 @@ package IO::Async::DetachedCode;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use IO::Async::Stream;
 
 use Carp;
+use Scalar::Util qw( weaken );
 
 use Socket;
 
@@ -25,8 +26,8 @@ C<IO::Async::DetachedCode> - execute code asynchronously in child processes
 
 This object is used indirectly via an C<IO::Async::Loop>:
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  my $code = $loop->detach_code(
     code => sub {
@@ -246,6 +247,11 @@ sub _detach_child
       exit_on_die    => $self->{exit_on_die},
    };
 
+   weaken( $inner->{loop} );
+
+   # Not required to keep Loop's refcount happy; but does break a cycle here
+   #weaken( $inner->{inners} );
+
    my ( $childread, $mywrite );
    my ( $myread, $childwrite );
 
@@ -293,6 +299,9 @@ sub _detach_child
    );
 
    $inner->{iostream} = $iostream;
+
+   # Not required to keep Loop's refcount happy; but does break a cycle here
+   #weaken( $inner->{iostream} );
 
    $loop->add( $iostream );
 

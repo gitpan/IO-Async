@@ -7,7 +7,7 @@ package IO::Async::Sequencer;
 
 use strict;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 use base qw( IO::Async::Stream );
 
@@ -21,8 +21,8 @@ C<IO::Async::Sequencer> - handle a serial pipeline of requests / responses (EXPE
 
 When used as a client:
 
- use IO::Async::Loop::IO_Poll;
- my $loop = IO::Async::Loop::IO_Poll->new();
+ use IO::Async::Loop;
+ my $loop = IO::Async::Loop->new();
 
  my $sock = ...
 
@@ -204,7 +204,7 @@ sub new
 
    if(  defined $params{read_handle} and !defined $params{write_handle} or
        !defined $params{read_handle} and  defined $params{write_handle} ) {
-      croak "Sequencer requires both a reading and a writing handle"; # TODO: this message sucks
+      croak "Sequencer requires both a reading and a writing handle";
    }
 
    my $on_read = delete $params{on_read};
