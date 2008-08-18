@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 10;
+use Test::More tests => 8;
 use Test::Exception;
 
 use IO::Socket::INET;
@@ -17,29 +17,13 @@ my $loop = IO::Async::Loop::IO_Poll->new();
 
 testing_loop( $loop );
 
-# pipes aren't sockets, so definitely we can't listen() on them
-pipe( my ( $P1, $P2 ) ) or die "Cannot pipe() - $!";
-
-dies_ok( sub {
-      $loop->listen(
-         handle => $P1,
-         on_accept => sub { die "Test died early - accepted connection on a pipe"; },
-      );
-   }, 'Listening on a non-socket handle fails' );
-
-my $S1 = IO::Socket::INET->new( Type => SOCK_STREAM ) or die "Cannot socket() - $!";
-
-dies_ok( sub {
-      $loop->listen(
-         handle => $S1,
-         on_accept => sub { die "Test died early - accepted connection on non-listening socket"; },
-      );
-   }, 'Listening on a non-listening socket fails' );
-
 my $listensock;
 
-$listensock = IO::Socket::INET->new( Type => SOCK_STREAM, Listen => 1 )
-   or die "Cannot socket() - $!";
+$listensock = IO::Socket::INET->new(
+   LocalAddr => "localhost",
+   Type      => SOCK_STREAM,
+   Listen    => 1,
+) or die "Cannot socket() - $!";
 
 my $newclient;
 
@@ -108,7 +92,12 @@ is( $newclient->peername, $clientsock->sockname, '$newclient peer is correct' );
 # it's likely we'll fail to bind TCP port 22 or 80.
 
 my $badport;
-IO::Socket::INET->new( Type => SOCK_STREAM, LocalPort => $_, Listen => 1 ) or $badport = $_, last for 22, 80;
+foreach my $port ( 22, 80 ) {
+   IO::Socket::INET->new( Type => SOCK_STREAM, LocalPort => $port, Listen => 1, ReuseAddr => 1 ) and next;
+      
+   $badport = $port;
+   last;
+}
 
 SKIP: {
    skip "No bind()-failing ports found", 1 unless defined $badport;
@@ -124,7 +113,7 @@ SKIP: {
 
       on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
 
-      on_listen => sub { die "Test died early - listen actually succeeded\n"; },
+      on_listen => sub { die "Test died early - listen on port $badport actually succeeded\n"; },
 
       on_accept => sub { "DUMMY" }, # really hope this doesn't happen ;)
 

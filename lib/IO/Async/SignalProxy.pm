@@ -7,7 +7,7 @@ package IO::Async::SignalProxy;
 
 use strict;
 
-our $VERSION = '0.16';
+our $VERSION = '0.16.001';
 
 use base qw( IO::Async::Notifier );
 
@@ -44,7 +44,7 @@ sub new
 
    my $loop = delete $params{loop} or croak "Expected a 'loop'";
 
-   pipe( my ( $reader, $writer ) ) or croak "Cannot pipe() - $!";
+   my ( $reader, $writer ) = $loop->pipepair() or croak "Cannot pipe() - $!";
 
    $reader->blocking( 0 );
    $writer->blocking( 0 );
@@ -128,6 +128,12 @@ sub on_read_ready
 
    foreach( @caught_signals ) {
       my $callback = $self->{callbacks}->{$_};
+      # This shouldn't fail, but I've seen what looked like a race condition
+      # failure on a Solaris 8 + perl 5.6.1 machine here. This message should
+      # at least help find the problem
+      defined $callback or croak "Undefined callback for signal $_";
+      ref $callback eq "CODE" or croak "Callback for signal $_ is not a CODE ref";
+
       $callback->();
    }
 }
@@ -147,6 +153,8 @@ sub attach
 
    # Don't allow anyone to trash an existing signal handler
    !defined $SIG{$signal} or !ref $SIG{$signal} or croak "Cannot override signal handler for $signal";
+
+   ref $code eq "CODE" or croak 'Expected $code as a CODE reference';
 
    $self->{callbacks}->{$signal} = $code;
 

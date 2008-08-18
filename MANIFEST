@@ -24,12 +24,12 @@ MANIFEST			This list of files
 META.yml
 t/00use.t
 t/01mergepoint.t
-t/01notifier.t
 t/01timequeue.t
-t/02stream.t
-t/03stream-dynamicread.t
-t/03stream-split.t
-t/04stream-cornercases.t
+t/02loop-magic.t
+t/03loop-osabstract.t
+t/04notifier.t
+t/05stream.t
+t/06stream-split.t
 t/10loop-IO-Poll.t
 t/10loop-select.t
 t/11loop-IO-Poll-timing.t
@@ -37,7 +37,6 @@ t/11loop-select-timing.t
 t/12loop-signal.t
 t/12loop-stream.t
 t/13loop-deferredhandle.t
-t/14loop-magic.t
 t/19test.t
 t/20notifier-child.t
 t/30childmanager.t

@@ -6,15 +6,21 @@ use Test::More tests => 43;
 use Test::Exception;
 use Test::Refcount;
 
-use IO::Socket::UNIX;
 use IO::Async::Notifier;
 
 use IO::Poll;
 
 use IO::Async::Loop::IO_Poll;
 
-( my $S1, my $S2 ) = IO::Socket::UNIX->socketpair( AF_UNIX, SOCK_STREAM, PF_UNSPEC ) or
-   die "Cannot create socket pair - $!";
+my $poll = IO::Poll->new();
+my $loop = IO::Async::Loop::IO_Poll->new( poll => $poll );
+
+ok( defined $loop, '$loop defined' );
+isa_ok( $loop, "IO::Async::Loop::IO_Poll", '$loop isa IO::Async::Loop::IO_Poll' );
+
+is_oneref( $loop, '$loop has refcount 1' );
+
+my ( $S1, $S2 ) = $loop->socketpair() or die "Cannot create socket pair - $!";
 
 # Need sockets in nonblocking mode
 $S1->blocking( 0 );
@@ -27,15 +33,6 @@ my $notifier = IO::Async::Notifier->new( handle => $S1,
    on_read_ready  => sub { $readready = 1 },
    on_write_ready => sub { $writeready = 1 },
 );
-
-my $poll = IO::Poll->new();
-
-my $loop = IO::Async::Loop::IO_Poll->new( poll => $poll );
-
-ok( defined $loop, '$loop defined' );
-is( ref $loop, "IO::Async::Loop::IO_Poll", 'ref $loop is IO::Async::Loop::IO_Poll' );
-
-is_oneref( $loop, '$loop has refcount 1' );
 
 # Empty
 
@@ -172,7 +169,8 @@ is( scalar @handles, 0, '@handles after removal' );
 
 $loop->add( $stdout_notifier ); # Just to make the loop non-empty
 
-pipe( my ( $P1, $P2 ) ) or die "Cannot pipe() - $!";
+my ( $P1, $P2 ) = $loop->pipepair() or die "Cannot pipepair - $!";
+
 my ( $N1, $N2 ) = map {
    IO::Async::Notifier->new( 
       read_handle => $_,
@@ -213,7 +211,8 @@ $loop->remove( $write_only_notifier );
 
 # HUP of pipe
 
-pipe( ( $P1, $P2 ) ) or die "Cannot pipe() - $!";
+( $P1, $P2 ) = $loop->pipepair() or die "Cannot pipepair - $!";
+
 ( $N1, $N2 ) = map {
    IO::Async::Notifier->new(
       read_handle => $_,
