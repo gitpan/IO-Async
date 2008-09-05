@@ -7,7 +7,7 @@ package IO::Async::Notifier;
 
 use strict;
 
-our $VERSION = '0.16.001';
+our $VERSION = '0.17';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -17,6 +17,11 @@ use Scalar::Util qw( weaken );
 C<IO::Async::Notifier> - event callbacks for a non-blocking file descriptor
 
 =head1 SYNOPSIS
+
+This class is likely not to be used directly, because subclasses of it exist
+to handle more specific cases. Here is an example of how it would be used to
+watch a listening socket for new connections. In real code, it is likely that
+the C<< Loop->listen() >> method would be used instead.
 
  use IO::Socket::INET;
  use IO::Async::Notifier;
@@ -43,9 +48,8 @@ stream, the C<IO::Async::Stream> class is likely to be more suitable.
 =head1 DESCRIPTION
 
 This module provides a base class for implementing non-blocking IO on file
-descriptors. The object provides ways to integrate with existing asynchronous
-IO handling code, by way of the various C<IO::Async::Loop::*> collection
-classes.
+descriptors. The object interacts with the actual OS by being part of the
+C<IO::Async::Loop> object it has been added to.
 
 This object may be used in one of two ways; with callback functions, or as a
 base class.
@@ -63,7 +67,7 @@ called when the underlying IO handle becomes readable or writable:
  $on_write_ready->( $self )
 
 Optionally, an C<on_closed> key can also be specified, which will be called
-when the C<close> method is invoked. This is intended for subclasses.
+when the C<close> method is invoked.
 
  $on_closed->( $self )
 
@@ -80,7 +84,8 @@ should not call the C<SUPER::> versions of those methods.
 =back
 
 If either of the readyness methods calls the C<close()> method, then
-the handle is internally marked as closed within the object.
+the handle is internally marked as closed within the object and will be
+removed from its containing loop, if it is within one.
 
 =cut
 
@@ -113,19 +118,19 @@ as above. Must implement C<fileno> method in way that C<IO::Handle> does.
 
 =item on_write_ready => CODE
 
-CODE references to handlers for when the handle becomes read-ready or
+CODE references to callbacks for when the handle becomes read-ready or
 write-ready. If these are not supplied, subclass methods will be called
 instead.
 
 =item on_closed => CODE
 
-CODE reference to the handler for when the handle becomes closed.
+CODE reference to the callback for when the handle becomes closed.
 
 =back
 
-It is required that at C<on_read_ready> or C<on_write_ready> are provided for
-any handle that is provided; either as a callback reference or that the object
-is a subclass that overrides the method. I.e. if only a C<read_handle> is
+It is required that a matching C<on_read_ready> or C<on_write_ready> are
+available for any handle that is provided; either passed as a callback CODE
+reference or as an overridden the method. I.e. if only a C<read_handle> is
 given, then C<on_write_ready> can be absent. If C<handle> is used as a
 shortcut, then both read and write-ready callbacks or methods are required.
 
@@ -142,54 +147,7 @@ sub new
    my $class = shift;
    my ( %params ) = @_;
 
-   my ( $read_handle, $write_handle );
-
-   if( defined $params{read_handle} or defined $params{write_handle} ) {
-      # Test if we've got a fileno. We put it in an eval block in case what
-      # we were passed in can't do fileno. We can't just test if 
-      # $read_handle->can( "fileno" ) because this is not true for bare
-      # filehandles like \*STDIN, whereas STDIN->fileno still works.
-
-      $read_handle  = $params{read_handle};
-      if( defined $read_handle ) {
-         unless( defined eval { $read_handle->fileno } ) {
-            croak 'Expected that read_handle can fileno()';
-         }
-      }
-
-      $write_handle = $params{write_handle};
-      if( defined $write_handle ) {
-         unless( defined eval { $write_handle->fileno } ) {
-            croak 'Expected that write_handle can fileno()';
-         }
-      }
-   }
-   elsif( defined $params{handle} ) {
-      my $handle = $params{handle};
-      unless( defined eval { $handle->fileno } ) {
-         croak 'Expected that handle can fileno()';
-      }
-
-      $read_handle  = $handle;
-      $write_handle = $handle;
-   }
-
-   if( defined $read_handle ) {
-      if( !$params{on_read_ready} and $class->can( 'on_read_ready' ) == \&on_read_ready ) {
-         croak 'Expected either a on_read_ready callback or an ->on_read_ready method';
-      }
-   }
-
-   if( defined $write_handle ) {
-      if( !$params{on_write_ready} and $class->can( 'on_write_ready' ) == \&on_write_ready ) {
-         # This used not to be fatal. Make it just a warning for now.
-         carp 'A write handle was provided but neither a on_write_ready callback nor an ->on_write_ready method were. Perhaps you mean \'read_handle\' instead?';
-      }
-   }
-
    my $self = bless {
-      read_handle     => $read_handle,
-      write_handle    => $write_handle,
       want_readready  => 0,
       want_writeready => 0,
       children        => [],
@@ -200,8 +158,18 @@ sub new
    $self->{on_write_ready} = $params{on_write_ready} if defined $params{on_write_ready};
    $self->{on_closed}      = $params{on_closed}      if defined $params{on_closed};
 
+   if( defined $params{read_handle} or defined $params{write_handle} ) {
+      $self->set_handles(
+         read_handle  => $params{read_handle},
+         write_handle => $params{write_handle},
+      );
+   }
+   elsif( defined $params{handle} ) {
+      $self->set_handle( $params{handle} );
+   }
+
    # Slightly asymmetric
-   $self->want_readready( defined $read_handle );
+   $self->want_readready( $self->read_handle );
    $self->want_writeready( $params{want_writeready} || 0 );
 
    return $self;
@@ -236,27 +204,38 @@ sub set_handles
    my $self = shift;
    my %params = @_;
 
-   if( defined $params{read_handle} ) {
-      unless( defined eval { $params{read_handle}->fileno } ) {
+   my ( $read_handle, $write_handle );
+
+   if( defined( $read_handle = $params{read_handle} ) ) {
+      unless( defined eval { $read_handle->fileno } ) {
          croak 'Expected that read_handle can fileno()';
+      }
+
+      if( !$self->{on_read_ready} and $self->can( 'on_read_ready' ) == \&on_read_ready ) {
+         croak 'Expected either a on_read_ready callback or an ->on_read_ready method';
       }
    }
 
-   if( defined $params{write_handle} ) {
-      unless( defined eval { $params{write_handle}->fileno } ) {
+   if( defined( $write_handle = $params{write_handle} ) ) {
+      unless( defined eval { $write_handle->fileno } ) {
          croak 'Expected that write_handle can fileno()';
+      }
+
+      if( !$self->{on_write_ready} and $self->can( 'on_write_ready' ) == \&on_write_ready ) {
+         # This used not to be fatal. Make it just a warning for now.
+         carp 'A write handle was provided but neither a on_write_ready callback nor an ->on_write_ready method were. Perhaps you mean \'read_handle\' instead?';
       }
    }
 
    if( exists $params{read_handle} ) {
-      $self->{read_handle} = $params{read_handle};
+      $self->{read_handle} = $read_handle;
 
       # Register interest in readability with the underlying loop
-      $self->want_readready( defined $self->{read_handle} );
+      $self->want_readready( defined $read_handle );
    }
 
    if( exists $params{write_handle} ) {
-      $self->{write_handle} = $params{write_handle};
+      $self->{write_handle} = $write_handle;
    }
 }
 
@@ -281,7 +260,7 @@ sub set_handle
 
 =head2 $notifier->close
 
-This method calls C<close> on the underlying IO handles. This method will will
+This method calls C<close> on the underlying IO handles. This method will then
 remove the notifier from its containing loop.
 
 =cut

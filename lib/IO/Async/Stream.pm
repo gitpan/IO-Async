@@ -7,7 +7,7 @@ package IO::Async::Stream;
 
 use strict;
 
-our $VERSION = '0.16.001';
+our $VERSION = '0.17';
 
 use base qw( IO::Async::Notifier );
 
@@ -98,13 +98,14 @@ Or
 This module provides a subclass of C<IO::Async::Notifier> which implements
 asynchronous communications buffers around stream handles. It provides
 buffering for both incoming and outgoing data, which are transferred to or
-from the actual handle when it is read- or write-ready.
+from the actual OS-level filehandle as controlled by the containing Loop.
 
 Data can be added to the outgoing buffer at any time using the C<write()>
 method, and will be flushed whenever the underlying handle is notified as
 being write-ready. Whenever the handle is notified as being read-ready, the
 data is read in from the handle, and the C<on_read> code is called to indicate
-the data is available.
+the data is available. The code can then inspect the buffer and possibly
+consume any input it considers ready.
 
 This object may be used in one of two ways; with a callback function, or as a
 base class.
@@ -267,13 +268,58 @@ sub new
 
 =cut
 
+=head2 $stream->close
+
+A synonym for C<close_when_empty>. This should not be used when the deferred
+wait behaviour is required, as the behaviour of C<close> may change in a
+future version of C<IO::Async>. Instead, call C<close_when_empty> directly.
+
+=cut
+
 sub close
+{
+   my $self = shift;
+   $self->close_when_empty;
+}
+
+=head2 $stream->close_when_empty
+
+If the write buffer is empty, this method calls C<close> on the underlying IO
+handles, and removes the stream from its containing loop. If the write buffer
+still contains data, then this is deferred until the buffer is empty. This is
+intended for "write-then-close" one-shot streams.
+
+ $stream->write( "Here is my final data\n" );
+ $stream->close_when_empty;
+
+Because of this deferred nature, it may not be suitable for error handling.
+See instead the C<close_now> method.
+
+=cut
+
+sub close_when_empty
 {
    my $self = shift;
 
    return $self->SUPER::close if length( $self->{writebuff} ) == 0;
 
    $self->{closing} = 1;
+}
+
+=head2 $stream->close_now
+
+This method immediately closes the underlying IO handles and removes the
+stream from the containing loop. It will not wait to flush the remaining data
+in the write buffer.
+
+=cut
+
+sub close_now
+{
+   my $self = shift;
+
+   $self->{writebuff} = "";
+   $self->SUPER::close;
 }
 
 =head2 $stream->write( $data )
@@ -326,7 +372,7 @@ sub on_read_ready
          $self->on_read_error( $errno );
       }
       else {
-         $self->close();
+         $self->close_now;
       }
 
       return;
@@ -365,7 +411,7 @@ sub on_read_ready
       last if !$again;
    }
 
-   $self->close() if $handleclosed;
+   $self->close_now if $handleclosed;
 }
 
 # protected
@@ -390,14 +436,14 @@ sub on_write_ready
             $self->on_write_error( $errno );
          }
          else {
-            $self->close();
+            $self->close_now;
          }
 
          return;
       }
 
       if( $len == 0 ) {
-         $self->close();
+         $self->close_now;
          return;
       }
 
@@ -415,7 +461,7 @@ sub on_write_ready
          $self->on_outgoing_empty();
       }
 
-      $self->close if $self->{closing};
+      $self->close_now if $self->{closing};
    }
 }
 

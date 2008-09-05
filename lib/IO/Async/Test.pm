@@ -7,7 +7,7 @@ package IO::Async::Test;
 
 use strict;
 
-our $VERSION = '0.16.001';
+our $VERSION = '0.17';
 
 use Exporter;
 our @ISA = qw( Exporter );
