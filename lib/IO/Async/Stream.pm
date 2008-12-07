@@ -7,7 +7,7 @@ package IO::Async::Stream;
 
 use strict;
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 use base qw( IO::Async::Notifier );
 
@@ -303,7 +303,7 @@ sub close_when_empty
 
    return $self->SUPER::close if length( $self->{writebuff} ) == 0;
 
-   $self->{closing} = 1;
+   $self->{stream_closing} = 1;
 }
 
 =head2 $stream->close_now
@@ -342,7 +342,7 @@ sub write
    my $self = shift;
    my ( $data ) = @_;
 
-   carp "Cannot write data to a Stream that is closing", return if $self->{closing};
+   carp "Cannot write data to a Stream that is closing", return if $self->{stream_closing};
    croak "Cannot write data to a Stream with no write_handle" unless $self->write_handle;
 
    $self->{writebuff} .= $data;
@@ -383,16 +383,11 @@ sub on_read_ready
    $self->{readbuff} .= $data if( !$handleclosed );
 
    while(1) {
-      my $callback = $self->{current_on_read} || $self->{on_read};
+      my $on_read = $self->{current_on_read}
+                     || $self->{on_read}
+                     || $self->can( "on_read" );
 
-      my $ret;
-
-      if( defined $callback ) {
-         $ret = $callback->( $self, \$self->{readbuff}, $handleclosed );
-      }
-      else {
-         $ret = $self->on_read( \$self->{readbuff}, $handleclosed );
-      }
+      my $ret = $on_read->( $self, \$self->{readbuff}, $handleclosed );
 
       my $again;
 
@@ -454,14 +449,12 @@ sub on_write_ready
    if( length( $self->{writebuff} ) == 0 ) {
       $self->want_writeready( 0 );
 
-      if( defined( my $callback = $self->{on_outgoing_empty} ) ) {
-         $callback->( $self );
-      }
-      elsif( $self->can( 'on_outgoing_empty' ) ) {
-         $self->on_outgoing_empty();
-      }
+      my $on_outgoing_empty = $self->{on_outgoing_empty}
+                               || $self->can( "on_outgoing_empty" );
 
-      $self->close_now if $self->{closing};
+      $on_outgoing_empty->( $self ) if $on_outgoing_empty;
+
+      $self->close_now if $self->{stream_closing};
    }
 }
 

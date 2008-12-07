@@ -7,7 +7,7 @@ package IO::Async::Listener;
 
 use strict;
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 use IO::Async::Notifier;
 
@@ -359,10 +359,17 @@ sub _listen_sock
       read_handle => $sock,
       on_read_ready => sub {
          my $newclient = $sock->accept();
-         defined $newclient or $! == EAGAIN or die "Cannot accept - $!";
-
-         $on_accept->( $newclient );
-         # TODO: Consider what it might return
+         if( defined $newclient ) {
+            $on_accept->( $newclient );
+            # TODO: Consider what it might return
+         }
+         elsif( $! == EAGAIN ) {
+            # No client ready after all. Perhaps we're sharing the listen
+            # socket with other processes? Anyway; not fatal, just ignore it
+         }
+         else {
+            die "Cannot accept - $!";
+         }
       },
    );
 

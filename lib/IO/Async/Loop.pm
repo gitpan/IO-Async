@@ -7,7 +7,7 @@ package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 use Carp;
 
@@ -829,7 +829,11 @@ sub socket
 
    defined $proto or $proto = 0;
 
-   return IO::Socket->new->socket( $family, $socktype, $proto );
+   return IO::Socket->new(
+      Domain => $family, 
+      Type   => $socktype,
+      Proto  => $proto,
+   );
 }
 
 =head2 ( $S1, $S2 ) = $loop->socketpair( $family, $socktype, $proto )
