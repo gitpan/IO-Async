@@ -7,7 +7,7 @@ package IO::Async::Stream;
 
 use strict;
 
-our $VERSION = '0.18';
+our $VERSION = '0.19';
 
 use base qw( IO::Async::Notifier );
 
@@ -319,6 +319,8 @@ sub close_now
    my $self = shift;
 
    $self->{writebuff} = "";
+   undef $self->{stream_closing};
+
    $self->SUPER::close;
 }
 
@@ -342,7 +344,7 @@ sub write
    my $self = shift;
    my ( $data ) = @_;
 
-   carp "Cannot write data to a Stream that is closing", return if $self->{stream_closing};
+   carp "Cannot write data to a Stream that is closing" and return if $self->{stream_closing};
    croak "Cannot write data to a Stream with no write_handle" unless $self->write_handle;
 
    $self->{writebuff} .= $data;

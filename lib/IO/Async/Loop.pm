@@ -7,12 +7,14 @@ package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.18';
+our $VERSION = '0.19';
 
 use Carp;
 
 use Socket;
 use IO::Socket;
+# Try to load IO::Socket::INET6 but don't worry if we don't have it
+eval { require IO::Socket::INET6 };
 
 # Never sleep for more than 1 second if a signal proxy is registered, to avoid
 # a borderline race condition.
@@ -829,11 +831,21 @@ sub socket
 
    defined $proto or $proto = 0;
 
-   return IO::Socket->new(
-      Domain => $family, 
-      Type   => $socktype,
-      Proto  => $proto,
-   );
+   my $sock = eval {
+      IO::Socket->new(
+         Domain => $family, 
+         Type   => $socktype,
+         Proto  => $proto,
+      );
+   };
+   return $sock if $sock;
+
+   # That failed. Most likely because the Domain was unrecognised. This 
+   # usually happens if getaddrinfo() returns an AF_INET6 address but we don't
+   # have IO::Socket::INET6 loaded. In this case we'll return a generic one.
+   # It won't be in the specific subclass but that's the best we can do. And
+   # it will still work as a generic socket.
+   return IO::Socket->new->socket( $family, $socktype, $proto );
 }
 
 =head2 ( $S1, $S2 ) = $loop->socketpair( $family, $socktype, $proto )

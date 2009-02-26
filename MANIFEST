@@ -45,6 +45,7 @@ t/32childmanager-spawn.t
 t/33childmanager-spawn-setup.t
 t/34childmanager-open.t
 t/35childmanager-run.t
+t/36childmanager-root.t
 t/40detachedcode-marshall.t
 t/41detachedcode-call.t
 t/50loop-resolve.t

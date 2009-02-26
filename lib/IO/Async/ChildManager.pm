@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2009 -- leonerd@leonerd.org.uk
 
 package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.18';
+our $VERSION = '0.19';
 
 # Not a notifier
 
@@ -35,6 +35,8 @@ C<IO::Async::ChildManager> - facilitates the execution of child processes
 This object is used indirectly via an C<IO::Async::Loop>:
 
  use IO::Async::Loop;
+ use POSIX qw( WEXITSTATUS );
+
  my $loop = IO::Async::Loop->new();
 
  ...
@@ -44,7 +46,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
     on_finish => sub {
        my ( $pid, $exitcode, $stdout, $stderr ) = @_;
-       print "ps [PID $pid] exited with code $exitcode\n";
+       my $status = WEXITSTATUS( $exitcode );
+       print "ps [PID $pid] exited with status $status\n";
     },
  );
 
@@ -64,6 +67,7 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
     on_finish => sub {
        my ( $pid, $exitcode ) = @_;
+       my $status = WEXITSTATUS( $exitcode );
        ...
     },
  );
@@ -81,7 +85,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
     on_exit => sub {
        my ( $pid, $exitcode ) = @_;
-       print "Command exited with code $exitcode\n";
+       my $status = WEXITSTATUS( $exitcode );
+       print "Command exited with status $status\n";
     },
  );
 
@@ -93,7 +98,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
     on_exit => sub {
        my ( $pid, $exitcode, $dollarbang, $dollarat ) = @_;
-       print "Child process exited with code $exitcode\n";
+       my $status = WEXITSTATUS( $exitcode );
+       print "Child process exited with status $status\n";
        print " OS error was $dollarbang, exception was $dollarat\n";
     },
  );
@@ -188,6 +194,9 @@ A CODE reference to the exit handler. It will be invoked as
 
  $code->( $pid, $? )
 
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+
 After invocation, the handler is automatically removed from the manager.
 
 =back
@@ -268,6 +277,9 @@ be invoked in the following way:
 
  $on_exit->( $pid, $exitcode )
 
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+
 This key is optional; if not supplied, the calling code should install a
 handler using the C<watch_child()> method.
 
@@ -343,6 +355,9 @@ A continuation to be called when the child processes exits. It will be invoked
 in the following way:
 
  $on_exit->( $pid, $exitcode, $dollarbang, $dollarat )
+
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
 
 =back
 
@@ -495,11 +510,30 @@ Change the child process's scheduling priority using C<POSIX::nice()>.
 
 Change the child process's working directory using C<chdir()>.
 
+=item setuid => INT
+
+=item setgid => INT
+
+Change the child process's effective UID or GID.
+
+=item setgroups => ARRAY
+
+Change the child process's groups list, to those groups whose numbers are
+given in the ARRAY reference.
+
+On most systems, only the privileged superuser change user or group IDs.
+C<IO::Async> will B<NOT> check before detaching the child process whether
+this is the case.
+
 =back
 
 If no directions for what to do with C<stdin>, C<stdout> and C<stderr> are
 given, a default of C<keep> is implied. All other file descriptors will be
 closed, unless a C<keep> operation is given for them.
+
+If C<setuid> is used, be sure to place it after any other operations that
+might require superuser privileges, such as C<setgid> or opening special
+files.
 
 =cut
 
@@ -557,6 +591,16 @@ sub _check_setup_and_canonicise
          # silly things like passing a reference - directories such as
          # ARRAY(0x12345) are unlikely to exist
          -d $value or croak "Working directory '$value' does not exist";
+      }
+      elsif( $key eq "setuid" ) {
+         $value =~ m/^\d+$/ or croak "Expected integer for 'setuid' setup key";
+      }
+      elsif( $key eq "setgid" ) {
+         $value =~ m/^\d+$/ or croak "Expected integer for 'setgid' setup key";
+      }
+      elsif( $key eq "setgroups" ) {
+         ref $value eq "ARRAY" or croak "Expected ARRAY reference for 'setgroups' setup key";
+         m/^\d+$/ or croak "Expected integer in 'setgroups' array" for @$value;
       }
       else {
          croak "Unrecognised setup operation '$key'";
@@ -738,6 +782,17 @@ sub _spawn_in_child
             elsif( $key eq "chdir" ) {
                chdir( $value ) or die "Cannot chdir('$value') - $!";
             }
+            elsif( $key eq "setuid" ) {
+               $> = $value or die "Cannot setuid('$value') - $!";
+            }
+            elsif( $key eq "setgid" ) {
+               $) = $value or die "Cannot setgid('$value') - $!";
+            }
+            elsif( $key eq "setgroups" ) {
+               my $gid = $)+0;
+               my $groups = join( " ", @$value );
+               $) = "$gid $groups" or die "Cannot setgroups('$groups') - $!";
+            }
          }
       }
 
@@ -774,6 +829,9 @@ the filehandles that were set up for it. It will be invoked in the following
 way:
 
  $on_finish->( $pid, $exitcode )
+
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
 
 =item on_error => CODE
 
@@ -998,9 +1056,16 @@ and STDERR streams. It will be invoked in the following way:
 
  $on_finish->( $pid, $exitcode, $stdout, $stderr )
 
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+
 =item stdin => STRING
 
 Optional. String to pass in to the child process's STDIN stream.
+
+=item setup => ARRAY
+
+Optional reference to an array to pass to the underlying C<spawn> method.
 
 =back
 
@@ -1041,6 +1106,7 @@ sub run_child
 
    $subparams{code}    = delete $params{code};
    $subparams{command} = delete $params{command};
+   $subparams{setup}   = delete $params{setup};
 
    croak "Unrecognised parameters " . join( ", ", keys %params ) if keys %params;
 
