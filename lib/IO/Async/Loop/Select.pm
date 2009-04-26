@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2009 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Select;
 
 use strict;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 use base qw( IO::Async::Loop );
 
@@ -76,7 +76,13 @@ It takes no special arguments.
 sub new
 {
    my $class = shift;
-   return $class->__new( @_ );
+
+   my $self = $class->__new( @_ );
+
+   $self->{rvec} = '';
+   $self->{wvec} = '';
+
+   return $self;
 }
 
 =head1 METHODS
@@ -114,14 +120,9 @@ sub pre_select
    my $self = shift;
    my ( $readref, $writeref, $exceptref, $timeref ) = @_;
 
-   my $notifiers = $self->{notifiers};
-
-   foreach my $nkey ( keys %$notifiers ) {
-      my $notifier = $notifiers->{$nkey};
-
-      vec( $$readref,  $notifier->read_fileno,  1 ) = 1 if $notifier->want_readready;
-      vec( $$writeref, $notifier->write_fileno, 1 ) = 1 if $notifier->want_writeready;
-   }
+   # BITWISE operations
+   $$readref  |= $self->{rvec};
+   $$writeref |= $self->{wvec};
 
    $self->_adjust_timeout( $timeref );
 
@@ -152,30 +153,28 @@ sub post_select
    my $self = shift;
    my ( $readvec, $writevec, $exceptvec ) = @_;
 
-   # Build a list of the notifiers that are ready, then fire the callbacks
-   # afterwards. This avoids races and other bad effects if any of the
-   # callbacks happen to change the notifiers in the set
-   my @readready;
-   my @writeready;
+   my $iowatches = $self->{iowatches};
 
-   my $notifiers = $self->{notifiers};
-   foreach my $nkey ( keys %$notifiers ) {
-      my $notifier = $notifiers->{$nkey};
+   # Build a list of the callbacks to fire, then fire them afterwards.
+   # This avoids races and other bad effects if any of the callbacks happen
+   # to change any state.
+   my @ready;
 
-      my $rfileno = $notifier->read_fileno;
-      my $wfileno = $notifier->write_fileno;
+   foreach my $fd ( keys %$iowatches ) {
+      my $watch = $iowatches->{$fd};
 
-      if( defined $rfileno and vec( $readvec, $rfileno, 1 ) ) {
-         push @readready, $notifier;
+      my $fileno = $watch->[0]->fileno;
+
+      if( vec( $readvec, $fileno, 1 ) ) {
+         push @ready, $watch->[1] if defined $watch->[1];
       }
 
-      if( defined $wfileno and vec( $writevec, $wfileno, 1 ) ) {
-         push @writeready, $notifier;
+      if( vec( $writevec, $fileno, 1 ) ) {
+         push @ready, $watch->[2] if defined $watch->[2];
       }
    }
 
-   $_->on_read_ready foreach @readready;
-   $_->on_write_ready foreach @writeready;
+   $_->() foreach @ready;
 
    # Since we have no way to know if the timeout occured, we'll have to
    # attempt to fire any waiting timeout events anyway
@@ -212,6 +211,36 @@ sub loop_once
    }
 
    return $ret;
+}
+
+sub watch_io
+{
+   my $self = shift;
+   my %params = @_;
+
+   $self->__watch_io( %params );
+
+   my $fileno = $params{handle}->fileno;
+
+   vec( $self->{rvec}, $fileno, 1 ) = 1 if $params{on_read_ready};
+   vec( $self->{wvec}, $fileno, 1 ) = 1 if $params{on_write_ready};
+}
+
+sub unwatch_io
+{
+   my $self = shift;
+   my %params = @_;
+
+   $self->__unwatch_io( %params );
+
+   my $fileno = $params{handle}->fileno;
+
+   vec( $self->{rvec}, $fileno, 1 ) = 0 if $params{on_read_ready};
+   vec( $self->{wvec}, $fileno, 1 ) = 0 if $params{on_write_ready};
+
+   # vec() will grow a bit vector as needed, but never shrink it. We'll trim
+   # trailing null bytes
+   $_ =~s/\0+\z// for $self->{rvec}, $self->{wvec};
 }
 
 # Keep perl happy; keep Britain tidy

@@ -11,7 +11,7 @@ use strict;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 =head1 NAME
 
@@ -73,27 +73,33 @@ gives a brief description of each.
 
 =head2 File Handle IO
 
-A L<IO::Async::Notifier> object represents a single IO handle that is being
+A L<IO::Async::Handle> object represents a single IO handle that is being
 managed. While in most cases it will represent a single filehandle, such as a
 socket (for example, an C<IO::Socket::INET> connection), it is possible to
 have separate reading and writing handles (most likely for a program's
 C<STDIN> and C<STDOUT> streams, or a pair of pipes connected to a child
 process).
 
-The L<IO::Async::Stream> class is a subclass of C<IO::Async::Notifier> which
+The L<IO::Async::Stream> class is a subclass of C<IO::Async::Handle> which
 maintains internal incoming and outgoing data buffers. In this way, it
 implements bidirectional buffering of a byte stream, such as a TCP socket. The
 class automatically handles reading of incoming data into the incoming buffer,
 and writing of the outgoing buffer. Methods or callbacks are used to inform
 when new incoming data is available, or when the outgoing buffer is empty.
 
+Both of the above are subclasses of L<IO::Async::Notifier>, which does not
+perform any IO operations itself, but instead acts to coordinate a collection
+of other Notifiers, or act as a base class to build the specific IO
+functionallity upon. For other types of C<Notifier>, see Timers and Signals
+below.
+
 =head2 Loops
 
 The L<IO::Async::Loop> object class represents an abstract collection of
-C<IO::Async::Notifier> objects, timers, signal handlers, and other
-functionallity. It performs all of the abstract collection management tasks,
-and leaves the actual OS interactions to a particular subclass for the
-purpose.
+C<IO::Async::Notifier> objects, filehandle IO watches, timers, signal
+handlers, and other functionallity. It performs all of the abstract
+collection management tasks, and leaves the actual OS interactions to a
+particular subclass for the purpose.
 
 L<IO::Async::Loop::IO_Poll> uses an C<IO::Poll> object for this test.
 
@@ -144,11 +150,19 @@ function call arguments and return values.
 
 =head2 Timers
 
-The L<IO::Async::Loop> supports methods for managing timers. These are
-callbacks invoked at some fixed future time. Once installed, a timer will be
-called at or after its expiry time. This time may be absolute, or relative to
-the time it was installed. An installed timer which has not yet expired may be
-cancelled or rescheduled.
+A L<IO::Async::Timer> object represents a counttime timer, which will invoke
+a callback after a given delay. It can be stopped and restarted.
+
+The L<IO::Async::Loop> also supports methods for managing timed events on a
+lower level. Events may be absolute, or relative in time to the time they are
+installed.
+
+=head2 Signals
+
+A L<IO::Async::Signal> object represents a POSIX signal, which will invoke a
+callback when the given signal is received by the process. Multiple objects
+watching the same signal can be used; they will all invoke in no particular
+order.
 
 =head2 Merge Points
 

@@ -1,15 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2009 -- leonerd@leonerd.org.uk
 
-package IO::Async::SignalProxy;
+package # hide from CPAN
+  IO::Async::Internals::SignalProxy;
 
 use strict;
 
-our $VERSION = '0.19';
-
-use base qw( IO::Async::Notifier );
+use base qw( IO::Async::Handle );
 
 use Carp;
 
@@ -17,25 +16,6 @@ use POSIX qw( EAGAIN SIG_BLOCK SIG_SETMASK sigprocmask );
 use IO::Handle;
 
 use warnings qw();
-
-=head1 NAME
-
-C<IO::Async::SignalProxy> - handle POSIX signals with C<IO::Async>-based IO
-
-=head1 SYNOPSIS
-
-This object class is for internal use by C<IO::Async::Loop> subclasses. It is
-not intended for use externally.
-
-=head1 DESCRIPTION
-
-This module provides a class that allows POSIX signals to be handled safely
-alongside other IO operations on filehandles in an C<IO::Async::Loop>. Because
-signals could arrive at any time, care must be taken that they do not
-interrupt the normal flow of the program, and are handled at the same time as
-other events in the C<IO::Async::Loop>'s results.
-
-=cut
 
 sub new
 {
@@ -76,10 +56,9 @@ sub DESTROY
 
    my $restore_SIG = $self->{restore_SIG};
 
-   $self->detach( $_ ) foreach keys %$restore_SIG;
+   $self->unwatch( $_ ) foreach keys %$restore_SIG;
 }
 
-# protected
 sub on_read_ready
 {
    my $self = shift;
@@ -138,21 +117,12 @@ sub on_read_ready
    }
 }
 
-sub attach
+sub watch
 {
    my $self = shift;
    my ( $signal, $code ) = @_;
 
-   if( $signal eq "CHLD" ) {
-      # We make special exception to allow the ChildManager to do this
-      caller(1) eq "IO::Async::ChildManager" or
-         carp "Attaching to SIGCHLD is not advised - use the IO::Async::ChildManager instead";
-   }
-
    exists $SIG{$signal} or croak "Unrecognised signal name $signal";
-
-   # Don't allow anyone to trash an existing signal handler
-   !defined $SIG{$signal} or !ref $SIG{$signal} or croak "Cannot override signal handler for $signal";
 
    ref $code eq "CODE" or croak 'Expected $code as a CODE reference';
 
@@ -180,13 +150,13 @@ sub attach
       push @$signal_queue, $signal;
    };
 
-   my $signum = signame2num( $signal );
+   my $signum = $self->get_loop->signame2num( $signal );
 
    my $sigset_block = $self->{sigset_block};
    $sigset_block->addset( $signum );
 }
 
-sub detach
+sub unwatch
 {
    my $self = shift;
    my ( $signal ) = @_;
@@ -207,48 +177,6 @@ sub signals
 {
    my $self = shift;
    return keys %{ $self->{callbacks} };
-}
-
-=head1 FUNCTIONS
-
-=cut
-
-=head2 $signum = IO::Async::SignalProxy::signame2num( $signame )
-
-This utility function converts a signal name (such as "TERM") into its system-
-specific signal number. This may be useful to pass to C<POSIX::SigSet> or use
-in other places which use numbers instead of symbolic names.
-
-Note that this function is not an object method, and is not exported.
-
-=cut
-
-# Our interface uses signal names, but POSIX::SigSet wants numbers
-my %sig_num;
-
-sub signame2num
-{
-   # JUST A FUNCTION - i.e. not a method
-   my ( $signame ) = @_;
-   return $sig_num{$signame};
-}
-
-# Just initialise once on startup
-{
-   # Copypasta from Config.pm's documentation
-   use Config;
-
-   my @sig_name;
-   unless($Config{sig_name} && $Config{sig_num}) {
-      die "No signals found";
-   }
-   else {
-      my @names = split ' ', $Config{sig_name};
-      @sig_num{@names} = split ' ', $Config{sig_num};
-      foreach (@names) {
-         $sig_name[$sig_num{$_}] ||= $_;
-      }   
-   }
 }
 
 # Keep perl happy; keep Britain tidy
@@ -298,7 +226,3 @@ in the way indicated above, then all that will happen is that the pipe will
 remain non-empty while the signal queue array is empty. In this case, the
 on_read_ready handler will be fired again, read up-to 8192 more bytes, then
 find the queue to be empty, and return again.
-
-=head1 AUTHOR
-
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>

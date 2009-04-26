@@ -7,7 +7,7 @@ package IO::Async::ChildManager;
 
 use strict;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 # Not a notifier
 
@@ -130,7 +130,7 @@ sub new
 
    weaken( $self->{loop} );
 
-   $loop->attach_signal( CHLD => sub { $self->SIGCHLD } );
+   $self->{sig_id} = $loop->attach_signal( CHLD => sub { $self->SIGCHLD } );
 
    return $self;
 }
@@ -141,7 +141,7 @@ sub disable
 
    my $loop = $self->{loop};
 
-   $loop->detach_signal( 'CHLD' );
+   $loop->detach_signal( 'CHLD', $self->{sig_id} );
 }
 
 =head1 METHODS

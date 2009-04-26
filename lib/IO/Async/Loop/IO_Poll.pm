@@ -1,13 +1,13 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2009 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::IO_Poll;
 
 use strict;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 use base qw( IO::Async::Loop );
 
@@ -119,8 +119,8 @@ sub new
 This method checks the returned event list from a C<IO::Poll::poll()> call,
 and calls any of the notification methods or callbacks that are appropriate.
 It returns the total number of callbacks that were invoked; that is, the
-total number of C<on_read_ready> and C<on_write_ready> methods on Notifiers,
-and the total number of TimeQueue event callbacks.
+total number of C<on_read_ready> and C<on_write_ready> callbacks for 
+C<watch_io>, and C<enqueue_timer> event callbacks.
 
 =over 8
 
@@ -136,42 +136,33 @@ sub post_poll
 {
    my $self = shift;
 
-   my $notifiers = $self->{notifiers};
+   my $iowatches = $self->{iowatches};
    my $poll      = $self->{poll};
 
-   # Build a list of the notifiers that are ready, then fire the callbacks
-   # afterwards. This avoids races and other bad effects if any of the
-   # callbacks happen to change the notifiers in the set
-   my @readready;
-   my @writeready;
+   # Build a list of the callbacks to fire, then fire them afterwards.
+   # This avoids races and other bad effects if any of the callbacks happen
+   # to change any state.
+   my @ready;
 
-   foreach my $nkey ( keys %$notifiers ) {
-      my $notifier = $notifiers->{$nkey};
+   foreach my $fd ( keys %$iowatches ) {
+      my $watch = $iowatches->{$fd};
 
-      if( defined( my $rhandle = $notifier->read_handle ) ) {
-         my $revents = $poll->events( $rhandle );
+      my $events = $poll->events( $watch->[0] );
 
-         # We have to test separately because kernel doesn't report POLLIN when
-         # a pipe gets closed.
-         if( $revents & (POLLIN|POLLHUP) ) {
-            push @readready, $notifier;
-         }
+      # We have to test separately because kernel doesn't report POLLIN when
+      # a pipe gets closed.
+      if( $events & (POLLIN|POLLHUP) ) {
+         push @ready, $watch->[1] if defined $watch->[1];
       }
 
-      if( defined( my $whandle = $notifier->write_handle ) ) {
-         my $wevents = defined $whandle ? $poll->events( $whandle ) : 0;
-
-         if( $wevents & POLLOUT or
-             ( $notifier->want_writeready and $wevents & POLLHUP ) ) {
-            push @writeready, $notifier;
-         }
+      if( $events & (POLLOUT|POLLHUP) ) {
+         push @ready, $watch->[2] if defined $watch->[2];
       }
    }
 
-   my $count = @readready + @writeready;
+   my $count = @ready;
 
-   $_->on_read_ready foreach @readready;
-   $_->on_write_ready foreach @writeready;
+   $_->() foreach @ready;
 
    # Since we have no way to know if the timeout occured, we'll have to
    # attempt to fire any waiting timeout events anyway
@@ -234,60 +225,44 @@ sub loop_once
    return $self->post_poll();
 }
 
-# override
-sub _notifier_removed
+sub watch_io
 {
    my $self = shift;
-   my ( $notifier ) = @_;
+   my %params = @_;
+
+   $self->__watch_io( %params );
 
    my $poll = $self->{poll};
 
-   my $rhandle = $notifier->read_handle;
-   my $whandle = $notifier->write_handle;
+   my $handle = $params{handle};
 
-   if( defined $rhandle ) {
-      $poll->remove( $rhandle );
-      # This sort of mangling is usually frowned-upon because it relies on
-      # knowledge of the internals of IO::Poll. But we know those internals
-      # because it is conditional on a specific version number of IO::Poll, so we
-      # can rely on the internal layout for that particular version.
-      delete $poll->[0]{fileno $rhandle} if IO_POLL_REMOVE_BUG;
-   }
+   my $curmask = $poll->mask( $handle ) || 0;
 
-   if( defined $whandle and ( not defined $rhandle or $whandle != $rhandle ) ) {
-      $poll->remove( $whandle );
-      delete $poll->[0]{fileno $whandle} if IO_POLL_REMOVE_BUG;
-   }
+   my $mask = $curmask;
+   $params{on_read_ready}  and $mask |= POLLIN;
+   $params{on_write_ready} and $mask |= POLLOUT;
+
+   $poll->mask( $handle, $mask ) if $mask != $curmask;
 }
 
-# override
-# For ::Notifier to call
-sub __notifier_want_readready
+sub unwatch_io
 {
    my $self = shift;
-   my ( $notifier, $want_readready ) = @_;
+   my %params = @_;
+
+   $self->__unwatch_io( %params );
 
    my $poll = $self->{poll};
 
-   my $rhandle = $notifier->read_handle or return;
+   my $handle = $params{handle};
 
-   my $curmask = $poll->mask( $rhandle ) || 0;
-   $poll->mask( $rhandle, $want_readready ? $curmask | POLLIN : $curmask & ~POLLIN );
-}
+   my $curmask = $poll->mask( $handle ) || 0;
 
-# override
-# For ::Notifier to call
-sub __notifier_want_writeready
-{
-   my $self = shift;
-   my ( $notifier, $want_writeready ) = @_;
+   my $mask = $curmask;
+   $params{on_read_ready}  and $mask &= ~POLLIN;
+   $params{on_write_ready} and $mask &= ~POLLOUT;
 
-   my $poll = $self->{poll};
-
-   my $whandle = $notifier->write_handle or return;
-
-   my $curmask = $poll->mask( $whandle ) || 0;
-   $poll->mask( $whandle, $want_writeready ? $curmask | POLLOUT : $curmask & ~POLLOUT );
+   $poll->mask( $handle, $mask ) if $mask != $curmask;
 }
 
 # Keep perl happy; keep Britain tidy

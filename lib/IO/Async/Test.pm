@@ -7,7 +7,7 @@ package IO::Async::Test;
 
 use strict;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 use Exporter;
 our @ISA = qw( Exporter );
@@ -113,14 +113,19 @@ sub wait_for(&)
 
    my ( undef, $callerfile, $callerline ) = caller();
 
-   while( !$cond->() ) {
-      my $retries = 10; # Give code a generous 10 seconds to do something
-      while( $retries-- ) {
-         my $subcount = $loop->loop_once( 1 );
-         last if $subcount;
+   my $timedout = 0;
+   my $timerid = $loop->enqueue_timer(
+      delay => 10,
+      code => sub { $timedout = 1 },
+   );
 
-         die "Nothing was ready after 10 second wait; called at $callerfile line $callerline\n" if $retries == 0;
-      }
+   $loop->loop_once( 1 ) while !$cond->() and !$timedout;
+
+   if( $timedout ) {
+      die "Nothing was ready after 10 second wait; called at $callerfile line $callerline\n";
+   }
+   else {
+      $loop->cancel_timer( $timerid );
    }
 }
 
@@ -137,25 +142,29 @@ the loop.
 
 sub wait_for_stream(&$$)
 {
-   my ( $cond, $handle, $DUMMY ) = @_;
+   my ( $cond, $handle, undef ) = @_;
    my $varref = \$_[2]; # So that we can modify it from the on_read callback
 
-   my $stream = IO::Async::Stream->new(
-      read_handle => $handle,
-
-      on_read => sub {
-         $$varref .= ${$_[1]};
-         ${$_[1]} = "";
-         return 0;
+   $loop->watch_io(
+      handle => $handle,
+      on_read_ready => sub {
+         my $ret = $handle->sysread( $$varref, 8192, length $$varref );
+         if( !defined $ret ) {
+            die "Read failed on $handle - $!\n";
+         }
+         elsif( $ret == 0 ) {
+            die "Read returned EOF on $handle\n";
+         }
       }
    );
-
-   $loop->add( $stream );
 
    # Have to defeat the prototype... grr I hate these
    &wait_for( $cond );
 
-   $loop->remove( $stream );
+   $loop->unwatch_io(
+      handle => $handle,
+      on_read_ready => 1,
+   );
 }
 
 # Keep perl happy; keep Britain tidy

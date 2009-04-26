@@ -1,18 +1,20 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007,2009 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop;
 
 use strict;
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 use Carp;
 
 use Socket;
 use IO::Socket;
+use Time::HiRes qw( time );
+
 # Try to load IO::Socket::INET6 but don't worry if we don't have it
 eval { require IO::Socket::INET6 };
 
@@ -35,26 +37,23 @@ our $LOOP;
 # magic constructor
 our $LOOP_NO_OS;
 
-BEGIN {
-   if ( eval { Time::HiRes::time(); 1 } ) {
-      Time::HiRes->import( qw( time ) );
-   }
-}
-
 =head1 NAME
 
 C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 
 =head1 SYNOPSIS
 
+ use IO::Async::Stream;
+ use IO::Async::Timer;
+
  use IO::Async::Loop;
 
  my $loop = IO::Async::Loop->new();
 
- $loop->enqueue_timer(
+ $loop->add( IO::Async::Timer->new(
     delay => 10,
-    code  => sub { print "10 seconds have passed\n" },
- );
+    on_expire => sub { print "10 seconds have passed\n" },
+ ) );
 
  $loop->add( IO::Async::Stream->new(
     read_handle => \*STDIN,
@@ -69,7 +68,7 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 
        return 0;
     },
- );
+ ) );
 
  $loop->loop_forever();
 
@@ -103,8 +102,13 @@ sub __new
 {
    my $class = shift;
 
+   # We've changed interface since 0.19; detect that this Loop implementation is compatible.
+   $class->can( "watch_io" ) or die "$class is too old for IO::Async $VERSION; consider upgrading it\n";
+
    my $self = bless {
       notifiers    => {}, # {nkey} = notifier
+      iowatches    => {}, # {fd} = [ onread, onwrite ] - TODO
+      sigattaches  => {}, # {sig} => \@callbacks
       sigproxy     => undef,
       childmanager => undef,
       timequeue    => undef,
@@ -160,11 +164,38 @@ also fails, then the magic constructor itself will throw an exception.
 
 =back
 
+If any of the explicitly-requested loop types (C<$ENV{IO_ASYNC_LOOP}> or
+C<$IO::Async::Loop::LOOP>) fails to load then a warning is printed detailing
+the error.
+
 =cut
+
+sub __try_new
+{
+   my ( $class ) = @_;
+
+   ( my $file = "$class.pm" ) =~ s{::}{/}g;
+
+   eval {
+      local $SIG{__WARN__} = sub {};
+      require $file;
+   } or return;
+
+   my $self;
+   $self = eval { $class->new } and return $self;
+
+   # Oh dear. We've loaded the code OK but for some reason the constructor
+   # wasn't happy. Being polite we ought really to unload the file again,
+   # but perl doesn't actually provide us a way to do this.
+
+   return undef;
+}
 
 sub new
 {
    shift;  # We're going to ignore the class name actually given
+
+   my $self;
 
    my @candidates;
 
@@ -172,24 +203,18 @@ sub new
 
    push @candidates, split( m/,/, $LOOP ) if defined $LOOP;
 
-   push @candidates, "$^O" unless $LOOP_NO_OS;
-
-   push @candidates, "IO_Poll", "Select";
-
-   $_ =~ m/::/ or $_ = "IO::Async::Loop::$_" for @candidates;
-
    foreach my $class ( @candidates ) {
-      ( my $file = "$class.pm" ) =~ s{::}{/}g;
+      $class =~ m/::/ or $class = "IO::Async::Loop::$class";
+      $self = __try_new( $class ) and return $self;
 
-      eval { require $file } or next;
-
-      my $self;
-      $self = eval { $class->new } and return $self;
-
-      # Oh dear. We've loaded the code OK but for some reason the constructor
-      # wasn't happy. Being polite we ought really to unload the file again,
-      # but perl doesn't actually provide us a way to do this.
+      my ( $topline ) = split m/\n/, $@; # Ignore all the other lines; they'll be require's verbose output
+      warn "Unable to use $class - $topline\n";
    }
+
+   $self = __try_new( "IO::Async::Loop::$^O" ) and return $self unless $LOOP_NO_OS;
+
+   $self = __try_new( "IO::Async::Loop::IO_Poll" ) and return $self;
+   $self = __try_new( "IO::Async::Loop::Select" )  and return $self;
 
    croak "Cannot find a suitable candidate class";
 }
@@ -217,6 +242,10 @@ sub _nkey
 
 This method adds another notifier object to the stored collection. The object
 may be a C<IO::Async::Notifier>, or any subclass of it.
+
+When a notifier is added, any children it has are also added, recursively. In
+this way, entire sections of a program may be written within a tree of
+notifier objects, and added or removed on one piece.
 
 =cut
 
@@ -247,9 +276,6 @@ sub _add_noparentcheck
 
    $notifier->__set_loop( $self );
 
-   $self->__notifier_want_readready(  $notifier, $notifier->want_readready  );
-   $self->__notifier_want_writeready( $notifier, $notifier->want_writeready );
-
    $self->_add_noparentcheck( $_ ) for $notifier->children;
 
    return;
@@ -257,7 +283,8 @@ sub _add_noparentcheck
 
 =head2 $loop->remove( $notifier )
 
-This method removes a notifier object from the stored collection.
+This method removes a notifier object from the stored collection, and
+recursively and children notifiers it contains.
 
 =cut
 
@@ -286,32 +313,9 @@ sub _remove_noparentcheck
 
    $notifier->__set_loop( undef );
 
-   $self->_notifier_removed( $notifier );
-
    $self->_remove_noparentcheck( $_ ) for $notifier->children;
 
    return;
-}
-
-# Default 'do-nothing' implementation - meant for subclasses to override
-sub _notifier_removed
-{
-   # Ignore
-}
-
-# For ::Notifier to call
-sub __notifier_want_readready
-{
-   my $self = shift;
-   my ( $notifier, $want_readready ) = @_;
-   # Ignore
-}
-
-sub __notifier_want_writeready
-{
-   my $self = shift;
-   my ( $notifier, $want_writeready ) = @_;
-   # Ignore
 }
 
 ############
@@ -335,9 +339,16 @@ sub __new_feature
    return $classname->new( loop => $self );
 }
 
-=head2 $loop->attach_signal( $signal, $code )
+=head2 $id = $loop->attach_signal( $signal, $code )
 
-This method adds a new signal handler to watch the given signal.
+This method adds a new signal handler to watch the given signal. The same
+signal can be attached to multiple times; its callback functions will all be
+invoked, in no particular order.
+
+The returned C<$id> value can be used to identify the signal handler in case
+it needs to be removed by the C<detach_signal()> method. Note that this value
+may be an object reference, so if it is stored, it should be released after it
+cancelled, so the object itself can be freed.
 
 =over 8
 
@@ -359,6 +370,9 @@ of C<IO::Async> this behaviour may be disallowed altogether.
 
 See also L<POSIX> for the C<SIGI<name>> constants.
 
+For a more flexible way to use signals from within Notifiers, see instead the
+L<IO::Async::Signal> object.
+
 =cut
 
 sub attach_signal
@@ -366,19 +380,36 @@ sub attach_signal
    my $self = shift;
    my ( $signal, $code ) = @_;
 
-   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::SignalProxy" );
-   $sigproxy->attach( $signal, $code );
+   if( $signal eq "CHLD" ) {
+      # We make special exception to allow the ChildManager to do this
+      caller eq "IO::Async::ChildManager" or
+         carp "Attaching to SIGCHLD is not advised - use the IO::Async::ChildManager instead";
+   }
+
+   if( not $self->{sigattaches}->{$signal} ) {
+      my $attaches = $self->{sigattaches}->{$signal} = [];
+      $self->watch_signal( $signal, sub { $_->() for @$attaches } );
+   }
+
+   push @{ $self->{sigattaches}->{$signal} }, $code;
+
+   return \$self->{sigattaches}->{$signal}->[-1];
 }
 
-=head2 $loop->detach_signal( $signal )
+=head2 $loop->detach_signal( $signal, $id )
 
-This method removes the signal handler for the given signal.
+Removes a previously-attached signal handler.
 
 =over 8
 
 =item $signal
 
-The name of the signal to attach to. This should be a bare name like C<TERM>.
+The name of the signal to remove from. This should be a bare name like
+C<TERM>.
+
+=item $id
+
+The value returned by the C<attach_signal> method.
 
 =back
 
@@ -387,15 +418,14 @@ The name of the signal to attach to. This should be a bare name like C<TERM>.
 sub detach_signal
 {
    my $self = shift;
-   my ( $signal ) = @_;
+   my ( $signal, $id ) = @_;
 
-   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::SignalProxy" );
-   $sigproxy->detach( $signal );
+   @{ $self->{sigattaches}->{$signal} } =
+      grep { \$_ != $id } @{ $self->{sigattaches}->{$signal} };                                         
 
-   if( !$sigproxy->signals ) {
-      $self->remove( $sigproxy );
-      undef $sigproxy;
-      undef $self->{sigproxy};
+   if( !@{ $self->{sigattaches}->{$signal} } ) {
+      $self->unwatch_signal( $signal );
+      delete $self->{sigattaches}->{$signal};
    }
 }
 
@@ -635,12 +665,9 @@ CODE reference to the continuation to run at the allotted time.
 
 =back
 
-If the C<Time::HiRes> module is loaded, then it is used to obtain the current
-time which is used for the delay calculation. If this behaviour is required,
-the C<Time::HiRes> module must be loaded before C<IO::Async::Loop>:
-
- use Time::HiRes;
- use IO::Async::Loop;
+For more powerful timer functionallity as a C<IO::Async::Notifier> (so it can
+be used as a child within another Notifier), see instead the
+L<IO::Async::Timer> object.
 
 =cut
 
@@ -649,7 +676,7 @@ sub enqueue_timer
    my $self = shift;
    my ( %params ) = @_;
 
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
 
    $params{time} = $self->_build_time( %params );
 
@@ -667,7 +694,7 @@ sub cancel_timer
    my $self = shift;
    my ( $id ) = @_;
 
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
 
    $timequeue->cancel( $id );
 }
@@ -691,7 +718,7 @@ sub requeue_timer
    my $self = shift;
    my ( $id, %params ) = @_;
 
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::TimeQueue" );
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
 
    $params{time} = $self->_build_time( %params );
 
@@ -935,6 +962,228 @@ sub pipequad
    my ( $rdB, $wrB ) = $self->pipepair() or return;
 
    return ( $rdA, $wrA, $rdB, $wrB );
+}
+
+=head2 $signum = $loop->signame2num( $signame )
+
+This utility method converts a signal name (such as "TERM") into its system-
+specific signal number. This may be useful to pass to C<POSIX::SigSet> or use
+in other places which use numbers instead of symbolic names.
+
+Note that this function is not an object method, and is not exported.
+
+=cut
+
+my %sig_num;
+sub _init_signum
+{
+   my $self = shift;
+   # Copypasta from Config.pm's documentation
+
+   our %Config;
+   require Config;
+   Config->import;
+
+   unless($Config{sig_name} && $Config{sig_num}) {
+      die "No signals found";
+   }
+   else {
+      my @names = split ' ', $Config{sig_name};
+      @sig_num{@names} = split ' ', $Config{sig_num};
+   }
+}
+
+sub signame2num
+{
+   my $self = shift;
+   my ( $signame ) = @_;
+
+   %sig_num or $self->_init_signum;
+
+   return $sig_num{$signame};
+}
+
+=head1 SUBCLASS METHODS
+
+As C<IO::Async::Loop> is an abstract base class, specific subclasses of it are
+required to implement certain methods that form the base level of
+functionallity. They are not recommended for applications to use; see instead
+the various event objects or higher level methods listed above.
+
+These methods should be considered as part of the interface contract required
+to implement a C<IO::Async::Loop> subclass.
+
+=cut
+
+=head2 $loop->watch_io( %params )
+
+This method installs callback functions which will be invoked when the given
+IO handle becomes read- or write-ready.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item handle => IO
+
+The IO handle to watch.
+
+=item on_read_ready => CODE
+
+Optional. A CODE reference to call when the handle becomes read-ready.
+
+=item on_write_ready => CODE
+
+Optional. A CODE reference to call when the handle becomes write-ready.
+
+=back
+
+There can only be one filehandle of any given fileno registered at any one
+time. For any one filehandle, there can only be one read-readiness and/or one
+write-readiness callback at any one time. Registering a new one will remove an
+existing one of that type. It is not required that both are provided.
+
+Applications should use a C<IO::Async::Handle> or C<IO::Async::Stream> instead
+of using this method.
+
+=cut
+
+# This class specifically does NOT implement this method, so that subclasses
+# are forced to. The constructor will be checking....
+# This is done so that we can recognise and abort on a pre-0.20 Loop
+# implementation.
+sub __watch_io
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $handle = $params{handle} or croak "Expected 'handle'";
+
+   my $watch = ( $self->{iowatches}->{$handle->fileno} ||= [] );
+
+   $watch->[0] = $handle;
+
+   if( $params{on_read_ready} ) {
+      $watch->[1] = $params{on_read_ready};
+   }
+
+   if( $params{on_write_ready} ) {
+      $watch->[2] = $params{on_write_ready};
+   }
+}
+
+=head2 $loop->unwatch_io( %params )
+
+This method removes a watch on an IO handle which was previously installed by
+C<watch_io>.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item handle => IO
+
+The IO handle to remove the watch for.
+
+=item on_read_ready => BOOL
+
+If true, remove the watch for read-readiness.
+
+=item on_write_ready => BOOL
+
+If true, remove the watch for write-readiness.
+
+=back
+
+Either or both callbacks may be removed at once. It is not an error to attempt
+to remove a callback that is not present. If both callbacks were provided to
+the C<watch_io> method and only one is removed by this method, the other shall
+remain.
+
+=cut
+
+sub __unwatch_io
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $handle = $params{handle} or croak "Expected 'handle'";
+
+   my $watch = $self->{iowatches}->{$handle->fileno} or return;
+
+   if( $params{on_read_ready} ) {
+      undef $watch->[1];
+   }
+
+   if( $params{on_write_ready} ) {
+      undef $watch->[2];
+   }
+
+   if( not $watch->[1] and not $watch->[2] ) {
+      delete $self->{iowatches}->{$handle->fileno};
+   }
+}
+
+=head2 $loop->watch_signal( $signal, $code )
+
+This method adds a new signal handler to watch the given signal.
+
+=over 8
+
+=item $signal
+
+The name of the signal to watch to. This should be a bare name like C<TERM>.
+
+=item $code
+
+A CODE reference to the handling callback.
+
+=back
+
+There can only be one callback per signal name. Registering a new one will
+remove an existing one.
+
+Applications should use a C<IO::Async::Signal> object, or call
+C<attach_signal> instead of using this method.
+
+=cut
+
+sub watch_signal
+{
+   my $self = shift;
+   my ( $signal, $code ) = @_;
+
+   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::Internals::SignalProxy" );
+   $sigproxy->watch( $signal, $code );
+}
+
+=head2 $loop->unwatch_signal( $signal )
+
+This method removes the signal callback for the given signal.
+
+=over 8
+
+=item $signal
+
+The name of the signal to watch to. This should be a bare name like C<TERM>.
+
+=back
+
+=cut
+
+sub unwatch_signal
+{
+   my $self = shift;
+   my ( $signal ) = @_;
+
+   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::Internals::SignalProxy" );
+   $sigproxy->unwatch( $signal );
+
+   if( !$sigproxy->signals ) {
+      $self->remove( $sigproxy );
+      undef $sigproxy;
+      undef $self->{sigproxy};
+   }
 }
 
 # Keep perl happy; keep Britain tidy
