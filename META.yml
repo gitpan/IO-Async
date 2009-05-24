@@ -1,6 +1,6 @@
 ---
 name: IO-Async
-version: 0.20
+version: 0.21
 author:
   - 'Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>'
 abstract: |-
@@ -24,60 +24,56 @@ build_requires:
 provides:
   IO::Async:
     file: lib/IO/Async.pm
-    version: 0.20
+    version: 0.21
   IO::Async::ChildManager:
     file: lib/IO/Async/ChildManager.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Connector:
     file: lib/IO/Async/Connector.pm
-    version: 0.20
+    version: 0.21
   IO::Async::DetachedCode:
     file: lib/IO/Async/DetachedCode.pm
-    version: 0.20
-  IO::Async::DetachedCode::FlatMarshaller:
-    file: lib/IO/Async/DetachedCode/FlatMarshaller.pm
-  IO::Async::DetachedCode::StorableMarshaller:
-    file: lib/IO/Async/DetachedCode/StorableMarshaller.pm
+    version: 0.21
   IO::Async::Handle:
     file: lib/IO/Async/Handle.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Listener:
     file: lib/IO/Async/Listener.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Loop:
     file: lib/IO/Async/Loop.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Loop::IO_Poll:
     file: lib/IO/Async/Loop/IO_Poll.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Loop::Select:
     file: lib/IO/Async/Loop/Select.pm
-    version: 0.20
+    version: 0.21
   IO::Async::MergePoint:
     file: lib/IO/Async/MergePoint.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Notifier:
     file: lib/IO/Async/Notifier.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Resolver:
     file: lib/IO/Async/Resolver.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Sequencer:
     file: lib/IO/Async/Sequencer.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Signal:
     file: lib/IO/Async/Signal.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Stream:
     file: lib/IO/Async/Stream.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Test:
     file: lib/IO/Async/Test.pm
-    version: 0.20
+    version: 0.21
   IO::Async::Timer:
     file: lib/IO/Async/Timer.pm
-    version: 0.20
-generated_by: Module::Build version 0.3
+    version: 0.21
+generated_by: Module::Build version 0.33
 meta-spec:
-  url: http://module-build.sourceforge.net/META-spec-v1.2.html
-  version: 1.2
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4

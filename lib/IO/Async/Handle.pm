@@ -6,9 +6,10 @@
 package IO::Async::Handle;
 
 use strict;
+use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.20';
+our $VERSION = '0.21';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -94,14 +95,9 @@ removed from its containing loop, if it is within one.
 
 =cut
 
-=head1 CONSTRUCTOR
+=head1 PARAMETERS
 
-=cut
-
-=head2 $handle = IO::Async::Handle->new( %params )
-
-This function returns a new instance of a C<IO::Async::Handle> object.
-The C<%params> hash takes the following keys:
+The following named parameters may be passed to C<new> or C<configure>:
 
 =over 8
 
@@ -146,35 +142,78 @@ the C<connect()> has actually been performed yet.
 
 =cut
 
-sub new
+sub configure
 {
-   my $class = shift;
-   my ( %params ) = @_;
+   my $self = shift;
+   my %params = @_;
 
-   my $self = $class->SUPER::new( %params );
-
-   $self->{want_readready}  = 0;
-   $self->{want_writeready} = 0;
-
-   $self->{on_read_ready}  = $params{on_read_ready}  if defined $params{on_read_ready};
-   $self->{on_write_ready} = $params{on_write_ready} if defined $params{on_write_ready};
-   $self->{on_closed}      = $params{on_closed}      if defined $params{on_closed};
-
-   if( defined $params{read_handle} or defined $params{write_handle} ) {
-      $self->set_handles(
-         read_handle  => $params{read_handle},
-         write_handle => $params{write_handle},
-      );
-   }
-   elsif( defined $params{handle} ) {
-      $self->set_handle( $params{handle} );
+   if( exists $params{on_read_ready} ) {
+      $self->{on_read_ready} = delete $params{on_read_ready};
+      $self->_watch_read(0), $self->_watch_read(1) if $self->want_readready;
    }
 
-   # Slightly asymmetric
-   $self->want_readready( $self->read_handle );
-   $self->want_writeready( $params{want_writeready} || 0 );
+   if( exists $params{on_write_ready} ) {
+      $self->{on_write_ready} = delete $params{on_write_ready};
+      $self->_watch_write(0), $self->_watch_write(1) if $self->want_writeready;
+   }
 
-   return $self;
+   if( exists $params{on_closed} ) {
+      $self->{on_closed} = delete $params{on_closed};
+   }
+
+   # 'handle' is a shortcut for setting read_ and write_
+   if( exists $params{handle} ) {
+      $params{read_handle}  = $params{handle};
+      $params{write_handle} = $params{handle};
+      delete $params{handle};
+   }
+
+   if( exists $params{read_handle} ) {
+      my $read_handle = delete $params{read_handle};
+
+      if( defined $read_handle ) {
+         if( !defined eval { $read_handle->fileno } ) {
+            croak 'Expected that read_handle can fileno()';
+         }
+
+         if( !$self->{on_read_ready} and !$self->can( 'on_read_ready' ) ) {
+            croak 'Expected either a on_read_ready callback or an ->on_read_ready method';
+         }
+      }
+
+      $self->{read_handle} = $read_handle;
+
+      $self->want_readready( defined $read_handle );
+
+      # In case someone has reopened the filehandles during an on_closed handler
+      undef $self->{handle_closing};
+   }
+
+   if( exists $params{write_handle} ) {
+      my $write_handle = delete $params{write_handle};
+
+      if( defined $write_handle ) {
+         if( !defined eval { $write_handle->fileno } ) {
+            croak 'Expected that write_handle can fileno()';
+         }
+
+         if( !$self->{on_write_ready} and !$self->can( 'on_write_ready' ) ) {
+            # This used not to be fatal. Make it just a warning for now.
+            carp 'A write handle was provided but neither a on_write_ready callback nor an ->on_write_ready method were. Perhaps you mean \'read_handle\' instead?';
+         }
+      }
+
+      $self->{write_handle} = $write_handle;
+
+      # In case someone has reopened the filehandles during an on_closed handler
+      undef $self->{handle_closing};
+   }
+
+   if( exists $params{want_writeready} ) {
+      $self->want_writeready( delete $params{want_writeready} );
+   }
+
+   $self->SUPER::configure( %params );
 }
 
 # We'll be calling these any of three times
@@ -189,6 +228,11 @@ sub _watch_read
 
    my $loop = $self->get_loop or return;
    my $fh = $self->read_handle or return;
+
+   if( !$self->{on_read_ready} ) {
+      weaken( my $weakself = $self );
+      $self->{on_read_ready} = sub { $weakself->on_read_ready };
+   }
 
    if( $want ) {
       $loop->watch_io(
@@ -211,6 +255,11 @@ sub _watch_write
 
    my $loop = $self->get_loop or return;
    my $fh = $self->write_handle or return;
+
+   if( !$self->{on_write_ready} ) {
+      weaken( my $weakself = $self );
+      $self->{on_write_ready} = sub { $weakself->on_write_ready };
+   }
 
    if( $want ) {
       $loop->watch_io(
@@ -250,21 +299,8 @@ sub _remove_from_loop
 
 =head2 $handle->set_handles( %params )
 
-This method stores new reading or writing handles in the object, as if they
-had been passed as the C<read_handle> or C<write_handle> arguments to the
-constructor. The C<%params> hash takes the following keys:
-
-=over 8
-
-=item read_handle => IO
-
-A new IO handle for reading, or C<undef> to remove the old one.
-
-=item write_handle => IO
-
-A new IO handle for writing, or C<undef> to remove the old one.
-
-=back
+Sets new reading or writing filehandles. Equivalent to calling the
+C<configure> method with the same parameters.
 
 =cut
 
@@ -273,58 +309,17 @@ sub set_handles
    my $self = shift;
    my %params = @_;
 
-   my ( $read_handle, $write_handle );
-
-   if( defined( $read_handle = $params{read_handle} ) ) {
-      unless( defined eval { $read_handle->fileno } ) {
-         croak 'Expected that read_handle can fileno()';
-      }
-
-      if( !$self->{on_read_ready} and $self->can( 'on_read_ready' ) == \&on_read_ready ) {
-         croak 'Expected either a on_read_ready callback or an ->on_read_ready method';
-      }
-
-      if( !$self->{on_read_ready} ) {
-         weaken( my $weakself = $self );
-         $self->{on_read_ready} = sub { $weakself->on_read_ready };
-      }
-   }
-
-   if( defined( $write_handle = $params{write_handle} ) ) {
-      unless( defined eval { $write_handle->fileno } ) {
-         croak 'Expected that write_handle can fileno()';
-      }
-
-      if( !$self->{on_write_ready} and $self->can( 'on_write_ready' ) == \&on_write_ready ) {
-         # This used not to be fatal. Make it just a warning for now.
-         carp 'A write handle was provided but neither a on_write_ready callback nor an ->on_write_ready method were. Perhaps you mean \'read_handle\' instead?';
-      }
-
-      if( !$self->{on_write_ready} ) {
-         weaken( my $weakself = $self );
-         $self->{on_write_ready} = sub { $weakself->on_write_ready };
-      }
-   }
-
-   if( exists $params{read_handle} ) {
-      $self->{read_handle} = $read_handle;
-
-      $self->_watch_read(1) if $read_handle;
-   }
-
-   if( exists $params{write_handle} ) {
-      $self->{write_handle} = $write_handle;
-   }
-
-   # In case someone has reopened the filehandles during an on_close handler
-   undef $self->{handle_closing};
+   $self->configure(
+      exists $params{read_handle}  ? ( read_handle  => $params{read_handle} )  : (),
+      exists $params{write_handle} ? ( write_handle => $params{write_handle} ) : (),
+   );
 }
 
 =head2 $handle->set_handle( $fh )
 
 Shortcut for
 
- $handle->set_handles( read_handle => $fh, write_handle => $fh )
+ $handle->configure( handle => $fh )
 
 =cut
 
@@ -333,10 +328,7 @@ sub set_handle
    my $self = shift;
    my ( $fh ) = @_;
 
-   $self->set_handles(
-      read_handle  => $fh,
-      write_handle => $fh,
-   );
+   $self->configure( handle => $fh );
 }
 
 =head2 $handle->close
@@ -359,7 +351,7 @@ sub close
    if( my $parent = $self->{parent} ) {
       $parent->remove_child( $self );
    }
-   elsif( my $loop = $self->{loop} ) {
+   elsif( my $loop = $self->get_loop ) {
       $loop->remove( $self );
    }
 
@@ -371,8 +363,8 @@ sub close
 
    # Clear the want* states, so if we get a new handle and are re-opened,
    # we'll rearm the underlying loop
-   $self->{want_readready} = 0;
-   $self->{want_writeready} = 0;
+   undef $self->{want_readready};
+   undef $self->{want_writeready};
 }
 
 =head2 $handle = $handle->read_handle
@@ -438,8 +430,8 @@ sub want_readready
    if( @_ ) {
       my ( $new ) = @_;
 
-      $new = $new ?1:0; # Squash to boolean
-      return $new if $new == $self->{want_readready};
+      $new = !!$new;
+      return $new if !$new == !$self->{want_readready}; # compare bools
 
       if( $new ) {
          defined $self->read_handle or
@@ -464,8 +456,8 @@ sub want_writeready
    if( @_ ) {
       my ( $new ) = @_;
 
-      $new = $new ?1:0; # Squash to boolean
-      return $new if $new == $self->{want_writeready};
+      $new = !!$new;
+      return $new if !$new == !$self->{want_writeready}; # compare bools
 
       if( $new ) {
          defined $self->write_handle or
@@ -482,22 +474,6 @@ sub want_writeready
    else {
       return $self->{want_writeready};
    }
-}
-
-# For ::Loops to call
-sub on_read_ready
-{
-   my $self = shift;
-   my $callback = $self->{on_read_ready};
-   $callback->( $self ) if defined $callback;
-}
-
-# For ::Loops to call
-sub on_write_ready
-{
-   my $self = shift;
-   my $callback = $self->{on_write_ready};
-   $callback->( $self ) if defined $callback;
 }
 
 # Keep perl happy; keep Britain tidy

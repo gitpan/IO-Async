@@ -3,9 +3,11 @@
 #
 #  (C) Paul Evans, 2007 -- leonerd@leonerd.org.uk
 
-package IO::Async::DetachedCode::StorableMarshaller;
+package # hide from CPAN
+  IO::Async::DetachedCode::StorableMarshaller;
 
 use strict;
+use warnings;
 
 use Storable qw( freeze thaw );
 

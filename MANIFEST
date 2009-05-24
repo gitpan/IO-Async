@@ -1,5 +1,9 @@
 Build.PL
 Changes
+examples/chat-server.pl
+examples/echo-server.pl
+examples/netcat-client.pl
+examples/whoami-server.pl
 lib/IO/Async.pm
 lib/IO/Async/ChildManager.pm
 lib/IO/Async/Connector.pm

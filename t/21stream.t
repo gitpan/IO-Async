@@ -2,7 +2,7 @@
 
 use strict;
 
-use Test::More tests => 62;
+use Test::More tests => 63;
 use Test::Exception;
 use Test::Refcount;
 
@@ -96,6 +96,23 @@ $loop->loop_once( 0.1 );
 
 is_deeply( \@received, [ "hello\n", "world\n" ], '@received two at once' );
 
+my @new_lines;
+$stream->configure( on_read => sub {
+      my $self = shift;
+      my ( $buffref, $closed ) = @_;
+
+      return 0 unless( $$buffref =~ s/^(.*\n)// );
+
+      push @new_lines, $1;
+      return 1;
+   } );
+
+$S2->syswrite( "new\nlines\n" );
+
+$loop->loop_once( 0.1 );
+
+is_deeply( \@new_lines, [ "new\n", "lines\n" ], '@new_lines after on_read replace' );
+
 is_refcount( $stream, 2, 'reading $stream has refcount 2 before removing from Loop' );
 
 $loop->remove( $stream );
@@ -104,7 +121,7 @@ is_oneref( $stream, 'reading $stream refcount 1 finally' );
 
 undef $stream;
 
-# Dynamic on_read swapping
+# Dynamic on_read chaining
 
 my $outer_count = 0;
 my $inner_count = 0;
@@ -183,14 +200,14 @@ $loop->add( $stream );
 
 is_refcount( $stream, 2, 'writing $stream has refcount 2 after adding to Loop' );
 
-is( $stream->want_writeready, 0, 'want_writeready before write' );
+ok( !$stream->want_writeready, 'want_writeready before write' );
 $stream->write( "message\n" );
 
-is( $stream->want_writeready, 1, 'want_writeready after write' );
+ok( $stream->want_writeready, 'want_writeready after write' );
 
 $loop->loop_once( 0.1 );
 
-is( $stream->want_writeready, 0, 'want_writeready after loop_once' );
+ok( !$stream->want_writeready, 'want_writeready after loop_once' );
 is( $empty, 1, '$empty after writing buffer' );
 
 is( read_data( $S2 ), "message\n", 'data after writing buffer' );
