@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -493,4 +493,4 @@ L<IO::Handle> - Supply object methods for I/O handles
 
 =head1 AUTHOR
 
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>
+Paul Evans <leonerd@leonerd.org.uk>

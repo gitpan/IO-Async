@@ -12,12 +12,11 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 =head1 NAME
 
-C<IO::Async> - a collection of modules that implement asynchronous filehandle
-IO
+C<IO::Async> - perform asynchronous filehandle IO and other operations
 
 =head1 SYNOPSIS
 
@@ -225,7 +224,7 @@ L<POE> - portable multitasking and networking framework for Perl
 
 =head1 AUTHOR
 
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>
+Paul Evans <leonerd@leonerd.org.uk>
 
 =cut
 

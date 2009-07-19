@@ -8,7 +8,7 @@ package IO::Async::Resolver;
 use strict;
 use warnings;
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use Socket::GetAddrInfo qw( :Socket6api getaddrinfo getnameinfo );
 
@@ -311,4 +311,4 @@ Look into (system-specific) ways of accessing asynchronous resolvers directly
 
 =head1 AUTHOR
 
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>
+Paul Evans <leonerd@leonerd.org.uk>

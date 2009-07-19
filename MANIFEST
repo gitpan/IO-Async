@@ -3,6 +3,7 @@ Changes
 examples/chat-server.pl
 examples/echo-server.pl
 examples/netcat-client.pl
+examples/tcp-proxy.pl
 examples/whoami-server.pl
 lib/IO/Async.pm
 lib/IO/Async/ChildManager.pm
@@ -25,11 +26,12 @@ lib/IO/Async/Signal.pm
 lib/IO/Async/Stream.pm
 lib/IO/Async/Test.pm
 lib/IO/Async/Timer.pm
+LICENSE
 Makefile.PL
 MANIFEST			This list of files
 META.yml
+README
 t/00use.t
-t/01mergepoint.t
 t/01timequeue.t
 t/02loop-magic.t
 t/03loop-osabstract.t
@@ -60,4 +62,5 @@ t/51loop-connect.t
 t/52loop-listen.t
 t/60sequencer-client.t
 t/60sequencer-server.t
+t/99pod.t
 t/StupidLoop.pm

@@ -8,7 +8,7 @@ package IO::Async::Test;
 use strict;
 use warnings;
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use Exporter;
 our @ISA = qw( Exporter );
@@ -22,7 +22,7 @@ use IO::Async::Stream;
 
 =head1 NAME
 
-C<IO::Async::Test> - Utility functions for use in test scripts
+C<IO::Async::Test> - utility functions for use in test scripts
 
 =head1 SYNOPSIS
 
@@ -175,4 +175,4 @@ __END__
 
 =head1 AUTHOR
 
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>
+Paul Evans <leonerd@leonerd.org.uk>

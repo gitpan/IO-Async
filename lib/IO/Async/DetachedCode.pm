@@ -8,7 +8,7 @@ package IO::Async::DetachedCode;
 use strict;
 use warnings;
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 use IO::Async::Stream;
 
@@ -671,4 +671,4 @@ prime.
 
 =head1 AUTHOR
 
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>
+Paul Evans <leonerd@leonerd.org.uk>
