@@ -1,6 +1,6 @@
 ---
 name: IO-Async
-version: 0.22
+version: 0.23
 author:
   - 'Paul Evans <leonerd@leonerd.org.uk>'
 abstract: perform asynchronous filehandle IO and other operations
@@ -22,55 +22,58 @@ build_requires:
 provides:
   IO::Async:
     file: lib/IO/Async.pm
-    version: 0.22
+    version: 0.23
   IO::Async::ChildManager:
     file: lib/IO/Async/ChildManager.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Connector:
     file: lib/IO/Async/Connector.pm
-    version: 0.22
+    version: 0.23
   IO::Async::DetachedCode:
     file: lib/IO/Async/DetachedCode.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Handle:
     file: lib/IO/Async/Handle.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Listener:
     file: lib/IO/Async/Listener.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Loop:
     file: lib/IO/Async/Loop.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Loop::IO_Poll:
     file: lib/IO/Async/Loop/IO_Poll.pm
-    version: 0.22
+    version: 0.23
+  IO::Async::Loop::Poll:
+    file: lib/IO/Async/Loop/Poll.pm
+    version: 0.23
   IO::Async::Loop::Select:
     file: lib/IO/Async/Loop/Select.pm
-    version: 0.22
+    version: 0.23
   IO::Async::MergePoint:
     file: lib/IO/Async/MergePoint.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Notifier:
     file: lib/IO/Async/Notifier.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Resolver:
     file: lib/IO/Async/Resolver.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Sequencer:
     file: lib/IO/Async/Sequencer.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Signal:
     file: lib/IO/Async/Signal.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Stream:
     file: lib/IO/Async/Stream.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Test:
     file: lib/IO/Async/Test.pm
-    version: 0.22
+    version: 0.23
   IO::Async::Timer:
     file: lib/IO/Async/Timer.pm
-    version: 0.22
+    version: 0.23
 generated_by: Module::Build version 0.33
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html

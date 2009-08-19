@@ -82,7 +82,7 @@ DESCRIPTION
     collection management tasks, and leaves the actual OS interactions to a
     particular subclass for the purpose.
 
-    IO::Async::Loop::IO_Poll uses an "IO::Poll" object for this test.
+    IO::Async::Loop::Poll uses an "IO::Poll" object for this test.
 
     IO::Async::Loop::Select uses the "select()" syscall.
 

@@ -17,6 +17,7 @@ lib/IO/Async/Internals/TimeQueue.pm
 lib/IO/Async/Listener.pm
 lib/IO/Async/Loop.pm
 lib/IO/Async/Loop/IO_Poll.pm
+lib/IO/Async/Loop/Poll.pm
 lib/IO/Async/Loop/Select.pm
 lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
@@ -48,6 +49,7 @@ t/20handle.t
 t/21stream.t
 t/22timer.t
 t/23signal.t
+t/24listener.t
 t/30childmanager.t
 t/31childmanager-detach.t
 t/32childmanager-spawn.t
