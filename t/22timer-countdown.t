@@ -4,13 +4,13 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 38;
+use Test::More tests => 39;
 use Test::Exception;
 use Test::Refcount;
 
 use Time::HiRes qw( time );
 
-use IO::Async::Timer;
+use IO::Async::Timer::Countdown;
 
 use IO::Async::Loop::Poll;
 
@@ -35,8 +35,7 @@ testing_loop( $loop );
 
 my $expired;
 
-my $timer = IO::Async::Timer->new(
-   mode  => 'countdown',
+my $timer = IO::Async::Timer::Countdown->new(
    delay => 2 * AUT,
 
    on_expire => sub { $expired = 1 },
@@ -51,7 +50,7 @@ $loop->add( $timer );
 
 is_refcount( $timer, 2, '$timer has refcount 2 after adding to Loop' );
 
-$timer->start;
+is( $timer->start, $timer, '$timer->start returns $timer' );
 
 is_refcount( $timer, 2, '$timer has refcount 2 after starting' );
 
@@ -155,7 +154,6 @@ undef $timer;
 my $sub_expired;
 
 $timer = TestTimer->new(
-   mode  => 'countdown',
    delay => 2 * AUT,
 );
 
@@ -188,6 +186,6 @@ is_oneref( $timer, 'subclass $timer has refcount 1 after removing from Loop' );
 undef $timer;
 
 package TestTimer;
-use base qw( IO::Async::Timer );
+use base qw( IO::Async::Timer::Countdown );
 
 sub on_expire { $sub_expired = 1 }

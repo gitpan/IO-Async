@@ -8,7 +8,8 @@ package IO::Async::Loop::Select;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
+use constant API_VERSION => '0.24';
 
 use base qw( IO::Async::Loop );
 
@@ -16,7 +17,7 @@ use Carp;
 
 =head1 NAME
 
-C<IO::Async::Loop::Select> - a Loop using the C<select()> syscall
+C<IO::Async::Loop::Select> - use C<IO::Async> with C<select(2)>
 
 =head1 SYNOPSIS
 
@@ -180,8 +181,7 @@ sub post_select
    # Since we have no way to know if the timeout occured, we'll have to
    # attempt to fire any waiting timeout events anyway
 
-   my $timequeue = $self->{timequeue};
-   $timequeue->fire if $timequeue;
+   $self->_manage_queues;
 }
 
 =head2 $count = $loop->loop_once( $timeout )

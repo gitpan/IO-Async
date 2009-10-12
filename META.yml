@@ -1,12 +1,17 @@
 ---
 name: IO-Async
-version: 0.23
+version: 0.24
 author:
   - 'Paul Evans <leonerd@leonerd.org.uk>'
 abstract: perform asynchronous filehandle IO and other operations
 license: perl
 resources:
   license: http://dev.perl.org/licenses/
+build_requires:
+  File::Temp: 0
+  Test::Exception: 0
+  Test::More: 0
+  Test::Refcount: 0
 requires:
   Async::MergePoint: 0
   Heap: 0.8
@@ -14,67 +19,73 @@ requires:
   Socket::GetAddrInfo: 0.08
   Storable: 0
   Time::HiRes: 0
-build_requires:
-  File::Temp: 0
-  Test::Exception: 0
-  Test::More: 0
-  Test::Refcount: 0
+configure_requires:
+  Module::Build: 0.35
 provides:
   IO::Async:
     file: lib/IO/Async.pm
-    version: 0.23
+    version: 0.24
   IO::Async::ChildManager:
     file: lib/IO/Async/ChildManager.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Connector:
     file: lib/IO/Async/Connector.pm
-    version: 0.23
+    version: 0.24
   IO::Async::DetachedCode:
     file: lib/IO/Async/DetachedCode.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Handle:
     file: lib/IO/Async/Handle.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Listener:
     file: lib/IO/Async/Listener.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Loop:
     file: lib/IO/Async/Loop.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Loop::IO_Poll:
     file: lib/IO/Async/Loop/IO_Poll.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Loop::Poll:
     file: lib/IO/Async/Loop/Poll.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Loop::Select:
     file: lib/IO/Async/Loop/Select.pm
-    version: 0.23
+    version: 0.24
+  IO::Async::LoopTests:
+    file: lib/IO/Async/LoopTests.pm
+    version: 0.24
   IO::Async::MergePoint:
     file: lib/IO/Async/MergePoint.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Notifier:
     file: lib/IO/Async/Notifier.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Resolver:
     file: lib/IO/Async/Resolver.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Sequencer:
     file: lib/IO/Async/Sequencer.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Signal:
     file: lib/IO/Async/Signal.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Stream:
     file: lib/IO/Async/Stream.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Test:
     file: lib/IO/Async/Test.pm
-    version: 0.23
+    version: 0.24
   IO::Async::Timer:
     file: lib/IO/Async/Timer.pm
-    version: 0.23
-generated_by: Module::Build version 0.33
+    version: 0.24
+  IO::Async::Timer::Countdown:
+    file: lib/IO/Async/Timer/Countdown.pm
+    version: 0.24
+  IO::Async::Timer::Periodic:
+    file: lib/IO/Async/Timer/Periodic.pm
+    version: 0.24
+generated_by: Module::Build version 0.35
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4

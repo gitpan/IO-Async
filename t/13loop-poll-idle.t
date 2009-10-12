@@ -1,4 +1,4 @@
 #!/usr/bin/perl -w
 
 use IO::Async::LoopTests;
-run_tests( 'IO::Async::Loop::Select', 'io' );
+run_tests( 'IO::Async::Loop::Poll', 'idle' );

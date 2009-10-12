@@ -8,7 +8,7 @@ package IO::Async::Loop::IO_Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
 
 use base qw( IO::Async::Loop::Poll );
 
@@ -29,3 +29,9 @@ Any program still referring to this class directly should be changed.
 
 # Keep perl happy; keep Britain tidy
 1;
+
+__END__
+
+=head1 AUTHOR
+
+Paul Evans <leonerd@leonerd.org.uk>

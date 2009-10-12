@@ -8,13 +8,15 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
+use constant NEED_API_VERSION => '0.24';
 
 use Carp;
 
 use Socket;
 use IO::Socket;
 use Time::HiRes qw( time );
+use POSIX qw( WNOHANG );
 
 # Try to load IO::Socket::INET6 but don't worry if we don't have it
 eval { require IO::Socket::INET6 };
@@ -45,16 +47,16 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 =head1 SYNOPSIS
 
  use IO::Async::Stream;
- use IO::Async::Timer;
+ use IO::Async::Timer::Countdown;
 
  use IO::Async::Loop;
 
  my $loop = IO::Async::Loop->new();
 
- $loop->add( IO::Async::Timer->new(
+ $loop->add( IO::Async::Timer::Countdown->new(
     delay => 10,
     on_expire => sub { print "10 seconds have passed\n" },
- ) );
+ )->start );
 
  $loop->add( IO::Async::Stream->new(
     read_handle => \*STDIN,
@@ -77,7 +79,7 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 
 This module provides an abstract class which implements the core loop of the
 C<IO::Async> framework. Its primary purpose is to store a set of
-C<IO::Async::Notifier> objects or subclasses of them. It handles all of the
+L<IO::Async::Notifier> objects or subclasses of them. It handles all of the
 lower-level set manipulation actions, and leaves the actual IO readiness 
 testing/notification to the concrete class that implements it. It also
 provides other functionallity such as signal handling, child process managing,
@@ -103,8 +105,12 @@ sub __new
 {
    my $class = shift;
 
-   # We've changed interface since 0.19; detect that this Loop implementation is compatible.
-   $class->can( "watch_io" ) or die "$class is too old for IO::Async $VERSION; consider upgrading it\n";
+   # Detect if the API version provided by the subclass is sufficient
+   $class->can( "API_VERSION" ) or
+      die "$class is too old for IO::Async $VERSION; it does not provide \->API_VERSION\n";
+
+   $class->API_VERSION >= NEED_API_VERSION or
+      die "$class is too old for IO::Async $VERSION; we need API version >= ".NEED_API_VERSION.", it provides ".$class->API_VERSION."\n";
 
    my $self = bless {
       notifiers    => {}, # {nkey} = notifier
@@ -112,7 +118,9 @@ sub __new
       sigattaches  => {}, # {sig} => \@callbacks
       sigproxy     => undef,
       childmanager => undef,
+      childwatches => {}, # {pid} => $code
       timequeue    => undef,
+      deferrals    => [],
    }, $class;
 
    return $self;
@@ -169,6 +177,9 @@ If any of the explicitly-requested loop types (C<$ENV{IO_ASYNC_LOOP}> or
 C<$IO::Async::Loop::LOOP>) fails to load then a warning is printed detailing
 the error.
 
+Implementors of new C<IO::Async::Loop> subclasses should see the notes about
+C<API_VERSION> below.
+
 =cut
 
 sub __try_new
@@ -220,13 +231,15 @@ sub new
    croak "Cannot find a suitable candidate class";
 }
 
-=head1 METHODS
-
-=cut
-
 #######################
 # Notifier management #
 #######################
+
+=head1 NOTIFIER MANAGEMENT
+
+The following methods manage the collection of C<IO::Async::Notifier> objects.
+
+=cut
 
 # Internal method
 sub _nkey
@@ -319,9 +332,81 @@ sub _remove_noparentcheck
    return;
 }
 
+###################
+# Looping support #
+###################
+
+=head1 LOOPING CONTROL
+
+The following methods control the actual run cycle of the loop, and hence the
+program.
+
+=cut
+
+=head2 $count = $loop->loop_once( $timeout )
+
+This method performs a single wait loop using the specific subclass's
+underlying mechanism. If C<$timeout> is undef, then no timeout is applied, and
+it will wait until an event occurs. The intention of the return value is to
+indicate the number of callbacks that this loop executed, though different
+subclasses vary in how accurately they can report this. See the documentation
+for this method in the specific subclass for more information.
+
+=cut
+
+sub loop_once
+{
+   my $self = shift;
+   my ( $timeout ) = @_;
+
+   croak "Expected that $self overrides ->loop_once()";
+}
+
+=head2 $loop->loop_forever()
+
+This method repeatedly calls the C<loop_once> method with no timeout (i.e.
+allowing the underlying mechanism to block indefinitely), until the
+C<loop_stop> method is called from an event callback.
+
+=cut
+
+sub loop_forever
+{
+   my $self = shift;
+
+   $self->{still_looping} = 1;
+
+   while( $self->{still_looping} ) {
+      $self->loop_once( undef );
+   }
+}
+
+=head2 $loop->loop_stop()
+
+This method cancels a running C<loop_forever>, and makes that method return.
+It would be called from an event callback triggered by an event that occured
+within the loop.
+
+=cut
+
+sub loop_stop
+{
+   my $self = shift;
+   
+   $self->{still_looping} = 0;
+}
+
 ############
 # Features #
 ############
+
+=head1 FEATURES
+
+Most of the following methods are higher-level wrappers around base
+functionallity provided by the low-level API documented below. They may be
+used by C<IO::Async::Notifier> subclasses or called directly by the program.
+
+=cut
 
 sub __new_feature
 {
@@ -382,14 +467,15 @@ sub attach_signal
    my ( $signal, $code ) = @_;
 
    if( $signal eq "CHLD" ) {
-      # We make special exception to allow the ChildManager to do this
-      caller eq "IO::Async::ChildManager" or
-         carp "Attaching to SIGCHLD is not advised - use the IO::Async::ChildManager instead";
+      # We make special exception to allow $self->watch_child to do this
+      caller eq "IO::Async::Loop" or
+         carp "Attaching to SIGCHLD is not advised - use ->watch_child instead";
    }
 
    if( not $self->{sigattaches}->{$signal} ) {
-      my $attaches = $self->{sigattaches}->{$signal} = [];
-      $self->watch_signal( $signal, sub { $_->() for @$attaches } );
+      my @attaches;
+      $self->watch_signal( $signal, sub { $_->() for @attaches } );
+      $self->{sigattaches}->{$signal} = \@attaches;
    }
 
    push @{ $self->{sigattaches}->{$signal} }, $code;
@@ -435,61 +521,28 @@ sub detach_signal
    }
 }
 
-=head2 $loop->enable_childmanager
+=head2 $loop->later( $code )
 
-This method enables the child manager, which allows use of the
-C<watch_child()> methods without a race condition.
+Installs a new idle handler which invokes its callback when the IO loop is
+idle.
 
-The child manager will be automatically enabled if required; so this method
-does not need to be explicitly called for other C<*_child()> methods.
-
-=cut
-
-sub enable_childmanager
-{
-   my $self = shift;
-
-   $self->{childmanager} ||= $self->__new_feature( "IO::Async::ChildManager" );
-}
-
-=head2 $loop->disable_childmanager
-
-This method disables the child manager.
+This method is implemented using the C<watch_idle> method, with the C<when>
+parameter set to C<later>. It will return an ID value that can be passed to
+C<unwatch_idle> if required.
 
 =cut
 
-sub disable_childmanager
+sub later
 {
    my $self = shift;
+   my ( $code ) = @_;
 
-   if( my $childmanager = $self->{childmanager} ) {
-      $childmanager->disable;
-      undef $self->{childmanager};
-   }
+   return $self->watch_idle( when => 'later', code => $code );
 }
 
-=head2 $loop->watch_child( $pid, $code )
-
-This method adds a new handler for the termination of the given child PID.
-
-Because the process represented by C<$pid> may already have exited by the time
-this method is called, the child manager should already have been enabled
-before it was C<fork()>ed, by calling C<enable_childmanager>. If this is not
-done, then a C<SIGCHLD> signal may have been missed, and the exit of this
-child process will not be reported.
-
-=cut
-
-sub watch_child
-{
-   my $self = shift;
-   my ( $kid, $code ) = @_;
-
-   my $childmanager = $self->{childmanager} ||=
-      $self->__new_feature( "IO::Async::ChildManager" );
-
-   $childmanager->watch_child( $kid, $code );
-}
+# The following two methods are no longer needed; included just to keep legacy code happy
+sub enable_childmanager  { }
+sub disable_childmanager { }
 
 =head2 $pid = $loop->detach_child( %params )
 
@@ -587,148 +640,6 @@ sub run_child
       $self->__new_feature( "IO::Async::ChildManager" );
 
    $childmanager->run_child( %params );
-}
-
-# For subclasses to call
-sub _adjust_timeout
-{
-   my $self = shift;
-   my ( $timeref, %params ) = @_;
-
-   if( defined $self->{sigproxy} and !$params{no_sigwait} ) {
-      $$timeref = $MAX_SIGWAIT_TIME if( !defined $$timeref or $$timeref > $MAX_SIGWAIT_TIME );
-   }
-
-   my $timequeue = $self->{timequeue};
-   return unless defined $timequeue;
-
-   my $nexttime = $timequeue->next_time;
-   return unless defined $nexttime;
-
-   my $now = exists $params{now} ? $params{now} : time();
-   my $timer_delay = $nexttime - $now;
-
-   if( $timer_delay < 0 ) {
-      $$timeref = 0;
-   }
-   elsif( !defined $$timeref or $timer_delay < $$timeref ) {
-      $$timeref = $timer_delay;
-   }
-}
-
-# For subclasses to call
-sub _build_time
-{
-   my $self = shift;
-   my %params = @_;
-
-   my $time;
-   if( exists $params{time} ) {
-      $time = $params{time};
-   }
-   elsif( exists $params{delay} ) {
-      my $now = exists $params{now} ? $params{now} : time();
-
-      $time = $now + $params{delay};
-   }
-   else {
-      croak "Expected either 'time' or 'delay' keys";
-   }
-
-   return $time;
-}
-
-=head2 $id = $loop->enqueue_timer( %params )
-
-This method installs a callback which will be called at the specified time.
-The time may either be specified as an absolute value (the C<time> key), or
-as a delay from the time it is installed (the C<delay> key).
-
-The returned C<$id> value can be used to identify the timer in case it needs
-to be cancelled by the C<cancel_timer()> method. Note that this value may be
-an object reference, so if it is stored, it should be released after it has
-been fired or cancelled, so the object itself can be freed.
-
-The C<%params> hash takes the following keys:
-
-=over 8
-
-=item time => NUM
-
-The absolute system timestamp to run the event.
-
-=item delay => NUM
-
-The delay after now at which to run the event.
-
-=item now => NUM
-
-The time to consider as now; defaults to C<time()> if not specified.
-
-=item code => CODE
-
-CODE reference to the continuation to run at the allotted time.
-
-=back
-
-For more powerful timer functionallity as a C<IO::Async::Notifier> (so it can
-be used as a child within another Notifier), see instead the
-L<IO::Async::Timer> object.
-
-=cut
-
-sub enqueue_timer
-{
-   my $self = shift;
-   my ( %params ) = @_;
-
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
-
-   $params{time} = $self->_build_time( %params );
-
-   $timequeue->enqueue( %params );
-}
-
-=head2 $loop->cancel_timer( $id )
-
-Cancels a previously-enqueued timer event by removing it from the queue.
-
-=cut
-
-sub cancel_timer
-{
-   my $self = shift;
-   my ( $id ) = @_;
-
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
-
-   $timequeue->cancel( $id );
-}
-
-=head2 $newid = $loop->requeue_timer( $id, %params )
-
-Reschedule an existing timer, moving it to a new time. The old timer is
-removed and will not be invoked.
-
-The C<%params> hash takes the same keys as C<enqueue_timer()>, except for the
-C<code> argument.
-
-The requeue operation may be implemented as a cancel + enqueue, which may
-mean the ID changes. Be sure to store the returned C<$newid> value if it is
-required.
-
-=cut
-
-sub requeue_timer
-{
-   my $self = shift;
-   my ( $id, %params ) = @_;
-
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
-
-   $params{time} = $self->_build_time( %params );
-
-   $timequeue->requeue( $id, %params );
 }
 
 =head2 $loop->resolve( %params )
@@ -837,63 +748,6 @@ sub listen
          },
       );
    }
-}
-
-###################
-# Looping support #
-###################
-
-=head2 $count = $loop->loop_once( $timeout )
-
-This method performs a single wait loop using the specific subclass's
-underlying mechanism. If C<$timeout> is undef, then no timeout is applied, and
-it will wait until an event occurs. The intention of the return value is to
-indicate the number of callbacks that this loop executed, though different
-subclasses vary in how accurately they can report this. See the documentation
-for this method in the specific subclass for more information.
-
-=cut
-
-sub loop_once
-{
-   my $self = shift;
-   my ( $timeout ) = @_;
-
-   croak "Expected that $self overrides ->loop_once()";
-}
-
-=head2 $loop->loop_forever()
-
-This method repeatedly calls the C<loop_once> method with no timeout (i.e.
-allowing the underlying mechanism to block indefinitely), until the
-C<loop_stop> method is called from an event callback.
-
-=cut
-
-sub loop_forever
-{
-   my $self = shift;
-
-   $self->{still_looping} = 1;
-
-   while( $self->{still_looping} ) {
-      $self->loop_once( undef );
-   }
-}
-
-=head2 $loop->loop_stop()
-
-This method cancels a running C<loop_forever>, and makes that method return.
-It would be called from an event callback triggered by an event that occured
-within the loop.
-
-=cut
-
-sub loop_stop
-{
-   my $self = shift;
-   
-   $self->{still_looping} = 0;
 }
 
 =head1 OS ABSTRACTIONS
@@ -1030,8 +884,6 @@ This utility method converts a signal name (such as "TERM") into its system-
 specific signal number. This may be useful to pass to C<POSIX::SigSet> or use
 in other places which use numbers instead of symbolic names.
 
-Note that this function is not an object method, and is not exported.
-
 =cut
 
 my %sig_num;
@@ -1063,7 +915,7 @@ sub signame2num
    return $sig_num{$signame};
 }
 
-=head1 SUBCLASS METHODS
+=head1 LOW-LEVEL METHODS
 
 As C<IO::Async::Loop> is an abstract base class, specific subclasses of it are
 required to implement certain methods that form the base level of
@@ -1072,6 +924,22 @@ the various event objects or higher level methods listed above.
 
 These methods should be considered as part of the interface contract required
 to implement a C<IO::Async::Loop> subclass.
+
+=cut
+
+=head2 IO::Async::Loop->API_VERSION
+
+This method will be called by the magic constructor on the class before it is
+constructed, to ensure that the specific implementation will support the
+required API. This method should return the API version that the loop
+implementation supports. The magic constructor will use that class, provided
+it declares a version at least as new as the version documented here.
+
+The current API version is C<0.24>.
+
+This method may be implemented using C<constant>; e.g
+
+ use constant API_VERSION => '0.24';
 
 =cut
 
@@ -1110,8 +978,6 @@ of using this method.
 
 # This class specifically does NOT implement this method, so that subclasses
 # are forced to. The constructor will be checking....
-# This is done so that we can recognise and abort on a pre-0.20 Loop
-# implementation.
 sub __watch_io
 {
    my $self = shift;
@@ -1206,6 +1072,10 @@ remove an existing one.
 Applications should use a C<IO::Async::Signal> object, or call
 C<attach_signal> instead of using this method.
 
+This and C<unwatch_signal> are optional; a subclass may implement neither, or
+both. If it implements neither then signal handling will be performed by the
+base class using a self-connected pipe to interrupt the main IO blocking.
+
 =cut
 
 sub watch_signal
@@ -1244,6 +1114,376 @@ sub unwatch_signal
       undef $sigproxy;
       undef $self->{sigproxy};
    }
+}
+
+# For subclasses to call
+sub _build_time
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $time;
+   if( exists $params{time} ) {
+      $time = $params{time};
+   }
+   elsif( exists $params{delay} ) {
+      my $now = exists $params{now} ? $params{now} : time();
+
+      $time = $now + $params{delay};
+   }
+   else {
+      croak "Expected either 'time' or 'delay' keys";
+   }
+
+   return $time;
+}
+
+=head2 $id = $loop->enqueue_timer( %params )
+
+This method installs a callback which will be called at the specified time.
+The time may either be specified as an absolute value (the C<time> key), or
+as a delay from the time it is installed (the C<delay> key).
+
+The returned C<$id> value can be used to identify the timer in case it needs
+to be cancelled by the C<cancel_timer()> method. Note that this value may be
+an object reference, so if it is stored, it should be released after it has
+been fired or cancelled, so the object itself can be freed.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item time => NUM
+
+The absolute system timestamp to run the event.
+
+=item delay => NUM
+
+The delay after now at which to run the event, if C<time> is not supplied.
+
+=item now => NUM
+
+The time to consider as now if calculating an absolute time based on C<delay>;
+defaults to C<time()> if not specified.
+
+=item code => CODE
+
+CODE reference to the continuation to run at the allotted time.
+
+=back
+
+Either one of C<time> or C<delay> is required.
+
+For more powerful timer functionallity as a C<IO::Async::Notifier> (so it can
+be used as a child within another Notifier), see instead the
+L<IO::Async::Timer> object and its subclasses.
+
+These C<*_timer> methods are optional; a subclass may implement none or all of
+them. If it implements none, then the base class will manage a queue of timer
+events. This queue should be handled by the C<loop_once> method implemented by
+the subclass, using the C<_adjust_timeout> and C<_manage_queues> methods.
+
+=cut
+
+sub enqueue_timer
+{
+   my $self = shift;
+   my ( %params ) = @_;
+
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
+
+   $params{time} = $self->_build_time( %params );
+
+   $timequeue->enqueue( %params );
+}
+
+=head2 $loop->cancel_timer( $id )
+
+Cancels a previously-enqueued timer event by removing it from the queue.
+
+=cut
+
+sub cancel_timer
+{
+   my $self = shift;
+   my ( $id ) = @_;
+
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
+
+   $timequeue->cancel( $id );
+}
+
+=head2 $newid = $loop->requeue_timer( $id, %params )
+
+Reschedule an existing timer, moving it to a new time. The old timer is
+removed and will not be invoked.
+
+The C<%params> hash takes the same keys as C<enqueue_timer()>, except for the
+C<code> argument.
+
+The requeue operation may be implemented as a cancel + enqueue, which may
+mean the ID changes. Be sure to store the returned C<$newid> value if it is
+required.
+
+=cut
+
+sub requeue_timer
+{
+   my $self = shift;
+   my ( $id, %params ) = @_;
+
+   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
+
+   $params{time} = $self->_build_time( %params );
+
+   $timequeue->requeue( $id, %params );
+}
+
+=head2 $id = $loop->watch_idle( %params )
+
+This method installs a callback which will be called at some point in the near
+future.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item when => STRING
+
+Specifies the time at which the callback will be invoked. See below.
+
+=item code => CODE
+
+CODE reference to the continuation to run at the allotted time.
+
+=back
+
+The C<when> parameter defines the time at which the callback will later be
+invoked. Must be one of the following values:
+
+=over 8
+
+=item later
+
+Callback is invoked after the current round of IO events have been processed
+by the loop's underlying C<loop_once> method.
+
+If a new idle watch is installed from within a C<later> callback, the
+installed one will not be invoked during this round. It will be deferred for
+the next time C<loop_once> is called, after any IO events have been handled.
+
+=back
+
+If there are pending idle handlers, then the C<loop_once> method will use a
+zero timeout; it will return immediately, having processed any IO events and
+idle handlers.
+
+The returned C<$id> value can be used to identify the idle handler in case it
+needs to be removed, by calling the C<unwatch_idle> method. Note this value
+may be a reference, so if it is stored it should be released after the
+callback has been invoked or cancled, so the referrant itself can be freed.
+
+This and C<unwatch_idle> are optional; a subclass may implement neither, or
+both. If it implements neither then idle handling will be performed by the
+base class, using the C<_adjust_timeout> and C<_manage_queues> methods.
+
+=cut
+
+sub watch_idle
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $code = delete $params{code};
+   ref $code eq "CODE" or croak "Expected 'code' to be a CODE reference";
+
+   my $when = delete $params{when} or croak "Expected 'when'";
+
+   # Future-proofing for other idle modes
+   $when eq "later" or croak "Expected 'when' to be 'later'";
+
+   my $deferrals = $self->{deferrals};
+
+   push @$deferrals, $code;
+   return \$deferrals->[-1];
+}
+
+=head2 $loop->unwatch_idle( $id )
+
+Cancels a previously-installed idle handler.
+
+=cut
+
+sub unwatch_idle
+{
+   my $self = shift;
+   my ( $id ) = @_;
+
+   my $deferrals = $self->{deferrals};
+
+   my $idx;
+   \$deferrals->[$_] == $id and ( $idx = $_ ), last for 0 .. $#$deferrals;
+
+   splice @$deferrals, $idx, 1, () if defined $idx;
+}
+
+=head2 $loop->watch_child( $pid, $code )
+
+This method adds a new handler for the termination of the given child process
+PID.
+
+=over 8
+
+=item $pid
+
+The PID to watch.
+
+=item $code
+
+A CODE reference to the exit handler. It will be invoked as
+
+ $code->( $pid, $? )
+
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+
+=back
+
+After invocation, the handler is automatically removed.
+
+This and C<unwatch_child> are optional; a subclass may implement neither, or
+both. If it implements neither then child watching will be performed by using
+C<watch_signal> to install a C<SIGCHLD> handler, which will use C<waitpid> to
+look for exited child processes.
+
+=cut
+
+sub watch_child
+{
+   my $self = shift;
+   my ( $pid, $code ) = @_;
+
+   my $childwatches = $self->{childwatches};
+
+   croak "Already have a handler for $pid" if exists $childwatches->{$pid};
+
+   if( !$self->{childwatch_sigid} ) {
+      $self->{childwatch_sigid} = $self->attach_signal( CHLD => sub {
+         while( 1 ) {
+            my $zid = waitpid( -1, WNOHANG );
+
+            last if !defined $zid or $zid < 1;
+
+            if( defined $childwatches->{$zid} ) {
+               $childwatches->{$zid}->( $zid, $? );
+               delete $childwatches->{$zid};
+            }
+         }
+      } );
+
+      # There's a chance the child has already exited
+      my $zid = waitpid( $pid, WNOHANG );
+      if( defined $zid and $zid > 0 ) {
+         my $exitstatus = $?;
+         $self->later( sub { $code->( $pid, $exitstatus ) } );
+         return;
+      }
+   }
+
+   $childwatches->{$pid} = $code;
+}
+
+=head2 $loop->unwatch_child( $pid )
+
+This method removes a watch on an existing child process PID.
+
+=cut
+
+sub unwatch_child
+{
+   my $self = shift;
+   my ( $pid ) = @_;
+
+   my $childwatches = $self->{childwatches};
+
+   delete $childwatches->{$pid};
+
+   if( !keys %$childwatches ) {
+      $self->detach_signal( CHLD => delete $self->{childwatch_sigid} );
+   }
+}
+
+=head1 METHODS FOR SUBCLASSES
+
+The following methods are provided to access internal features which are
+required by specific subclasses to implement the loop functionallity. The use
+cases of each will be documented in the above section.
+
+=cut
+
+=head2 $loop->_adjust_timeout( \$timeout )
+
+Shortens the timeout value passed in the scalar reference if it is longer in
+seconds than the time until the next queued event on the timer queue. If there
+are pending idle handlers, the timeout is reduced to zero.
+
+=cut
+
+sub _adjust_timeout
+{
+   my $self = shift;
+   my ( $timeref, %params ) = @_;
+
+   $$timeref = 0, return if @{ $self->{deferrals} };
+
+   if( defined $self->{sigproxy} and !$params{no_sigwait} ) {
+      $$timeref = $MAX_SIGWAIT_TIME if( !defined $$timeref or $$timeref > $MAX_SIGWAIT_TIME );
+   }
+
+   my $timequeue = $self->{timequeue};
+   return unless defined $timequeue;
+
+   my $nexttime = $timequeue->next_time;
+   return unless defined $nexttime;
+
+   my $now = exists $params{now} ? $params{now} : time();
+   my $timer_delay = $nexttime - $now;
+
+   if( $timer_delay < 0 ) {
+      $$timeref = 0;
+   }
+   elsif( !defined $$timeref or $timer_delay < $$timeref ) {
+      $$timeref = $timer_delay;
+   }
+}
+
+=head2 $loop->_manage_queues
+
+Checks the timer queue for callbacks that should have been invoked by now, and
+runs them all, removing them from the queue. It also invokes all of the
+pending idle handlers. Any new idle handlers installed by these are not
+invoked yet; they will wait for the next time this method is called.
+
+=cut
+
+sub _manage_queues
+{
+   my $self = shift;
+
+   my $count = 0;
+
+   my $timequeue = $self->{timequeue};
+   $count += $timequeue->fire if $timequeue;
+
+   my $deferrals = $self->{deferrals};
+   $self->{deferrals} = [];
+
+   foreach my $code ( @$deferrals ) {
+      $code->();
+      $count++;
+   }
+
+   return $count;
 }
 
 # Keep perl happy; keep Britain tidy

@@ -8,7 +8,8 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.23';
+our $VERSION = '0.24';
+use constant API_VERSION => '0.24';
 
 use base qw( IO::Async::Loop );
 
@@ -25,7 +26,7 @@ use constant IO_POLL_REMOVE_BUG => ( $IO::Poll::VERSION == '0.05' );
 
 =head1 NAME
 
-C<IO::Async::Loop::Poll> - a Loop using an C<IO::Poll> object
+C<IO::Async::Loop::Poll> - use C<IO::Async> with C<poll(2)>
 
 =head1 SYNOPSIS
 
@@ -167,9 +168,7 @@ sub post_poll
 
    # Since we have no way to know if the timeout occured, we'll have to
    # attempt to fire any waiting timeout events anyway
-
-   my $timequeue = $self->{timequeue};
-   $count += $timequeue->fire if $timequeue;
+   $count += $self->_manage_queues;
 
    return $count;
 }

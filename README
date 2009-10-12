@@ -53,13 +53,22 @@ DESCRIPTION
     Because there are a lot of classes in this collection, the following
     overview gives a brief description of each.
 
+  Notifiers
+    The base class of all the event handling subclasses is
+    IO::Async::Notifier. It does not perform any IO operations itself, but
+    instead acts as a base class to build the specific IO functionallity
+    upon. It can also coordinate a collection of other Notifiers contained
+    within it, forming a tree structure.
+
+    The following sections describe particular types of Notifier.
+
   File Handle IO
-    A IO::Async::Handle object represents a single IO handle that is being
-    managed. While in most cases it will represent a single filehandle, such
-    as a socket (for example, an "IO::Socket::INET" connection), it is
-    possible to have separate reading and writing handles (most likely for a
-    program's "STDIN" and "STDOUT" streams, or a pair of pipes connected to
-    a child process).
+    A IO::Async::Handle object is a Notifier that represents a single IO
+    handle being managed. While in most cases it will represent a single
+    filehandle, such as a socket (for example, an "IO::Socket::INET"
+    connection), it is possible to have separate reading and writing handles
+    (most likely for a program's "STDIN" and "STDOUT" streams, or a pair of
+    pipes connected to a child process).
 
     The IO::Async::Stream class is a subclass of "IO::Async::Handle" which
     maintains internal incoming and outgoing data buffers. In this way, it
@@ -69,18 +78,43 @@ DESCRIPTION
     callbacks are used to inform when new incoming data is available, or
     when the outgoing buffer is empty.
 
-    Both of the above are subclasses of IO::Async::Notifier, which does not
-    perform any IO operations itself, but instead acts to coordinate a
-    collection of other Notifiers, or act as a base class to build the
-    specific IO functionallity upon. For other types of "Notifier", see
-    Timers and Signals below.
+    The IO::Async::Listener class is another subclass of "IO::Async::Handle"
+    which facilitates the use of "listen()"-mode sockets. When a new
+    connection is available on the socket it will "accept()" it and pass the
+    new client socket to its callback function.
+
+  Timers
+    A IO::Async::Timer::Countdown object represents a counttime timer, which
+    will invoke a callback after a given delay. It can be stopped and
+    restarted.
+
+    A IO::Async::Timer::Periodic object invokes a callback at regular
+    intervals from its initial start time. It is reliable and will not drift
+    due to the time taken to run the callback.
+
+    The IO::Async::Loop also supports methods for managing timed events on a
+    lower level. Events may be absolute, or relative in time to the time
+    they are installed.
+
+  Signals
+    A IO::Async::Signal object represents a POSIX signal, which will invoke
+    a callback when the given signal is received by the process. Multiple
+    objects watching the same signal can be used; they will all invoke in no
+    particular order.
+
+  Merge Points
+    The IO::Async::MergePoint object class allows for a program to wait on
+    the completion of multiple seperate subtasks. It allows for each subtask
+    to return some data, which will be collected and given to the callback
+    provided to the merge point, which is called when every subtask has
+    completed.
 
   Loops
     The IO::Async::Loop object class represents an abstract collection of
-    "IO::Async::Notifier" objects, filehandle IO watches, timers, signal
-    handlers, and other functionallity. It performs all of the abstract
-    collection management tasks, and leaves the actual OS interactions to a
-    particular subclass for the purpose.
+    "IO::Async::Notifier" objects, and manages the actual filehandle IO
+    watches, timers, signal handlers, and other functionallity. It performs
+    all of the abstract collection management tasks, and leaves the actual
+    OS interactions to a particular subclass for the purpose.
 
     IO::Async::Loop::Poll uses an "IO::Poll" object for this test.
 
@@ -88,7 +122,7 @@ DESCRIPTION
 
     Other subclasses of loop may appear on CPAN under their own dists; such
     as IO::Async::Loop::Glib which acts as a proxy for the "Glib::MainLoop"
-    of a Glib-based program, or IO::Async::Loop::IO_Ppoll which uses the
+    of a Glib-based program, or IO::Async::Loop::Ppoll which uses the
     IO::Ppoll object to handle signals safely on Linux.
 
     As well as these general-purpose classes, the "IO::Async::Loop"
@@ -120,27 +154,6 @@ DESCRIPTION
     around a code block, to execute it in a detached child process. The code
     in the sub-process runs isolated from the main program, communicating
     only by function call arguments and return values.
-
-  Timers
-    A IO::Async::Timer object represents a counttime timer, which will
-    invoke a callback after a given delay. It can be stopped and restarted.
-
-    The IO::Async::Loop also supports methods for managing timed events on a
-    lower level. Events may be absolute, or relative in time to the time
-    they are installed.
-
-  Signals
-    A IO::Async::Signal object represents a POSIX signal, which will invoke
-    a callback when the given signal is received by the process. Multiple
-    objects watching the same signal can be used; they will all invoke in no
-    particular order.
-
-  Merge Points
-    The IO::Async::MergePoint object class allows for a program to wait on
-    the completion of multiple seperate subtasks. It allows for each subtask
-    to return some data, which will be collected and given to the callback
-    provided to the merge point, which is called when every subtask has
-    completed.
 
   Networking
     The "IO::Async::Loop" provides several methods for performing
