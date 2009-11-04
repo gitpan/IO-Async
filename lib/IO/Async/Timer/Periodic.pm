@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.24';
+our $VERSION = '0.25';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -31,7 +31,6 @@ C<IO::Async::Timer::Periodic> - event callback at regular intervals
 
     on_tick => sub {
        print "You've had a minute\n";
-       $loop->loop_stop;
     },
  );
 

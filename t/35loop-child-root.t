@@ -65,14 +65,14 @@ my $child_out;
 $loop->run_child(
    code => sub {
       print "EUID: $>\n";
-      my ( $gid, $groups ) = split( m/ /, $), 2 );
+      my ( $gid, @groups ) = split( m/ /, $) );
       print "EGID: $gid\n";
-      print "Groups: $groups\n";
+      print "Groups: " . join( " ", sort { $a <=> $b } @groups ) . "\n";
       return 0;
    },
    setup => [
-      setgroups => [ 4, 5, 6, 10 ],
       setgid    => 10,
+      setgroups => [ 4, 5, 6, 10 ],
       setuid    => 20,
    ],
    on_finish => sub { ( undef, $exitcode, $child_out ) = @_; },
