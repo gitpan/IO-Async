@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.26';
+our $VERSION = '0.27';
 use constant NEED_API_VERSION => '0.24';
 
 use Carp;
@@ -474,7 +474,11 @@ sub attach_signal
 
    if( not $self->{sigattaches}->{$signal} ) {
       my @attaches;
-      $self->watch_signal( $signal, sub { $_->() for @attaches } );
+      $self->watch_signal( $signal, sub {
+         foreach my $attachment ( @attaches ) {
+            $attachment->();
+         }
+      } );
       $self->{sigattaches}->{$signal} = \@attaches;
    }
 
