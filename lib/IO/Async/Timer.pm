@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
 use Carp;
 
@@ -130,7 +130,7 @@ sub start
    my $loop = $self->get_loop;
    if( !defined $loop ) {
       $self->{pending} = 1;
-      return;
+      return $self;
    }
 
    defined $self->{id} and croak "Cannot start a Timer that is already running";

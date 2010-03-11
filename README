@@ -42,11 +42,11 @@ SYNOPSIS
 DESCRIPTION
     This collection of modules allows programs to be written that perform
     asynchronous filehandle IO operations. A typical program using them
-    would consist of a single subclass of "IO::Async::Loop" to act as a
-    container o other objects, which perform the actual IO work required by
-    the program. As as IO handles, the loop also supports timers and signal
-    handlers, and includes more higher-level functionallity built on top of
-    these basic parts.
+    would consist of a single subclass of IO::Async::Loop to act as a
+    container of other objects, which perform the actual IO work required by
+    the program. As well as IO handles, the loop also supports timers and
+    signal handlers, and includes more higher-level functionallity built on
+    top of these basic parts.
 
     Because there are a lot of classes in this collection, the following
     overview gives a brief description of each.
@@ -61,14 +61,14 @@ DESCRIPTION
     The following sections describe particular types of Notifier.
 
   File Handle IO
-    A IO::Async::Handle object is a Notifier that represents a single IO
+    An IO::Async::Handle object is a Notifier that represents a single IO
     handle being managed. While in most cases it will represent a single
-    filehandle, such as a socket (for example, an "IO::Socket::INET"
+    filehandle, such as a socket (for example, an IO::Socket::INET
     connection), it is possible to have separate reading and writing handles
     (most likely for a program's "STDIN" and "STDOUT" streams, or a pair of
     pipes connected to a child process).
 
-    The IO::Async::Stream class is a subclass of "IO::Async::Handle" which
+    The IO::Async::Stream class is a subclass of IO::Async::Handle which
     maintains internal incoming and outgoing data buffers. In this way, it
     implements bidirectional buffering of a byte stream, such as a TCP
     socket. The class automatically handles reading of incoming data into
@@ -76,17 +76,17 @@ DESCRIPTION
     callbacks are used to inform when new incoming data is available, or
     when the outgoing buffer is empty.
 
-    The IO::Async::Listener class is another subclass of "IO::Async::Handle"
+    The IO::Async::Listener class is another subclass of IO::Async::Handle
     which facilitates the use of "listen()"-mode sockets. When a new
     connection is available on the socket it will "accept()" it and pass the
     new client socket to its callback function.
 
   Timers
-    A IO::Async::Timer::Countdown object represents a counttime timer, which
-    will invoke a callback after a given delay. It can be stopped and
+    An IO::Async::Timer::Countdown object represents a count time timer,
+    which will invoke a callback after a given delay. It can be stopped and
     restarted.
 
-    A IO::Async::Timer::Periodic object invokes a callback at regular
+    An IO::Async::Timer::Periodic object invokes a callback at regular
     intervals from its initial start time. It is reliable and will not drift
     due to the time taken to run the callback.
 
@@ -95,7 +95,7 @@ DESCRIPTION
     they are installed.
 
   Signals
-    A IO::Async::Signal object represents a POSIX signal, which will invoke
+    An IO::Async::Signal object represents a POSIX signal, which will invoke
     a callback when the given signal is received by the process. Multiple
     objects watching the same signal can be used; they will all invoke in no
     particular order.
@@ -109,12 +109,12 @@ DESCRIPTION
 
   Loops
     The IO::Async::Loop object class represents an abstract collection of
-    "IO::Async::Notifier" objects, and manages the actual filehandle IO
-    watches, timers, signal handlers, and other functionallity. It performs
+    IO::Async::Notifier objects, and manages the actual filehandle IO
+    watchers, timers, signal handlers, and other functionallity. It performs
     all of the abstract collection management tasks, and leaves the actual
     OS interactions to a particular subclass for the purpose.
 
-    IO::Async::Loop::Poll uses an "IO::Poll" object for this test.
+    IO::Async::Loop::Poll uses an IO::Poll object for this test.
 
     IO::Async::Loop::Select uses the "select()" syscall.
 
@@ -123,12 +123,12 @@ DESCRIPTION
     of a Glib-based program, or IO::Async::Loop::Ppoll which uses the
     IO::Ppoll object to handle signals safely on Linux.
 
-    As well as these general-purpose classes, the "IO::Async::Loop"
+    As well as these general-purpose classes, the IO::Async::Loop
     constructor also supports looking for OS-specific subclasses, in case a
     more efficient implementation exists for the specific OS it runs on.
 
   Child Processes
-    The "IO::Async::Loop" object provides a number of methods to facilitate
+    The IO::Async::Loop object provides a number of methods to facilitate
     the running of child processes. "spawn_child" is primarily a wrapper
     around the typical "fork()"/"exec()" style of starting child processes,
     "open_child" builds on this to provide management of child process file
@@ -154,7 +154,7 @@ DESCRIPTION
     only by function call arguments and return values.
 
   Networking
-    The "IO::Async::Loop" provides several methods for performing
+    The IO::Async::Loop provides several methods for performing
     network-based tasks. Primarily, the "connect" and "listen" methods allow
     the creation of client or server network sockets. Additionally, the
     "resolve" method allows the use of the system's name resolvers in an
@@ -165,7 +165,7 @@ TODO
     result, some of the potentially-useful parts or features currently
     missing are:
 
-    *   A "IO::Async::Loop" subclass to perform integration with Event.
+    *   An IO::Async::Loop subclass to perform integration with Event.
         Consider further ideas on Solaris' *ports*, BSD's *Kevents* and
         anything that might be useful on Win32.
 
@@ -174,8 +174,8 @@ TODO
         extensively-different "ChildManager", or OSes may have specific ways
         to perform asynchronous name resolution operations better than the
         generic "DetachedCode" approach. This should be easier to implement
-        now that the "IO::Async::Loop" magic constructor looks for
-        OS-specific subclasses first.
+        now that the IO::Async::Loop magic constructor looks for OS-specific
+        subclasses first.
 
     *   A consideration of whether it is useful and possible to provide
         integration with POE or AnyEvent.

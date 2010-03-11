@@ -1,17 +1,16 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2010 -- leonerd@leonerd.org.uk
 
 package IO::Async::Test;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
-use Exporter;
-our @ISA = qw( Exporter );
+use Exporter 'import';
 our @EXPORT = qw(
    testing_loop
    wait_for

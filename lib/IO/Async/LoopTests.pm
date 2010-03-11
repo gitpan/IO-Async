@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2009 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2009,2010 -- leonerd@leonerd.org.uk
 
 package IO::Async::LoopTests;
 
 use strict;
 use warnings;
 
-use base qw( Exporter );
+use Exporter 'import';
 our @EXPORT = qw(
    run_tests
 );
@@ -22,7 +22,7 @@ use IO::Async::Test qw();
 use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -268,7 +268,7 @@ Tests the Loop's ability to handle timer events
 
 =cut
 
-use constant count_tests_timer => 8;
+use constant count_tests_timer => 10;
 sub run_tests_timer
 {
    my $done = 0;
@@ -320,6 +320,14 @@ sub run_tests_timer
    } 1.5, 2.5, 'requeued timer of delay 2';
 
    is( $done, 2, '$done is 2 after requeued timer' );
+
+   $loop->enqueue_timer( delay => -1, code => sub { $done = 1 } );
+
+   $done = 0;
+
+   time_between {
+      $loop->loop_once() while !$done;
+   } 0, 0.1, 'loop_once() while waiting for negative interval timer';
 }
 
 =head2 signal
