@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use IO::Async::Handle;
 
@@ -154,8 +154,8 @@ sub configure
       # So now we know it's at least some kind of socket. Is it listening?
       # SO_ACCEPTCONN would tell us, but not all OSes implement it. Since it's
       # only a best-effort sanity check, we won't mind if the OS doesn't.
-      my $acceptconn = getsockopt( $handle, SOL_SOCKET, SO_ACCEPTCONN ) or croak "Cannot getsockopt - $!";
-      unpack( "I", $acceptconn ) or croak "Socket is not accepting connections";
+      my $acceptconn = getsockopt( $handle, SOL_SOCKET, SO_ACCEPTCONN );
+      !defined $acceptconn or unpack( "I", $acceptconn ) or croak "Socket is not accepting connections";
 
       # This is a bit naughty but hopefully nobody will mind...
       bless $handle, "IO::Socket" if ref( $handle ) eq "GLOB";
@@ -179,6 +179,8 @@ sub on_read_ready
    my $newclient = $self->read_handle->accept();
 
    if( defined $newclient ) {
+      $newclient->blocking( 0 );
+
       # TODO: make class/callback
       if( $self->{on_accept} ) {
          $self->{on_accept}->( $self, $newclient );
@@ -351,13 +353,13 @@ sub listen
    }
 
    my $on_listen = $params{on_listen}; # optional
-   !defined $on_listen or ref $on_listen eq "CODE" or croak "Expected 'on_listen' to be a CODE reference";
+   !defined $on_listen or ref $on_listen or croak "Expected 'on_listen' to be a reference";
 
    my $on_listen_error = $params{on_listen_error};
-   ref $on_listen_error eq "CODE" or croak "Expected 'on_listen_error' as a CODE reference";
+   ref $on_listen_error or croak "Expected 'on_listen_error' as a reference";
 
    my $on_fail = $params{on_fail};
-   !defined $on_fail or ref $on_fail eq "CODE" or croak "Expected 'on_fail' to be a CODE reference";
+   !defined $on_fail or ref $on_fail or croak "Expected 'on_fail' to be a reference";
 
    my $queuesize = $params{queuesize} || 3;
 
@@ -405,7 +407,7 @@ sub listen
 
    elsif( defined $params{service} ) {
       my $on_resolve_error = delete $params{on_resolve_error};
-      ref $on_resolve_error eq "CODE" or croak "Expected 'on_resolve_error' as CODE reference";
+      ref $on_resolve_error or croak "Expected 'on_resolve_error' as a reference";
 
       my $host = delete $params{host} || "";
 

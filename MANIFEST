@@ -30,11 +30,9 @@ lib/IO/Async/Test.pm
 lib/IO/Async/Timer.pm
 lib/IO/Async/Timer/Countdown.pm
 lib/IO/Async/Timer/Periodic.pm
-LICENSE
 Makefile.PL
 MANIFEST			This list of files
 META.yml
-README
 t/00use.t
 t/01timequeue.t
 t/02loop-magic.t
@@ -77,3 +75,5 @@ t/60sequencer-client.t
 t/60sequencer-server.t
 t/99pod.t
 t/StupidLoop.pm
+README
+LICENSE

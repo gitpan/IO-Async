@@ -9,10 +9,9 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use Carp;
-use Scalar::Util qw( weaken );
 
 =head1 NAME
 
@@ -134,13 +133,11 @@ sub _add_to_loop
    my ( $loop ) = @_;
 
    if( !$self->{cb} ) {
-      weaken( my $weakself = $self );
-
       if( $self->{on_receipt} ) {
-         $self->{cb} = sub { $weakself->{on_receipt}->( $weakself ) };
+         $self->{cb} = $self->_capture_weakself( $self->{on_receipt} );
       }
       else {
-         $self->{cb} = sub { $weakself->on_receipt };
+         $self->{cb} = $self->_capture_weakself( 'on_receipt' );
       }
    }
 

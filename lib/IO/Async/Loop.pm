@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 use constant NEED_API_VERSION => '0.24';
 
 use Carp;
@@ -1301,7 +1301,7 @@ sub watch_idle
    my %params = @_;
 
    my $code = delete $params{code};
-   ref $code eq "CODE" or croak "Expected 'code' to be a CODE reference";
+   ref $code or croak "Expected 'code' to be a reference";
 
    my $when = delete $params{when} or croak "Expected 'when'";
 

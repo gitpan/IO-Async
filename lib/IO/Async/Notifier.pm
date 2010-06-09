@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006-2009 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2010 -- leonerd@leonerd.org.uk
 
 package IO::Async::Notifier;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -133,8 +133,8 @@ any of these keys are present, then a C<IO::Async::Handle> is returned.
 
 Do not rely on this feature in new code.  This logic exists purely to provide
 an upgrade path from older code that still expects C<IO::Async::Notifier> to
-provide filehandle operations. This will eventually produce a deprecation
-warning at some point in the future, and removed at some point beyond that.
+provide filehandle operations. This produces a deprecation warning. At some
+point in the future this functionallity may be removed.
 
 =cut
 
@@ -143,14 +143,12 @@ sub new
    my $class = shift;
    my %params = @_;
 
-   if( $class eq __PACKAGE__ ) {
-      # TODO: This is temporary. Eventually, throw a deprecation warning.
-      foreach my $key ( keys %params ) {
-         if( grep { $key eq $_ } qw( handle read_handle write_handle on_read_ready on_write_ready ) ) {
-            require IO::Async::Handle;
-            return IO::Async::Handle->new( %params );
-         }
-      }
+   if( $class eq __PACKAGE__ and 
+      grep { exists $params{$_} } qw( handle read_handle write_handle on_read_ready on_write_ready ) ) {
+      carp "IO::Async::Notifier no longer wraps a filehandle; see instead IO::Async::Handle";
+
+      require IO::Async::Handle;
+      return IO::Async::Handle->new( %params );
    }
 
    my $self = bless {
@@ -378,6 +376,45 @@ C<_add_to_loop> method had originally done.
 sub _remove_from_loop
 {
    # empty default
+}
+
+=head1 UTILITY METHODS
+
+=cut
+
+=head2 $mref = $notifier->_capture_weakself( $code )
+
+Returns a new CODE ref which, when invoked, will invoke the originally-passed
+ref, with additionally a reference to the Notifier as its first argument. The
+Notifier reference is stored weakly in C<$mref>, so this CODE ref may be
+stored in the Notifier itself without creating a cycle.
+
+For example,
+
+ my $mref = $notifier->_capture_weakself( sub {
+    my ( $notifier, $arg ) = @_;
+    print "Notifier $notifier got argument $arg\n";
+ } );
+
+ $mref->( 123 );
+
+This is provided as a utility for Notifier subclasses to use to build a
+callback CODEref to pass to a Loop method, but which may also want to store
+the CODE ref internally for efficiency.
+
+The C<$code> argument may also be a plain string, which will be used as a
+method name; the returned CODE ref will then invoke that method on the object.
+
+=cut
+
+sub _capture_weakself
+{
+   my $self = shift;
+   my ( $code ) = @_;   # actually bare method names work too
+
+   weaken $self;
+
+   return sub { $self->$code( @_ ) };
 }
 
 # Keep perl happy; keep Britain tidy

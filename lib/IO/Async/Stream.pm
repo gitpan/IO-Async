@@ -8,7 +8,7 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use base qw( IO::Async::Handle );
 
@@ -238,6 +238,24 @@ contain up-to-date logging or console information.
 It currently defaults to false for any file handle, but future versions of
 C<IO::Async> may enable this by default on STDOUT and STDERR.
 
+=item read_all => BOOL
+
+Optional. If true, attempt to read as much data from the kernel as possible
+when the handle becomes readable. By default this is turned off, meaning at
+most a fixed-size buffer of 8 KiB is read. If there is still more data in the
+kernel's buffer, the handle will still be readable, and will be read from
+again. This behaviour allows multiple streams to be multiplexed
+simultaneously, meaning that a large bulk transfer on one stream cannot starve
+other filehandles of processing time. Turning this option on may improve bulk
+data transfer rate, at the risk of delaying or stalling processing on other
+filehandles.
+
+=item write_all => BOOL
+
+Optional. Analogous to the C<read_all> option, but for writing to filehandles
+into the kernel buffer. When C<autoflush> is enabled, option only affects
+deferred writing if the initial attempt failed due to buffer space.
+
 =back
 
 If a read handle is given, it is required that either an C<on_read> callback
@@ -256,7 +274,7 @@ sub configure
    my $self = shift;
    my %params = @_;
 
-   for (qw( on_read on_outgoing_empty on_read_error on_write_error autoflush )) {
+   for (qw( on_read on_outgoing_empty on_read_error on_write_error autoflush read_all write_all )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
    }
 
@@ -391,66 +409,68 @@ sub write
    $self->want_writeready( 1 );
 }
 
-# protected
 sub on_read_ready
 {
    my $self = shift;
 
    my $handle = $self->read_handle;
 
-   my $data;
-   my $len = $handle->sysread( $data, $READLEN );
-
-   if( !defined $len ) {
-      my $errno = $!;
-
-      return if _nonfatal_error( $errno );
-
-      if( defined $self->{on_read_error} ) {
-         $self->{on_read_error}->( $self, $errno );
-      }
-      elsif( $self->can( "on_read_error" ) ) {
-         $self->on_read_error( $errno );
-      }
-      else {
-         $self->close_now;
-      }
-
-      return;
-   }
-
-   my $handleclosed = ( $len == 0 );
-
-   $self->{readbuff} .= $data if( !$handleclosed );
-
    while(1) {
-      my $on_read = $self->{current_on_read}
-                     || $self->{on_read}
-                     || $self->can( "on_read" );
+      my $data;
+      my $len = $handle->sysread( $data, $READLEN );
 
-      my $ret = $on_read->( $self, \$self->{readbuff}, $handleclosed );
+      if( !defined $len ) {
+         my $errno = $!;
 
-      my $again;
+         return if _nonfatal_error( $errno );
 
-      if( ref $ret eq "CODE" ) {
-         $self->{current_on_read} = $ret;
-         $again = 1;
+         if( defined $self->{on_read_error} ) {
+            $self->{on_read_error}->( $self, $errno );
+         }
+         elsif( $self->can( "on_read_error" ) ) {
+            $self->on_read_error( $errno );
+         }
+         else {
+            $self->close_now;
+         }
+
+         return;
       }
-      elsif( $self->{current_on_read} and !defined $ret ) {
-         undef $self->{current_on_read};
-         $again = 1;
-      }
-      else {
-         $again = $ret && ( length( $self->{readbuff} ) > 0 || $handleclosed );
+
+      my $handleclosed = ( $len == 0 );
+
+      $self->{readbuff} .= $data if( !$handleclosed );
+
+      while(1) {
+         my $on_read = $self->{current_on_read}
+                        || $self->{on_read}
+                        || $self->can( "on_read" );
+
+         my $ret = $on_read->( $self, \$self->{readbuff}, $handleclosed );
+
+         my $again;
+
+         if( ref $ret eq "CODE" ) {
+            $self->{current_on_read} = $ret;
+            $again = 1;
+         }
+         elsif( $self->{current_on_read} and !defined $ret ) {
+            undef $self->{current_on_read};
+            $again = 1;
+         }
+         else {
+            $again = $ret && ( length( $self->{readbuff} ) > 0 || $handleclosed );
+         }
+
+         last if !$again;
       }
 
-      last if !$again;
+      $self->close_now, return if $handleclosed;
+
+      last unless $self->{read_all};
    }
-
-   $self->close_now if $handleclosed;
 }
 
-# protected
 sub on_write_ready
 {
    my $self = shift;
@@ -484,6 +504,8 @@ sub on_write_ready
       }
 
       substr( $self->{writebuff}, 0, $len ) = "";
+
+      last unless $self->{write_all};
    }
 
    # All data successfully flushed

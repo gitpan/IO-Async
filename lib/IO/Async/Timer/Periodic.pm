@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -103,7 +103,7 @@ sub configure
 
    if( exists $params{on_tick} ) {
       my $on_tick = delete $params{on_tick};
-      ref $on_tick eq "CODE" or croak "Expected 'on_tick' as a CODE reference";
+      ref $on_tick or croak "Expected 'on_tick' as a reference";
 
       $self->{on_tick} = $on_tick;
       undef $self->{cb}; # Will be lazily constructed when needed

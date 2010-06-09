@@ -9,10 +9,9 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use Carp;
-use Scalar::Util qw( weaken );
 
 =head1 NAME
 
@@ -87,6 +86,11 @@ should not call the C<SUPER::> versions of those methods.
 
  $self->on_write_ready()
 
+Optionally, an C<on_closed> method may be provided, which will be called when
+the C<close> method is invoked.
+
+ $self->on_closed()
+
 =back
 
 If either of the readyness methods calls the C<close()> method, then
@@ -149,11 +153,15 @@ sub configure
 
    if( exists $params{on_read_ready} ) {
       $self->{on_read_ready} = delete $params{on_read_ready};
+      undef $self->{cb_r};
+
       $self->_watch_read(0), $self->_watch_read(1) if $self->want_readready;
    }
 
    if( exists $params{on_write_ready} ) {
       $self->{on_write_ready} = delete $params{on_write_ready};
+      undef $self->{cb_w};
+
       $self->_watch_write(0), $self->_watch_write(1) if $self->want_writeready;
    }
 
@@ -229,15 +237,14 @@ sub _watch_read
    my $loop = $self->get_loop or return;
    my $fh = $self->read_handle or return;
 
-   if( !$self->{on_read_ready} ) {
-      weaken( my $weakself = $self );
-      $self->{on_read_ready} = sub { $weakself->on_read_ready };
-   }
-
    if( $want ) {
+      $self->{cb_r} ||= $self->{on_read_ready} ?
+         $self->_capture_weakself( $self->{on_read_ready} ) :
+         $self->_capture_weakself( 'on_read_ready' );
+
       $loop->watch_io(
          handle => $fh,
-         on_read_ready => $self->{on_read_ready},
+         on_read_ready => $self->{cb_r},
       );
    }
    else {
@@ -256,15 +263,14 @@ sub _watch_write
    my $loop = $self->get_loop or return;
    my $fh = $self->write_handle or return;
 
-   if( !$self->{on_write_ready} ) {
-      weaken( my $weakself = $self );
-      $self->{on_write_ready} = sub { $weakself->on_write_ready };
-   }
-
    if( $want ) {
+      $self->{cb_w} ||= $self->{on_write_ready} ?
+         $self->_capture_weakself( $self->{on_write_ready} ) :
+         $self->_capture_weakself( 'on_write_ready' );
+
       $loop->watch_io(
          handle => $fh,
-         on_write_ready => $self->{on_write_ready},
+         on_write_ready => $self->{cb_w},
       );
    }
    else {
@@ -346,7 +352,12 @@ sub close
    return if $self->{handle_closing};
    $self->{handle_closing} = 1;
 
-   $self->{on_closed}->( $self ) if $self->{on_closed};
+   if( $self->{on_closed} ) {
+      $self->{on_closed}->( $self );
+   }
+   elsif( $self->can( "on_closed" ) ) {
+      $self->on_closed;
+   }
 
    if( my $parent = $self->{parent} ) {
       $parent->remove_child( $self );

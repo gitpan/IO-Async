@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -104,7 +104,7 @@ sub configure
 
    if( exists $params{on_expire} ) {
       my $on_expire = delete $params{on_expire};
-      ref $on_expire eq "CODE" or croak "Expected 'on_expire' as a CODE reference";
+      ref $on_expire or croak "Expected 'on_expire' as a reference";
 
       $self->{on_expire} = $on_expire;
       undef $self->{cb}; # Will be lazily constructed when needed
@@ -202,13 +202,14 @@ For example, to expire an accepted connection after 30 seconds of inactivity:
 
        on_expire => sub { $stream->close },
     );
+    $stream->add_child( $watchdog );
 
-    my $stream = IO::Async::Stream->new(
+    $stream = IO::Async::Stream->new(
        handle => $newclient,
 
        on_read => sub {
           my ( $self, $buffref, $closed ) = @_;
-          $stream->reset;
+          $watchdog->reset;
 
           ...
        },
@@ -220,7 +221,6 @@ For example, to expire an accepted connection after 30 seconds of inactivity:
 
     $watchdog->start;
 
-    $loop->add( $stream );
     $loop->add( $watchdog );
  }
 
