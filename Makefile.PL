@@ -9,7 +9,7 @@ WriteMakefile
                            'File::Temp' => 0,
                            'Heap' => '0.80',
                            'IO::Poll' => 0,
-                           'Socket::GetAddrInfo' => '0.08',
+                           'Socket::GetAddrInfo' => '0.18',
                            'Storable' => 0,
                            'Test::Exception' => 0,
                            'Test::More' => 0,

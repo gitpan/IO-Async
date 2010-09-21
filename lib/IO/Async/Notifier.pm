@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -77,7 +77,13 @@ L<IO::Async::Handle> - event callbacks for a non-blocking file descriptor
 
 =item *
 
-L<IO::Async::Stream> - read and write buffers around an IO handle
+L<IO::Async::Stream> - event callbacks and write bufering for a stream
+filehandle
+
+=item *
+
+L<IO::Async::Socket> - event callbacks and send buffering for a socket
+filehandle
 
 =item *
 
@@ -412,9 +418,20 @@ sub _capture_weakself
    my $self = shift;
    my ( $code ) = @_;   # actually bare method names work too
 
+   if( !ref $code ) {
+      my $class = ref $self;
+      my $coderef = $self->can( $code ) or
+         croak qq(Can't locate object method "$code" via package "$class");
+
+      $code = $coderef;
+   }
+
    weaken $self;
 
-   return sub { $self->$code( @_ ) };
+   return sub {
+      unshift @_, $self;
+      goto &$code;
+   };
 }
 
 # Keep perl happy; keep Britain tidy

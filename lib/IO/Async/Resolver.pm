@@ -1,16 +1,16 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007,2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2010 -- leonerd@leonerd.org.uk
 
 package IO::Async::Resolver;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
-use Socket::GetAddrInfo qw( :Socket6api getaddrinfo getnameinfo );
+use Socket::GetAddrInfo qw( :newapi getaddrinfo getnameinfo );
 use Socket qw( SOCK_STREAM SOCK_DGRAM SOCK_RAW );
 
 use Carp;
@@ -215,23 +215,23 @@ taking and returning a list of values exactly as the perl function does:
 
 # Now register the inbuilt methods
 
-register_resolver( 'getpwnam', sub { return getpwnam( $_[0] ) or die "$!\n" } );
-register_resolver( 'getpwuid', sub { return getpwuid( $_[0] ) or die "$!\n" } );
+register_resolver getpwnam => sub { return getpwnam( $_[0] ) or die "$!\n" };
+register_resolver getpwuid => sub { return getpwuid( $_[0] ) or die "$!\n" };
 
-register_resolver( 'getgrnam', sub { return getgrnam( $_[0] ) or die "$!\n" } );
-register_resolver( 'getgrgid', sub { return getgrgid( $_[0] ) or die "$!\n" } );
+register_resolver getgrnam => sub { return getgrnam( $_[0] ) or die "$!\n" };
+register_resolver getgrgid => sub { return getgrgid( $_[0] ) or die "$!\n" };
 
-register_resolver( 'getservbyname', sub { return getservbyname( $_[0], $_[1] ) or die "$!\n" } );
-register_resolver( 'getservbyport', sub { return getservbyport( $_[0], $_[1] ) or die "$!\n" } );
+register_resolver getservbyname => sub { return getservbyname( $_[0], $_[1] ) or die "$!\n" };
+register_resolver getservbyport => sub { return getservbyport( $_[0], $_[1] ) or die "$!\n" };
 
-register_resolver( 'gethostbyname', sub { return gethostbyname( $_[0] ) or die "$!\n" } );
-register_resolver( 'gethostbyaddr', sub { return gethostbyaddr( $_[0], $_[1] ) or die "$!\n" } );
+register_resolver gethostbyname => sub { return gethostbyname( $_[0] ) or die "$!\n" };
+register_resolver gethostbyaddr => sub { return gethostbyaddr( $_[0], $_[1] ) or die "$!\n" };
 
-register_resolver( 'getnetbyname', sub { return getnetbyname( $_[0] ) or die "$!\n" } );
-register_resolver( 'getnetbyaddr', sub { return getnetbyaddr( $_[0], $_[1] ) or die "$!\n" } );
+register_resolver getnetbyname => sub { return getnetbyname( $_[0] ) or die "$!\n" };
+register_resolver getnetbyaddr => sub { return getnetbyaddr( $_[0], $_[1] ) or die "$!\n" };
 
-register_resolver( 'getprotobyname',   sub { return getprotobyname( $_[0] ) or die "$!\n" } );
-register_resolver( 'getprotobynumber', sub { return getprotobynumber( $_[0] ) or die "$!\n" } );
+register_resolver getprotobyname   => sub { return getprotobyname( $_[0] ) or die "$!\n" };
+register_resolver getprotobynumber => sub { return getprotobynumber( $_[0] ) or die "$!\n" };
 
 # The two Socket::GetAddrInfo-based ones
 
@@ -247,9 +247,13 @@ returned value is more useful to the caller. It splits up the list of 5-tuples
 into a list of ARRAY refs, where each referenced array contains one of the
 tuples of 5 values. The C<getnameinfo> resolver returns its result unchanged.
 
+Because this module simply uses the system's C<getaddrinfo> resolver, it will
+be fully IPv6-aware if the underlying platform's resolver is. This allows
+programs to be fully IPv6-capable.
+
 =cut
 
-register_resolver( 'getaddrinfo', sub {
+register_resolver getaddrinfo => sub {
    my ( $host, $service, $family, $socktype, $protocol, $flags ) = @_;
 
    if( defined $socktype ) {
@@ -258,21 +262,31 @@ register_resolver( 'getaddrinfo', sub {
       $socktype = SOCK_RAW    if $socktype eq 'raw';
    }
 
-   my @res = getaddrinfo( $host, $service, $family, $socktype, $protocol, $flags );
+   my %hints;
+   $hints{family}   = $family   if defined $family;
+   $hints{socktype} = $socktype if defined $socktype;
+   $hints{protocol} = $protocol if defined $protocol;
+   $hints{flags}    = $flags    if defined $flags;
 
-   # getaddrinfo() uses a 1-element list as an error value
-   die "$res[0]\n" if @res == 1;
+   my ( $err, @addrs ) = getaddrinfo( $host, $service, \%hints );
 
-   # Convert the @res list into a list of ARRAY refs of 5 values each
-   my @ret;
-   while( @res >= 5 ) {
-      push @ret, [ splice( @res, 0, 5 ) ];
-   }
+   die "$err\n" if $err;
 
-   return @ret;
-} );
+   # Convert the @addrs list into a list of ARRAY refs of 5 values each
+   return map {
+      [ $_->{family}, $_->{socktype}, $_->{protocol}, $_->{addr}, $_->{canonname} ]
+   } @addrs;
+};
 
-register_resolver( 'getnameinfo', sub { return getnameinfo( @_ ) } );
+register_resolver getnameinfo => sub {
+   my ( $addr, $flags ) = @_;
+
+   my ( $err, $host, $service ) = getnameinfo( $addr, $flags );
+
+   die "$err\n" if $err;
+
+   return [ $host, $service ];
+};
 
 # Keep perl happy; keep Britain tidy
 1;
@@ -292,19 +306,19 @@ C<IO::Async::Resolver> itself.
  @numbers = qw( zero  one   two   three four
                 five  six   seven eight nine  );
 
- register_resolver( 'getnumberbyindex', sub {
+ register_resolver getnumberbyindex => sub {
     my ( $index ) = @_;
     die "Bad index $index" unless $index >= 0 and $index < @numbers;
     return ( $index, $numbers[$index] );
- } );
+ };
 
- register_resolver( 'getnumberbyname', sub {
+ register_resolver getnumberbyname => sub {
     my ( $name ) = @_;
     foreach my $index ( 0 .. $#numbers ) {
        return ( $index, $name ) if $numbers[$index] eq $name;
     }
     die "Bad name $name";
- } );
+ };
 
 =head1 TODO
 

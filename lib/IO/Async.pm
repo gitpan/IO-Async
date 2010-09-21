@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008,2009 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2010 -- leonerd@leonerd.org.uk
 
 package IO::Async;
 
@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 =head1 NAME
 
@@ -93,6 +93,12 @@ implements bidirectional buffering of a byte stream, such as a TCP socket. The
 class automatically handles reading of incoming data into the incoming buffer,
 and writing of the outgoing buffer. Methods or callbacks are used to inform
 when new incoming data is available, or when the outgoing buffer is empty.
+
+While stream-based sockets can be handled using using C<IO::Async::Stream>,
+datagram or raw sockets do not provide a bytestream. For these, the
+L<IO::Async::Socket> class is another subclass of L<IO::Async::Handle> which
+maintains an outgoing packet queue, and informs of packet receipt using a
+callback or method.
 
 The L<IO::Async::Listener> class is another subclass of L<IO::Async::Handle>
 which facilitates the use of C<listen()>-mode sockets. When a new connection
@@ -187,7 +193,16 @@ The L<IO::Async::Loop> provides several methods for performing network-based
 tasks. Primarily, the C<connect> and C<listen> methods allow the creation of
 client or server network sockets. Additionally, the C<resolve> method allows
 the use of the system's name resolvers in an asynchronous way, to resolve
-names into addresses, or vice versa.
+names into addresses, or vice versa. These methods are fully IPv6-capable if
+the underlying operating system is.
+
+=head2 Protocols
+
+The L<IO::Async::Protocol> class provides storage for a L<IO::Async::Handle>
+object, to act as a transport for some protocol. It allows a level of
+independence from the actual transport being for that protocol, allowing it to
+be easily reused. The L<IO::Async::Protocol::Stream> subclass provides further
+support for protocols based on stream connections, such as TCP sockets.
 
 =head1 TODO
 
@@ -231,6 +246,15 @@ L<Event> - Event loop processing
 L<POE> - portable multitasking and networking framework for Perl
 
 =back
+
+=head1 SUPPORT
+
+Bugs may be reported via RT at
+
+ https://rt.cpan.org/Public/Dist/Display.html?Name=IO-Async
+
+Support by IRC may also be found on F<irc.perl.org> in the F<#ioasync>
+channel.
 
 =head1 AUTHOR
 

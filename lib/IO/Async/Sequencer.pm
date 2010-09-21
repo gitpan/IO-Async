@@ -8,7 +8,7 @@ package IO::Async::Sequencer;
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 use base qw( IO::Async::Stream );
 
@@ -202,6 +202,8 @@ sub _init
 {
    my $self = shift;
    my ( $params ) = @_;
+
+   $self->SUPER::_init( @_ );
 
    $self->{pipeline} = 1; # default on
 

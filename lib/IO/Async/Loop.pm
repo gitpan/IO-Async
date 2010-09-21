@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 use constant NEED_API_VERSION => '0.24';
 
 use Carp;
@@ -726,15 +726,24 @@ sub listen
    require IO::Async::Listener;
 
    my $on_notifier = delete $params{on_notifier};
-   my $on_accept   = delete $params{on_accept};
 
-   my $listener = IO::Async::Listener->new( 
-      exists $params{handle} ? ( handle => delete $params{handle} ) : (),
-      on_accept => sub {
-         my ( undef, $clientsock ) = @_;
-         $on_accept->( $clientsock );
-      }
-   );
+   my %listenerparams;
+
+   if( my $handle = delete $params{handle} ) {
+      $listenerparams{handle} = $handle;
+   }
+
+   # Our wrappings of these don't want $self
+   for (qw( on_accept on_stream on_socket )) {
+      next unless exists $params{$_};
+      my $code = delete $params{$_};
+      $listenerparams{$_} = sub {
+         shift;
+         goto &$code;
+      };
+   }
+
+   my $listener = IO::Async::Listener->new( %listenerparams );
 
    $self->add( $listener );
 
@@ -802,6 +811,10 @@ If C<$family> is not provided, a suitable value will be provided by the OS
 (likely C<AF_UNIX> on POSIX-based platforms). If C<$socktype> is not provided,
 then C<SOCK_STREAM> will be used.
 
+Additionally, this method supports building connected C<SOCK_STREAM> or
+C<SOCK_DGRAM> pairs in the C<AF_INET> family even if the underlying platform's
+C<socketpair(2)> does not, by connecting two normal sockets together.
+
 =cut
 
 sub socketpair
@@ -817,7 +830,36 @@ sub socketpair
 
    defined $proto or $proto = 0;
 
-   return IO::Socket->new->socketpair( $family, $socktype, $proto );
+   my ( $S1, $S2 ) = IO::Socket->new->socketpair( $family, $socktype, $proto );
+   return ( $S1, $S2 ) if defined $S1;
+
+   return unless $family == AF_INET and ( $socktype == SOCK_STREAM or $socktype == SOCK_DGRAM );
+
+   # Now lets emulate an AF_INET socketpair() call
+
+   my $Stmp = $self->socket( $family, $socktype ) or return;
+   $Stmp->bind( pack_sockaddr_in( 0, INADDR_LOOPBACK ) ) or return;
+
+   $S1 = $self->socket( $family, $socktype ) or return;
+
+   if( $socktype == SOCK_STREAM ) {
+      $Stmp->listen( 1 ) or return;
+      $S1->connect( getsockname $Stmp ) or return;
+      $S2 = $Stmp->accept or return;
+
+      # There's a bug in IO::Socket here, in that $S2 's ->socktype won't
+      # yet be set. We can apply a horribly hacky fix here
+      #   defined $S2->socktype and $S2->socktype == $socktype or
+      #     ${*$S2}{io_socket_type} = $socktype;
+      # But for now we'll skip the test for it instead
+   }
+   else {
+      $S2 = $Stmp;
+      $S1->connect( getsockname $S2 ) or return;
+      $S2->connect( getsockname $S1 ) or return;
+   }
+
+   return ( $S1, $S2 );
 }
 
 =head2 ( $rd, $wr ) = $loop->pipepair()

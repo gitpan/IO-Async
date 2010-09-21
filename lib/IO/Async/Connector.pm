@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2010 -- leonerd@leonerd.org.uk
 
 package IO::Async::Connector;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
@@ -69,6 +69,10 @@ failure.
 To be aware of individual failures, the optional C<on_fail> callback can be
 used. This will be invoked on each individual C<socket()> or C<connect()>
 failure, which may be useful for debugging or logging.
+
+Because this module simply uses the C<getaddrinfo> resolver, it will be fully
+IPv6-aware if the underlying platform's resolver is. This allows programs to
+be fully IPv6-capable.
 
 =cut
 
@@ -231,6 +235,24 @@ A continuation that is invoked on a successful C<connect()> call to a valid
 socket. It will be passed the connected socket handle, as an C<IO::Socket>
 object.
 
+ $on_connected->( $handle )
+
+=item on_stream => CODE
+
+An alternative to C<on_connected>, a continuation that is passed an instance
+of L<IO::Async::Stream> when the socket is connected. This is provided as a
+convenience for the common case that a Stream object is required as the
+transport for a Protocol object.
+
+ $on_stream->( $stream )
+
+=item on_socket => CODE
+
+Similar to C<on_stream>, but constructs an instance of L<IO::Async::Socket>.
+This is most useful for C<SOCK_DGRAM> or C<SOCK_RAW> sockets.
+
+ $on_socket->( $socket )
+
 =item on_connect_error => CODE
 
 A continuation that is invoked after all of the addresses have been tried, and
@@ -306,7 +328,29 @@ sub connect
    $timeout = 30 if !defined $timeout;
 
    # Callbacks
-   my $on_connected     = $params{on_connected}     or croak "Expected 'on_connected' callback";
+   my $on_connected;
+   if( $on_connected = delete $params{on_connected} ) {
+      # all fine
+   }
+   elsif( my $on_stream = delete $params{on_stream} ) {
+      # TODO: It doesn't make sense to put a SOCK_DGRAM in an
+      # IO::Async::Stream but currently we don't detect this
+      $on_connected = sub {
+         my ( $handle ) = @_;
+         $on_stream->( IO::Async::Stream->new( handle => $handle ) );
+      };
+   }
+   elsif( my $on_socket = delete $params{on_socket} ) {
+      require IO::Async::Socket;
+      $on_connected = sub {
+         my ( $handle ) = @_;
+         $on_socket->( IO::Async::Socket->new( handle => $handle ) );
+      };
+   }
+   else {
+      croak "Expected 'on_connected' or 'on_stream' callback";
+   }
+
    my $on_connect_error = $params{on_connect_error} or croak "Expected 'on_connect_error' callback";
 
    my $on_fail = $params{on_fail};

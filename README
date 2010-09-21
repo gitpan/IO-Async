@@ -76,6 +76,12 @@ DESCRIPTION
     callbacks are used to inform when new incoming data is available, or
     when the outgoing buffer is empty.
 
+    While stream-based sockets can be handled using using
+    "IO::Async::Stream", datagram or raw sockets do not provide a
+    bytestream. For these, the IO::Async::Socket class is another subclass
+    of IO::Async::Handle which maintains an outgoing packet queue, and
+    informs of packet receipt using a callback or method.
+
     The IO::Async::Listener class is another subclass of IO::Async::Handle
     which facilitates the use of "listen()"-mode sockets. When a new
     connection is available on the socket it will "accept()" it and pass the
@@ -158,7 +164,16 @@ DESCRIPTION
     network-based tasks. Primarily, the "connect" and "listen" methods allow
     the creation of client or server network sockets. Additionally, the
     "resolve" method allows the use of the system's name resolvers in an
-    asynchronous way, to resolve names into addresses, or vice versa.
+    asynchronous way, to resolve names into addresses, or vice versa. These
+    methods are fully IPv6-capable if the underlying operating system is.
+
+  Protocols
+    The IO::Async::Protocol class provides storage for a IO::Async::Handle
+    object, to act as a transport for some protocol. It allows a level of
+    independence from the actual transport being for that protocol, allowing
+    it to be easily reused. The IO::Async::Protocol::Stream subclass
+    provides further support for protocols based on stream connections, such
+    as TCP sockets.
 
 TODO
     This collection of modules is still very much in development. As a
@@ -184,6 +199,14 @@ SEE ALSO
     *   Event - Event loop processing
 
     *   POE - portable multitasking and networking framework for Perl
+
+SUPPORT
+    Bugs may be reported via RT at
+
+     https://rt.cpan.org/Public/Dist/Display.html?Name=IO-Async
+
+    Support by IRC may also be found on irc.perl.org in the #ioasync
+    channel.
 
 AUTHOR
     Paul Evans <leonerd@leonerd.org.uk>

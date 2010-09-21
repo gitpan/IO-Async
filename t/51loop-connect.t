@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 8;
+use Test::More tests => 12;
 
 use IO::Socket::INET;
 use POSIX qw( ENOENT );
@@ -58,6 +58,47 @@ is_deeply( [ unpack_sockaddr_in $sock->peername ],
 
 $listensock->accept; # Throw it away
 undef $sock; # This too
+
+# Now try on_stream event
+
+my $stream;
+
+$loop->connect(
+   host     => $listensock->sockhost,
+   service  => $listensock->sockport,
+   socktype => $listensock->socktype,
+   on_stream => sub { $stream = shift; },
+   on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
+   on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+);
+
+wait_for { $stream };
+
+isa_ok( $stream, "IO::Async::Stream", 'on_stream $stream isa IO::Async::Stream' );
+$sock = $stream->read_handle;
+is_deeply( [ unpack_sockaddr_in $sock->peername ],
+           [ unpack_sockaddr_in $addr ], 'on_stream $sock->getpeername is $addr' );
+
+$listensock->accept; # Throw it away
+undef $stream;
+undef $sock; # This too
+
+my $udpsock = IO::Socket::INET->new( LocalAddr => 'localhost', Protocol => 'udp' ) or
+   die "Cannot create udpsock - $!";
+
+my $socket;
+
+$loop->connect(
+   addr => [ AF_INET, SOCK_DGRAM, 0, $udpsock->sockname ],
+   on_socket => sub { $socket = shift; },
+   on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+);
+
+wait_for { $socket };
+
+isa_ok( $socket, "IO::Async::Socket", 'on_socket $socket isa IO::Async::Socket' );
+is_deeply( [ unpack_sockaddr_in $socket->read_handle->peername ],
+           [ unpack_sockaddr_in $udpsock->sockname ], 'on_socket $socket->read_handle->getpeername is $addr' );
 
 SKIP: {
    # Now try an address we know to be invalid - a UNIX socket that doesn't exist

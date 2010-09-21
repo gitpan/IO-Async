@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 use IO::Async::Handle;
 
@@ -97,18 +97,10 @@ base class.
 
 =over 4
 
-=item Callbacks
+=item Subclassing
 
-If the C<on_accept> key is supplied to the constructor, it should contain a
-CODE reference to a callback function to be invoked when a new client connects
-to the socket. It is passed an C<IO::Socket> reference to the newly accepted
-socket:
-
- $on_accept->( $self, $clientsocket )
-
-=item Base Class
-
-If a subclass is built, then it can override the C<on_accept> method.
+If a subclass is built, then it can override the following methods to handle
+events:
 
  $self->on_accept( $clientsocket )
 
@@ -127,6 +119,24 @@ The following named parameters may be passed to C<new> or C<configure>:
 A callback that is invoked whenever a new client connects to the socket. If
 not supplied  the subclass method will be called instead.
 
+ $on_accept->( $self, $clientsocket )
+
+=item on_stream => CODE
+
+An alternative to C<on_accept>, a continuation that is passed an instance
+of L<IO::Async::Stream> when a new client connects. This is provided as a
+convenience for the common case that a Stream object is required as the
+transport for a Protocol object.
+
+ $on_stream->( $stream )
+
+=item on_socket => CODE
+
+Similar to C<on_stream>, but constructs an instance of L<IO::Async::Socket>.
+This is most useful for C<SOCK_DGRAM> or C<SOCK_RAW> sockets.
+
+ $on_socket->( $socket )
+
 =item handle => IO
 
 The IO handle containing an existing listen-mode socket.
@@ -142,6 +152,23 @@ sub configure
 
    if( exists $params{on_accept} ) {
       $self->{on_accept} = delete $params{on_accept};
+   }
+   elsif( exists $params{on_stream} ) {
+      my $on_stream = delete $params{on_stream};
+      # TODO: It doesn't make sense to put a SOCK_DGRAM in an
+      # IO::Async::Stream but currently we don't detect this
+      $self->{on_accept} = sub {
+         my ( $self, $handle ) = @_;
+         $on_stream->( $self, IO::Async::Stream->new( handle => $handle ) );
+      };
+   }
+   elsif( exists $params{on_socket} ) {
+      my $on_socket = delete $params{on_socket};
+      require IO::Async::Socket;
+      $self->{on_accept} = sub {
+         my ( $self, $handle ) = @_;
+         $on_socket->( $self, IO::Async::Socket->new( handle => $handle ) );
+      };
    }
 
    croak "Cannot set 'on_read_ready' on a Listener" if exists $params{on_read_ready};
