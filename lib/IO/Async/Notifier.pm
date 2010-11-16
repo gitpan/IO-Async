@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -32,8 +32,7 @@ Usually not directly used by a program, but one valid use case may be:
  my $notifier = IO::Async::Notifier->new();
 
  $notifier->add_child(
-    IO::Async::Stream->new(
-       read_handle => \*STDIN,
+    IO::Async::Stream->new_for_stdin(
        on_read => sub {
           my $self = shift;
           my ( $buffref, $closed ) = @_;
@@ -97,6 +96,10 @@ L<IO::Async::Timer> - base class for Notifiers that use timed delays
 
 L<IO::Async::Signal> - event callback on receipt of a POSIX signal
 
+=item *
+
+L<IO::Async::PID> - event callback on exit of a child process
+
 =back
 
 For more detail, see the SYNOPSIS section in one of the above.
@@ -131,16 +134,9 @@ This function returns a new instance of a C<IO::Async::Notifier> object with
 the given initial values of the named parameters.
 
 Up until C<IO::Async> version 0.19, this module used to implement the IO
-handle features now found in the C<IO::Async::Handle> subclass. To allow for a
-smooth upgrade of existing code, this constructor check for any C<%params> key
-which looks like it belongs there instead. These keys are C<handle>,
-C<read_handle>, C<write_handle>, C<on_read_ready> and C<on_write_ready>. If
-any of these keys are present, then a C<IO::Async::Handle> is returned.
-
-Do not rely on this feature in new code.  This logic exists purely to provide
-an upgrade path from older code that still expects C<IO::Async::Notifier> to
-provide filehandle operations. This produces a deprecation warning. At some
-point in the future this functionallity may be removed.
+handle features now found in the C<IO::Async::Handle> subclass. Code that
+needs to use any of C<handle>, C<read_handle>, C<write_handle>,
+C<on_read_ready> or C<on_write_ready> should use L<IO::Async::Handle> instead.
 
 =cut
 

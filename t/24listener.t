@@ -4,7 +4,8 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 29;
+use Test::More tests => 31;
+use Test::Identity;
 use Test::Refcount;
 
 use IO::Async::Loop::Poll;
@@ -63,7 +64,10 @@ undef $newclient;
 
 my $newstream;
 $listener->configure(
-   on_stream => sub { ( undef, $newstream ) = @_ },
+   on_stream => sub {
+      ( undef, $newstream ) = @_;
+      identical( $_[0], $listener, '$self is $listener in on_stream' );
+   },
 );
 
 $clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
@@ -79,7 +83,10 @@ is_deeply( [ unpack_sockaddr_in $newstream->read_handle->peername ],
 
 my $newsocket;
 $listener->configure(
-   on_socket => sub { ( undef, $newsocket ) = @_ },
+   on_socket => sub {
+      ( undef, $newsocket ) = @_;
+      identical( $_[0], $listener, '$self is $listener in on_socket' );
+   },
 );
 
 $clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
@@ -135,6 +142,16 @@ undef $listener;
 undef $listener;
 undef $listensock;
 
+# Some odd locations like BSD jails might not like INADDR_ANY. We'll establish
+# a baseline first to test against
+my $INADDR_ANY = do {
+   my $anysock = IO::Socket::INET->new( LocalPort => 0, Listen => 1 );
+   $anysock->sockaddr;
+};
+if( $INADDR_ANY ne INADDR_ANY ) {
+   diag( sprintf "Testing with INADDR_ANY=%vd; this may be because of odd networking", $INADDR_ANY );
+}
+
 $listener = IO::Async::Listener->new(
    on_accept => sub { ( undef, $newclient ) = @_ },
 );
@@ -146,7 +163,7 @@ $loop->add( $listener );
 my $listen_self;
 
 $listener->listen(
-   addr => [ AF_INET, SOCK_STREAM, 0, pack_sockaddr_in( 0, INADDR_ANY ) ],
+   addr => [ AF_INET, SOCK_STREAM, 0, pack_sockaddr_in( 0, $INADDR_ANY ) ],
    on_listen => sub { $listen_self = shift },
    on_listen_error => sub { die "Test died early - $_[0] - $_[-1]\n"; },
 );
@@ -159,7 +176,9 @@ ok( defined $sockname, 'defined $sockname' );
 my ( $port, $sinaddr ) = unpack_sockaddr_in( $sockname );
 
 ok( $port > 0, 'socket listens on some defined port number' );
-is( $sinaddr, INADDR_ANY, 'socket listens on INADDR_ANY' );
+is( sprintf("%vd",$sinaddr),
+    sprintf("%vd",$INADDR_ANY),
+    'socket listens on INADDR_ANY' );
 
 is( $listen_self, $listener, '$listen_self is $listener' );
 undef $listen_self; # for refcount

@@ -1,10 +1,11 @@
 ---
-abstract: 'perform asynchronous filehandle IO and other operations'
+abstract: 'Asynchronous event-driven programming'
 author:
   - 'Paul Evans <leonerd@leonerd.org.uk>'
 build_requires:
   File::Temp: 0
   Test::Exception: 0
+  Test::Identity: 0
   Test::More: 0
   Test::Refcount: 0
   Test::Warn: 0
@@ -19,76 +20,79 @@ name: IO-Async
 provides:
   IO::Async:
     file: lib/IO/Async.pm
-    version: 0.30
+    version: 0.31
   IO::Async::ChildManager:
     file: lib/IO/Async/ChildManager.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Connector:
     file: lib/IO/Async/Connector.pm
-    version: 0.30
+    version: 0.31
   IO::Async::DetachedCode:
     file: lib/IO/Async/DetachedCode.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Handle:
     file: lib/IO/Async/Handle.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Listener:
     file: lib/IO/Async/Listener.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Loop:
     file: lib/IO/Async/Loop.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Loop::IO_Poll:
     file: lib/IO/Async/Loop/IO_Poll.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Loop::Poll:
     file: lib/IO/Async/Loop/Poll.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Loop::Select:
     file: lib/IO/Async/Loop/Select.pm
-    version: 0.30
+    version: 0.31
   IO::Async::LoopTests:
     file: lib/IO/Async/LoopTests.pm
-    version: 0.30
+    version: 0.31
   IO::Async::MergePoint:
     file: lib/IO/Async/MergePoint.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Notifier:
     file: lib/IO/Async/Notifier.pm
-    version: 0.30
+    version: 0.31
+  IO::Async::PID:
+    file: lib/IO/Async/PID.pm
+    version: 0.31
   IO::Async::Protocol:
     file: lib/IO/Async/Protocol.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Protocol::Stream:
     file: lib/IO/Async/Protocol/Stream.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Resolver:
     file: lib/IO/Async/Resolver.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Sequencer:
     file: lib/IO/Async/Sequencer.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Signal:
     file: lib/IO/Async/Signal.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Socket:
     file: lib/IO/Async/Socket.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Stream:
     file: lib/IO/Async/Stream.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Test:
     file: lib/IO/Async/Test.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Timer:
     file: lib/IO/Async/Timer.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Timer::Countdown:
     file: lib/IO/Async/Timer/Countdown.pm
-    version: 0.30
+    version: 0.31
   IO::Async::Timer::Periodic:
     file: lib/IO/Async/Timer/Periodic.pm
-    version: 0.30
+    version: 0.31
 requires:
   Async::MergePoint: 0
   Heap: 0.80
@@ -98,4 +102,4 @@ requires:
   Time::HiRes: 0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.30
+version: 0.31

@@ -8,7 +8,7 @@ package IO::Async::Protocol;
 use strict;
 use warnings;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 use base qw( IO::Async::Notifier );
 
@@ -48,6 +48,12 @@ The following named parameters may be passed to C<new> or C<configure>:
 
 The C<IO::Async::Handle> to delegate communications to.
 
+=item on_closed => CODE
+
+Optional. A CODE reference to invoke when the transport handle becomes closed.
+
+ $on_closed->( $self )
+
 =back
 
 When a new C<transport> object is given, it will be configured by calling the
@@ -61,6 +67,10 @@ sub configure
 {
    my $self = shift;
    my %params = @_;
+
+   for (qw( on_closed )) {
+      $self->{$_} = delete $params{$_} if exists $params{$_};
+   }
 
    if( exists $params{transport} ) {
       my $transport = delete $params{transport};
@@ -99,6 +109,16 @@ sub transport
    return $self->{transport};
 }
 
+=head1 TRANSPORT DELEGATION
+
+The following methods are delegated to the transport object
+
+ close
+
+=cut
+
+sub close { shift->transport->close }
+
 =head1 SUBCLASS METHODS
 
 C<IO::Async::Protocol> is a base class provided so that specific subclasses of
@@ -120,7 +140,20 @@ into the protocol object; typically by setting up event handlers.
 
 sub setup_transport
 {
-   # empty
+   my $self = shift;
+   my ( $transport ) = @_;
+
+   $transport->configure( 
+      on_closed => $self->_capture_weakself( sub {
+         my $self = shift;
+         my ( $transport ) = @_;
+
+         my $on_closed = $self->{on_closed} ||
+                          $self->can( 'on_closed' );
+
+         $on_closed->( $self ) if $on_closed;
+      } ),
+   );
 }
 
 =head2 $protocol->teardown_transport( $transport )
@@ -132,7 +165,12 @@ set-up transport object is about to be replaced.
 
 sub teardown_transport
 {
-   # empty
+   my $self = shift;
+   my ( $transport ) = @_;
+
+   $transport->configure(
+      on_closed => undef,
+   );
 }
 
 # Keep perl happy; keep Britain tidy

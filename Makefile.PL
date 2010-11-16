@@ -12,6 +12,7 @@ WriteMakefile
                            'Socket::GetAddrInfo' => '0.18',
                            'Storable' => 0,
                            'Test::Exception' => 0,
+                           'Test::Identity' => 0,
                            'Test::More' => 0,
                            'Test::Refcount' => 0,
                            'Test::Warn' => 0,

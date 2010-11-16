@@ -4,27 +4,14 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 19;
+use Test::More tests => 20;
+use Test::Identity;
 use Test::Refcount;
 
 use IO::Async::Loop;
 
 use IO::Async::Handle;
 use IO::Async::Protocol;
-
-use Scalar::Util qw( refaddr );
-sub identical
-{
-   my ( $got, $expected, $name ) = @_;
-
-   my $got_addr = refaddr $got;
-   my $exp_addr = refaddr $expected;
-
-   ok( !defined $got_addr && !defined $exp_addr ||
-          $got_addr == $exp_addr,
-       $name ) or
-      diag( "Expected $got and $expected to refer to the same object" );
-}
 
 my $loop = IO::Async::Loop->new;
 
@@ -102,6 +89,17 @@ undef @setup_args;
 
 is_oneref( $handle, '$handle has refcount 1 after reconfigure' );
 
+my $closed = 0;
+$proto->configure(
+   on_closed => sub { $closed++ },
+);
+
+$proto->transport->close;
+
+wait_for { $closed };
+
+is( $closed, 1, '$closed after stream close' );
+
 is_refcount( $proto, 2, '$proto has refcount 2 before removal from Loop' );
 
 $loop->remove( $proto );
@@ -113,10 +111,13 @@ use base qw( IO::Async::Protocol );
 
 sub setup_transport
 {
-   shift; # $self
+   my $self = shift;
    @setup_args = @_;
 
    my ( $transport ) = @_;
+
+   $self->SUPER::setup_transport( $transport );
+
    $transport->configure(
       on_read_ready  => sub { $readready = 1 },
       on_write_ready => sub { $writeready = 1 },
@@ -125,7 +126,7 @@ sub setup_transport
 
 sub teardown_transport
 {
-   shift; # $self
+   my $self = shift;
    @teardown_args = @_;
 
    my ( $transport ) = @_;
@@ -133,4 +134,6 @@ sub teardown_transport
       on_read_ready  => sub {},
       on_write_ready => sub {},
    );
+
+   $self->SUPER::teardown_transport( $transport );
 }

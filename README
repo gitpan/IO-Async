@@ -1,5 +1,5 @@
 NAME
-    "IO::Async" - perform asynchronous filehandle IO and other operations
+    "IO::Async" - Asynchronous event-driven programming
 
 SYNOPSIS
      use IO::Async::Stream;

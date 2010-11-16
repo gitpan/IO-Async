@@ -8,7 +8,7 @@ package IO::Async::Test;
 use strict;
 use warnings;
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 use Exporter 'import';
 our @EXPORT = qw(
@@ -16,8 +16,6 @@ our @EXPORT = qw(
    wait_for
    wait_for_stream
 );
-
-use IO::Async::Stream;
 
 =head1 NAME
 
@@ -131,12 +129,10 @@ sub wait_for(&)
 
 =head2 wait_for_stream( $condfunc, $handle, $buffer )
 
-Set up an C<IO::Async::Stream> object around the given $handle. Data read from
-the stream will be appended into $buffer (which is NOT initialised when the
-function is entered, in case data remains from a previous call). The
-C<loop_once> method is then repeatedly called until the condition function
-callback returns true. After this, the temporary stream will be removed from
-the loop.
+As C<wait_for>, but will also watch the given IO handle for readability, and
+whenever it is readable will read bytes in from it into the given buffer. The
+buffer is NOT initialised when the function is entered, in case data remains
+from a previous call.
 
 =cut
 

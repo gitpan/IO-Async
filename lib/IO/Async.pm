@@ -12,11 +12,11 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 =head1 NAME
 
-C<IO::Async> - perform asynchronous filehandle IO and other operations
+C<IO::Async> - Asynchronous event-driven programming
 
 =head1 SYNOPSIS
 
