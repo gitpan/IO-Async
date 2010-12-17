@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 =head1 NAME
 
@@ -106,6 +106,9 @@ is available on the socket it will C<accept()> it and pass the new client
 socket to its callback function.
 
 =head2 Timers
+
+An L<IO::Async::Timer::Absolute> object represents a timer that expires at a
+given absolute time in the future.
 
 An L<IO::Async::Timer::Countdown> object represents a count time timer, which
 will invoke a callback after a given delay. It can be stopped and restarted.
@@ -229,7 +232,7 @@ for OS-specific subclasses first.
 =item *
 
 A consideration of whether it is useful and possible to provide integration
-with L<POE> or L<AnyEvent>.
+with L<AnyEvent>.
 
 =back
 
@@ -241,10 +244,6 @@ with L<POE> or L<AnyEvent>.
 
 L<Event> - Event loop processing
 
-=item *
-
-L<POE> - portable multitasking and networking framework for Perl
-
 =back
 
 =head1 SUPPORT
@@ -253,7 +252,7 @@ Bugs may be reported via RT at
 
  https://rt.cpan.org/Public/Dist/Display.html?Name=IO-Async
 
-Support by IRC may also be found on F<irc.perl.org> in the F<#ioasync>
+Support by IRC may also be found on F<irc.perl.org> in the F<#io-async>
 channel.
 
 =head1 AUTHOR

@@ -23,7 +23,7 @@ use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Socket qw( AF_INET SOCK_DGRAM );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -525,9 +525,11 @@ Tests that the C<loop_once> and C<loop_forever> methods behave correctly
 
 =cut
 
-use constant count_tests_control => 3;
+use constant count_tests_control => 5;
 sub run_tests_control
 {
+   time_between { $loop->loop_once( 0 ) } 0, 0.1, 'loop_once(0) when idle';
+
    time_between { $loop->loop_once( 2 * AUT ) } 1.5, 2.5, 'loop_once(2) when idle';
 
    $loop->later( sub { $loop->loop_stop } );

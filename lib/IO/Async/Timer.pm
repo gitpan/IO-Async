@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use Carp;
 
@@ -24,6 +24,10 @@ notifiers that use timed delays. For specific implementations, see one of the
 subclasses:
 
 =over 8
+
+=item *
+
+L<IO::Async::Timer::Absolute> - event callback at a fixed future time
 
 =item *
 

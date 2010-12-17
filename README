@@ -88,6 +88,9 @@ DESCRIPTION
     new client socket to its callback function.
 
   Timers
+    An IO::Async::Timer::Absolute object represents a timer that expires at
+    a given absolute time in the future.
+
     An IO::Async::Timer::Countdown object represents a count time timer,
     which will invoke a callback after a given delay. It can be stopped and
     restarted.
@@ -193,19 +196,17 @@ TODO
         subclasses first.
 
     *   A consideration of whether it is useful and possible to provide
-        integration with POE or AnyEvent.
+        integration with AnyEvent.
 
 SEE ALSO
     *   Event - Event loop processing
-
-    *   POE - portable multitasking and networking framework for Perl
 
 SUPPORT
     Bugs may be reported via RT at
 
      https://rt.cpan.org/Public/Dist/Display.html?Name=IO-Async
 
-    Support by IRC may also be found on irc.perl.org in the #ioasync
+    Support by IRC may also be found on irc.perl.org in the #io-async
     channel.
 
 AUTHOR

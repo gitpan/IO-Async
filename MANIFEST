@@ -32,6 +32,7 @@ lib/IO/Async/Socket.pm
 lib/IO/Async/Stream.pm
 lib/IO/Async/Test.pm
 lib/IO/Async/Timer.pm
+lib/IO/Async/Timer/Absolute.pm
 lib/IO/Async/Timer/Countdown.pm
 lib/IO/Async/Timer/Periodic.pm
 LICENSE
@@ -62,6 +63,7 @@ t/18loop-select-legacy.t
 t/19test.t
 t/20handle.t
 t/21stream.t
+t/22timer-absolute.t
 t/22timer-countdown.t
 t/22timer-periodic.t
 t/23signal.t

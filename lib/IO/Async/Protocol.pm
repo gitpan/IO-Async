@@ -8,7 +8,7 @@ package IO::Async::Protocol;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use base qw( IO::Async::Notifier );
 
@@ -38,6 +38,17 @@ subclasses
 
 =cut
 
+=head1 EVENTS
+
+The following events are invoked, either using subclass methods or CODE
+references in parameters:
+
+=head2 on_closed
+
+Optional. Invoked when the transport handle becomes closed.
+
+=cut
+
 =head1 PARAMETERS
 
 The following named parameters may be passed to C<new> or C<configure>:
@@ -50,9 +61,7 @@ The C<IO::Async::Handle> to delegate communications to.
 
 =item on_closed => CODE
 
-Optional. A CODE reference to invoke when the transport handle becomes closed.
-
- $on_closed->( $self )
+CODE reference for the C<on_closed> event.
 
 =back
 
@@ -177,3 +186,7 @@ sub teardown_transport
 1;
 
 __END__
+
+=head1 AUTHOR
+
+Paul Evans <leonerd@leonerd.org.uk>

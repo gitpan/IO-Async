@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 use constant NEED_API_VERSION => '0.24';
 
 use Carp;
@@ -525,8 +525,14 @@ sub detach_signal
 
 =head2 $loop->later( $code )
 
-Installs a new idle handler which invokes its callback when the IO loop is
-idle.
+Schedules a code reference to be invoked as soon as the current round of IO
+operations is complete.
+
+The code reference is never invoked immediately, though the loop will not
+perform any blocking operations between when it is installed and when it is
+invoked. It may call C<select>, C<poll> or equivalent with a zero-second
+timeout, and process any currently-pending IO conditions before the code is
+invoked, but it will not block for a non-zero amount of time.
 
 This method is implemented using the C<watch_idle> method, with the C<when>
 parameter set to C<later>. It will return an ID value that can be passed to

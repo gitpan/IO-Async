@@ -9,14 +9,14 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 use IO::Async::Handle;
 
 use POSIX qw( EAGAIN );
 use Socket::GetAddrInfo qw( :Socket6api AI_PASSIVE );
 
-use Socket qw( SOL_SOCKET SO_ACCEPTCONN SO_REUSEADDR );
+use Socket qw( sockaddr_family SOL_SOCKET SO_ACCEPTCONN SO_REUSEADDR SO_TYPE );
 
 use Carp;
 
@@ -91,19 +91,16 @@ Alternatively, the Listener can construct a socket by calling the C<listen>
 method. Either a list of addresses can be provided, or a service name can be
 looked up using the underlying loop's C<resolve> method.
 
-This object may be used in one of two ways; with a callback function, or as a
-base class.
+=cut
 
-=over 4
+=head1 EVENTS
 
-=item Subclassing
+The following events are invoked, either using subclass methods or CODE
+references in parameters:
 
-If a subclass is built, then it can override the following methods to handle
-events:
+=head2 on_accept $clientsocket
 
- $self->on_accept( $clientsocket )
-
-=back
+Invoked whenever a new client connects to the socket.
 
 =cut
 
@@ -115,10 +112,7 @@ The following named parameters may be passed to C<new> or C<configure>:
 
 =item on_accept => CODE
 
-A callback that is invoked whenever a new client connects to the socket. If
-not supplied  the subclass method will be called instead.
-
- $on_accept->( $self, $clientsocket )
+CODE reference for the C<on_accept> event.
 
 =item on_stream => CODE
 
@@ -237,12 +231,46 @@ sub is_listening
    return ( defined $self->sockname );
 }
 
+=head2 $name = $listener->sockname
+
+Returns the C<sockname> of the underlying listening socket
+
+=cut
+
 sub sockname
 {
    my $self = shift;
 
    my $handle = $self->read_handle or return undef;
    return $handle->sockname;
+}
+
+=head2 $family = $listener->family
+
+Returns the socket address family of the underlying listening socket
+
+=cut
+
+sub family
+{
+   my $self = shift;
+
+   my $sockname = $self->sockname or return undef;
+   return sockaddr_family( $sockname );
+}
+
+=head2 $socktype = $listener->socktype
+
+Returns the socket type of the underlying listening socket
+
+=cut
+
+sub socktype
+{
+   my $self = shift;
+
+   my $handle = $self->read_handle or return undef;
+   return $handle->sockopt(SO_TYPE);
 }
 
 =head2 $listener->listen( %params )
