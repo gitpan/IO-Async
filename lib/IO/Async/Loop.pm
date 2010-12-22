@@ -8,14 +8,14 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
-use constant NEED_API_VERSION => '0.24';
+our $VERSION = '0.33';
+use constant NEED_API_VERSION => '0.33';
 
 use Carp;
 
 use Socket;
 use IO::Socket;
-use Time::HiRes qw( time );
+use Time::HiRes qw(); # empty import
 use POSIX qw( WNOHANG );
 
 # Try to load IO::Socket::INET6 but don't worry if we don't have it
@@ -121,6 +121,11 @@ sub __new
       deferrals    => [],
    }, $class;
 
+   # It's possible this is a specific subclass constructor. We still want the
+   # magic IO::Async::Loop->new constructor to yield this if it's the first
+   # one
+   our $ONE_TRUE_LOOP ||= $self;
+
    return $self;
 }
 
@@ -133,6 +138,27 @@ constructor. It works by making a list of likely candidate classes, then
 trying each one in turn, C<require>ing the module then calling its C<new>
 method. If either of these operations fails, the next subclass is tried. If
 no class was successful, then an exception is thrown.
+
+The constructed object is cached, and will be returned again by a subsequent
+call. The cache will also be set by a constructor on a specific subclass. This
+behaviour makes it possible to simply use the normal constructor in a module
+that wishes to interract with the main program's Loop, such as an integration
+module for another event system.
+
+For example, the following two C<$loop> variables will refer to the same
+object:
+
+ use IO::Async::Loop;
+ use IO::Async::Loop::Poll;
+
+ my $loop_poll = IO::Async::Loop::Poll->new;
+
+ my $loop = IO::Async::Loop->new;
+
+While it is not advised to do so under normal circumstances, if the program
+really wishes to construct more than one Loop object, it can call the
+constructor C<really_new>, or invoke one of the subclass-specific constructors
+directly.
 
 The list of candidates is formed from the following choices, in this order:
 
@@ -202,6 +228,11 @@ sub __try_new
 }
 
 sub new
+{
+   return our $ONE_TRUE_LOOP ||= shift->really_new;
+}
+
+sub really_new
 {
    shift;  # We're going to ignore the class name actually given
 
@@ -510,7 +541,8 @@ sub detach_signal
    my ( $signal, $id ) = @_;
 
    # Can't use grep because we have to preserve the addresses
-   my $attaches = $self->{sigattaches}->{$signal};
+   my $attaches = $self->{sigattaches}->{$signal} or return;
+
    for (my $i = 0; $i < @$attaches; ) {
       $i++, next unless \$attaches->[$i] == $id;
 
@@ -984,6 +1016,21 @@ sub signame2num
    return $sig_num{$signame};
 }
 
+=head2 $time = $loop->time
+
+Returns the current UNIX time in fractional seconds. This is currently
+equivalent to C<Time::HiRes::time()> but provided here as a utility for
+programs to obtain the time current used by C<IO::Async> for its own timing
+purposes.
+
+=cut
+
+sub time
+{
+   my $self = shift;
+   return Time::HiRes::time();
+}
+
 =head1 LOW-LEVEL METHODS
 
 As C<IO::Async::Loop> is an abstract base class, specific subclasses of it are
@@ -1196,7 +1243,7 @@ sub _build_time
       $time = $params{time};
    }
    elsif( exists $params{delay} ) {
-      my $now = exists $params{now} ? $params{now} : time();
+      my $now = exists $params{now} ? $params{now} : $self->time;
 
       $time = $now + $params{delay};
    }
@@ -1401,13 +1448,13 @@ sub unwatch_idle
 =head2 $loop->watch_child( $pid, $code )
 
 This method adds a new handler for the termination of the given child process
-PID.
+PID, or all child processes.
 
 =over 8
 
 =item $pid
 
-The PID to watch.
+The PID to watch. Will report on all child processes if this is 0.
 
 =item $code
 
@@ -1420,12 +1467,17 @@ usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
 
 =back
 
-After invocation, the handler is automatically removed.
+After invocation, the handler for a PID-specific watch is automatically
+removed. The all-child watch will remain until it is removed by
+C<unwatch_child>.
 
 This and C<unwatch_child> are optional; a subclass may implement neither, or
 both. If it implements neither then child watching will be performed by using
 C<watch_signal> to install a C<SIGCHLD> handler, which will use C<waitpid> to
 look for exited child processes.
+
+If both a PID-specific and an all-process watch are installed, there is no
+ordering guarantee as to which will be called first.
 
 =cut
 
@@ -1444,10 +1496,16 @@ sub watch_child
             my $zid = waitpid( -1, WNOHANG );
 
             last if !defined $zid or $zid < 1;
+            my $status = $?;
 
             if( defined $childwatches->{$zid} ) {
-               $childwatches->{$zid}->( $zid, $? );
+               $childwatches->{$zid}->( $zid, $status );
                delete $childwatches->{$zid};
+            }
+
+            if( defined $childwatches->{0} ) {
+               $childwatches->{0}->( $zid, $status );
+               # Don't delete it
             }
          }
       } );
@@ -1517,7 +1575,7 @@ sub _adjust_timeout
    my $nexttime = $timequeue->next_time;
    return unless defined $nexttime;
 
-   my $now = exists $params{now} ? $params{now} : time();
+   my $now = exists $params{now} ? $params{now} : $self->time;
    my $timer_delay = $nexttime - $now;
 
    if( $timer_delay < 0 ) {

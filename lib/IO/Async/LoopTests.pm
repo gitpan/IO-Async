@@ -23,7 +23,7 @@ use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Socket qw( AF_INET SOCK_DGRAM );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -83,7 +83,7 @@ sub run_tests
    my ( $testclass, @tests ) = @_;
 
    my $count = 0;
-   $count += __PACKAGE__->can( "count_tests_$_" )->() + 2 for @tests;
+   $count += __PACKAGE__->can( "count_tests_$_" )->() + 3 for @tests;
 
    plan tests => $count;
 
@@ -96,6 +96,12 @@ sub run_tests
 
    foreach my $test ( @tests ) {
       $loop = $testclass->new();
+
+      is( IO::Async::Loop->new, $loop, 'magic constructor yields $loop' );
+
+      # Kill the reference in $ONE_TRUE_LOOP so as not to upset the refcounts
+      # and to ensure we get a new one each time
+      undef $IO::Async::Loop::ONE_TRUE_LOOP;
 
       is_oneref( $loop, '$loop has refcount 1' );
 
@@ -471,15 +477,22 @@ Tests the Loop's support for watching child processes by PID
 
 =cut
 
-use constant count_tests_child => 6;
-sub run_tests_child
+sub run_in_child(&)
 {
    my $kid = fork();
-   defined $kid or die "Cannot fork() - $!";
+   defined $kid or die "Cannot fork() $!";
+   return $kid if $kid;
 
-   if( $kid == 0 ) {
+   shift->();
+   die "Fell out of run_in_child!\n";
+}
+
+use constant count_tests_child => 8;
+sub run_tests_child
+{
+   my $kid = run_in_child {
       exit( 3 );
-   }
+   };
 
    my $exitcode;
 
@@ -499,14 +512,11 @@ sub run_tests_child
    # ignored or handled elsewhere.
    local $SIG{TERM} = "DEFAULT";
 
-   $kid = fork();
-   defined $kid or die "Cannot fork() - $!";
-
-   if( $kid == 0 ) {
+   $kid = run_in_child {
       sleep( 10 );
       # Just in case the parent died already and didn't kill us
       exit( 0 );
-   }
+   };
 
    $loop->watch_child( $kid => sub { ( undef, $exitcode ) = @_; } );
 
@@ -517,6 +527,17 @@ sub run_tests_child
 
    ok( WIFSIGNALED($exitcode),          'WIFSIGNALED($exitcode) after SIGTERM' );
    is( WTERMSIG($exitcode),    SIGTERM, 'WTERMSIG($exitcode) after SIGTERM' );
+
+   my %kids;
+
+   $loop->watch_child( 0 => sub { my ( $kid ) = @_; delete $kids{$kid} } );
+
+   %kids = map { run_in_child { exit 0 } => 1 } 1 .. 3;
+
+   is( scalar keys %kids, 3, 'Waiting for 3 child processes' );
+
+   wait_for { !keys %kids };
+   ok( !keys %kids, 'All child processes reclaimed' );
 }
 
 =head2 control

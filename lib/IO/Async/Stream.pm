@@ -8,7 +8,7 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 use base qw( IO::Async::Handle );
 
@@ -20,6 +20,13 @@ use Carp;
 # Not yet documented
 our $READLEN  = 8192;
 our $WRITELEN = 8192;
+
+# Indicies in writequeue elements
+use constant {
+   WQ_DATA     => 0,
+   WQ_ON_FLUSH => 1,
+   WQ_GENSUB   => 2,
+};
 
 =head1 NAME
 
@@ -165,7 +172,7 @@ sub _init
 {
    my $self = shift;
 
-   $self->{writebuff} = "";
+   $self->{writequeue} = []; # Queue of ARRAYs. Each will be [ $data, $on_flushed, $gensub ]
    $self->{readbuff} = "";
 
    $self->{read_len}  = $READLEN;
@@ -301,6 +308,65 @@ sub _nonfatal_error
           $errno == EINTR;
 }
 
+sub _is_empty
+{
+   my $self = shift;
+   return !@{ $self->{writequeue} };
+}
+
+sub _flush_one
+{
+   my $self = shift;
+
+   my $head = $self->{writequeue}[WQ_DATA];
+
+   if( !length $head->[WQ_DATA] ) {
+      my $gensub = $head->[WQ_GENSUB] or die "Internal consistency problem - empty writequeue item without a gensub\n";
+      $head->[WQ_DATA] = $gensub->( $self );
+
+      if( !defined $head->[WQ_DATA] ) {
+         $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
+         shift @{ $self->{writequeue} };
+
+         return 1;
+      }
+   }
+
+   my $len = $self->write_handle->syswrite( $head->[WQ_DATA], $self->{write_len} );
+
+   if( !defined $len ) {
+      my $errno = $!;
+
+      return 0 if _nonfatal_error( $errno );
+
+      if( defined $self->{on_write_error} ) {
+         $self->{on_write_error}->( $self, $errno );
+      }
+      elsif( $self->can( "on_write_error" ) ) {
+         $self->on_write_error( $errno );
+      }
+      else {
+         $self->close_now;
+      }
+
+      return 0;
+   }
+
+   if( $len == 0 ) {
+      $self->close_now;
+      return 0;
+   }
+
+   substr( $head->[WQ_DATA], 0, $len ) = "";
+
+   if( !length $head->[WQ_DATA] and !$head->[WQ_GENSUB] ) {
+      $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
+      shift @{ $self->{writequeue} };
+   }
+
+   return 1;
+}
+
 =head2 $stream->close
 
 A synonym for C<close_when_empty>. This should not be used when the deferred
@@ -334,7 +400,7 @@ sub close_when_empty
 {
    my $self = shift;
 
-   return $self->SUPER::close if length( $self->{writebuff} ) == 0;
+   return $self->SUPER::close if $self->_is_empty;
 
    $self->{stream_closing} = 1;
 }
@@ -351,13 +417,13 @@ sub close_now
 {
    my $self = shift;
 
-   $self->{writebuff} = "";
+   undef @{ $self->{writequeue} };
    undef $self->{stream_closing};
 
    $self->SUPER::close;
 }
 
-=head2 $stream->write( $data )
+=head2 $stream->write( $data, %params )
 
 This method adds data to the outgoing data queue, or writes it immediately,
 according to the C<autoflush> parameter.
@@ -368,34 +434,68 @@ will have been written by the time this method returns. If it fails to write
 completely, then the data is queued as if C<autoflush> were not set, and will
 be flushed as normal.
 
+C<$data> can either be a plain string, or a CODE reference. If it is a CODE
+reference, it will be invoked to generate data to be written. Each time the
+filehandle is ready to receive more data to it, the function is invoked, and
+what it returns written to the filehandle. Once the function has finished
+generating data it should return undef. The function is passed the Stream
+object as its first argument.
+
+For example, to stream the contents of an existing opened filehandle:
+
+ open my $fileh, "<", $path or die "Cannot open $path - $!";
+
+ $stream->write( sub {
+    my ( $stream ) = @_;
+
+    sysread $fileh, my $buffer, 8192 or return;
+    return $buffer;
+ } );
+
+Takes the following optional named parameters in C<%params>:
+
+=over 8
+
+=item on_flush => CODE
+
+A CODE reference which will be invoked once the data queued by this C<write>
+call has been flushed. This will be invoked even if the buffer itself is not
+yet empty; if more data has been queued since the call.
+
+ $on_flush->( $stream )
+
+=back
+
 =cut
 
 sub write
 {
    my $self = shift;
-   my ( $data ) = @_;
+   my ( $data, %params ) = @_;
 
    carp "Cannot write data to a Stream that is closing" and return if $self->{stream_closing};
    croak "Cannot write data to a Stream with no write_handle" unless my $handle = $self->write_handle;
 
+   push @{ $self->{writequeue} }, my $elem = [];
+
+   if( ref $data eq "CODE" ) {
+      $elem->[WQ_DATA] = "";
+      $elem->[WQ_GENSUB] = $data;
+   }
+   else {
+      $elem->[WQ_DATA] = $data;
+   }
+   
+   $elem->[WQ_ON_FLUSH] = $params{on_flush};
+
    if( $self->{autoflush} ) {
-      $data = $self->{writebuff} . $data if length $self->{writebuff};
+      1 while !$self->_is_empty and $self->_flush_one;
 
-      while( length $data ) {
-         my $len = $handle->syswrite( $data, $self->{write_len} );
-
-         last if !$len; # stop on any errors and defer back to the non-autoflush path
-
-         substr( $data, 0, $len ) = "";
-      }
-
-      if( !length $data ) {
+      if( $self->_is_empty ) {
          $self->want_writeready( 0 );
          return;
       }
    }
-
-   $self->{writebuff} .= $data;
 
    $self->want_writeready( 1 );
 }
@@ -466,41 +566,10 @@ sub on_write_ready
 {
    my $self = shift;
 
-   my $handle = $self->write_handle;
-
-   while( length $self->{writebuff} ) {
-      my $len = $handle->syswrite( $self->{writebuff}, $self->{write_len} );
-
-      if( !defined $len ) {
-         my $errno = $!;
-
-         return if _nonfatal_error( $errno );
-
-         if( defined $self->{on_write_error} ) {
-            $self->{on_write_error}->( $self, $errno );
-         }
-         elsif( $self->can( "on_write_error" ) ) {
-            $self->on_write_error( $errno );
-         }
-         else {
-            $self->close_now;
-         }
-
-         return;
-      }
-
-      if( $len == 0 ) {
-         $self->close_now;
-         return;
-      }
-
-      substr( $self->{writebuff}, 0, $len ) = "";
-
-      last unless $self->{write_all};
-   }
+   1 while !$self->_is_empty and $self->_flush_one and $self->{write_all};
 
    # All data successfully flushed
-   if( length( $self->{writebuff} ) == 0 ) {
+   if( $self->_is_empty ) {
       $self->want_writeready( 0 );
 
       my $on_outgoing_empty = $self->{on_outgoing_empty}
