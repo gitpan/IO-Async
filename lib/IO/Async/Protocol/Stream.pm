@@ -8,7 +8,7 @@ package IO::Async::Protocol::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 use base qw( IO::Async::Protocol );
 
@@ -38,10 +38,9 @@ protocol.
     my $line = $1;
 
     if( $line =~ m/^HELLO (.*)/ ) {
-       my ( $name ) = @_;
+       my $name = $1;
 
-       my $on_hello = $self->{on_hello} || $self->can( 'on_hello' );
-       $on_hello->( $self, $name );
+       $self->invoke_event( on_hello => $name );
     }
 
     return 1;
@@ -104,6 +103,13 @@ The following named parameters may be passed to C<new> or C<configure>:
 
 CODE reference for the C<on_read> event.
 
+=item handle => IO
+
+A shortcut for the common case where the transport only needs to be a plain
+C<IO::Async::Stream> object. If this argument is provided without a
+C<transport> object, a new C<IO::Async::Stream> object will be built around
+the given IO handle, and used as the transport.
+
 =back
 
 =cut
@@ -115,6 +121,11 @@ sub configure
 
    for (qw( on_read )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
+   }
+
+   if( !exists $params{transport} and my $handle = delete $params{handle} ) {
+      require IO::Async::Stream;
+      $params{transport} = IO::Async::Stream->new( handle => $handle );
    }
 
    $self->SUPER::configure( %params );
@@ -145,10 +156,7 @@ sub setup_transport
          my $self = shift;
          my ( $transport, $buffref, $closed ) = @_;
 
-         my $on_read = $self->{on_read} ||
-                        $self->can( 'on_read' );
-
-         $on_read->( $self, $buffref, $closed );
+         $self->invoke_event( on_read => $buffref, $closed );
       } ),
    );
 }
@@ -179,9 +187,34 @@ transport stream.
 sub write
 {
    my $self = shift;
-   my ( $data ) = @_;
+   my ( $data, %args ) = @_;
 
-   $self->transport->write( $data );
+   if( ref $data eq "CODE" ) {
+      $data = $self->_replace_weakself( $data );
+   }
+
+   if( $args{on_flush} ) {
+      $args{on_flush} = $self->_replace_weakself( $args{on_flush} );
+   }
+
+   $self->transport->write( $data, %args );
+}
+
+=head2 $protocol->connect( %args )
+
+Sets up a connection to a peer, and configures the underlying C<transport> for
+the Protocol. Calls C<IO::Async::Protocol> C<connect> with C<socktype> set to
+C<"stream">.
+
+=cut
+
+sub connect
+{
+   my $self = shift;
+   $self->SUPER::connect(
+      @_,
+      socktype => "stream",
+   );
 }
 
 # Keep perl happy; keep Britain tidy

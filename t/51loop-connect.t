@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 12;
+use Test::More tests => 16;
 
 use IO::Socket::INET;
 use POSIX qw( ENOENT );
@@ -25,7 +25,7 @@ my $addr = $listensock->sockname;
 my $sock;
 
 $loop->connect(
-   addr => [ AF_INET, SOCK_STREAM, 0, $addr ],
+   addr => { family => AF_INET, socktype => SOCK_STREAM, addr => $addr },
    on_connected => sub { $sock = shift; },
    on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
 );
@@ -56,8 +56,32 @@ isa_ok( $sock, "IO::Socket::INET", 'by host/service: $sock isa IO::Socket::INET'
 is_deeply( [ unpack_sockaddr_in $sock->peername ],
            [ unpack_sockaddr_in $addr ], 'by host/service: $sock->getpeername is $addr' );
 
+is( $sock->sockhost, "127.0.0.1", '$sock->sockhost is 127.0.0.1' );
+
 $listensock->accept; # Throw it away
 undef $sock; # This too
+
+SKIP: {
+   # Some OSes can't bind() locally to other addresses on 127./8
+   skip "Cannot bind to 127.0.0.2", 1 unless IO::Socket::INET->new( LocalHost => "127.0.0.2" );
+
+   $loop->connect(
+      local_host => "127.0.0.2",
+      host     => $listensock->sockhost,
+      service  => $listensock->sockport,
+      socktype => $listensock->socktype,
+      on_connected => sub { $sock = shift; },
+      on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+   );
+
+   wait_for { $sock };
+
+   is( $sock->sockhost, "127.0.0.2", '$sock->sockhost is 127.0.0.2' );
+
+   $listensock->accept; # Throw it away
+   undef $sock; # This too
+}
 
 # Now try on_stream event
 
@@ -149,17 +173,20 @@ SKIP: {
    my $failop;
    my $failerr;
 
-   my $error = 0;
+   my @error;
 
    $loop->connect(
-      addr => [ AF_INET, SOCK_STREAM, 0, pack_sockaddr_in( $port, inet_aton("127.0.0.1") ) ],
+      addr => { family => AF_INET, socktype => SOCK_STREAM, addr => pack_sockaddr_in( $port, inet_aton("127.0.0.1") ) },
       on_connected => sub { die "Test died early - connect succeeded\n"; },
       on_fail => sub { $failop = shift @_; $failerr = pop @_; },
-      on_connect_error => sub { $error = 1 },
+      on_connect_error => sub { @error = @_; },
    );
 
-   wait_for { $error };
+   wait_for { @error };
 
    is( $failop, "connect", '$failop is connect' );
    is( "$failerr", $failure, "\$failerr is '$failure'" );
+
+   is( $error[0], "connect", '$error[0] is connect' );
+   is( "$error[1]", $failure, "\$error[1] is '$failure'" );
 }

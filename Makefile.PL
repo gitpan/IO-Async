@@ -6,6 +6,7 @@ WriteMakefile
           'VERSION_FROM' => 'lib/IO/Async.pm',
           'PREREQ_PM' => {
                            'Async::MergePoint' => 0,
+                           'CPS' => 0,
                            'File::Temp' => 0,
                            'Heap' => '0.80',
                            'IO::Poll' => 0,

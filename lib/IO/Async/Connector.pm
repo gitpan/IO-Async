@@ -8,10 +8,12 @@ package IO::Async::Connector;
 use strict;
 use warnings;
 
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
+
+use CPS qw( kpar kforeach );
 
 use Carp;
 
@@ -37,8 +39,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
        ...
     },
 
-    on_resolve_error => sub { print STDERR "Cannot resolve - $_[0]\n"; },
-    on_connect_error => sub { print STDERR "Cannot connect\n"; },
+    on_resolve_error => sub { die "Cannot resolve - $_[-1]\n"; },
+    on_connect_error => sub { die "Cannot connect - $_[0] failed $_[-1]\n"; },
  );
 
 =head1 DESCRIPTION
@@ -59,16 +61,11 @@ routes are valid on the system. In this case, the first C<connect()> syscall
 will fail. This isn't yet a fatal error, if there are more addresses to try,
 perhaps some IPv4 ones.
 
-For this reason, the error reporting cannot report which failure is
-responsible for the failure to connect. On success, the C<on_connected>
-continuation is invoked with a connected socket. When all addresses have been
-tried and failed, C<on_connect_error> is invoked, though no error string can
-be provided, as there isn't a "clear winner" which is responsible for the
-failure.
-
-To be aware of individual failures, the optional C<on_fail> callback can be
-used. This will be invoked on each individual C<socket()> or C<connect()>
-failure, which may be useful for debugging or logging.
+For this reason, it is possible that the operation eventually succeeds even
+though some system calls initially fail. To be aware of individual failures,
+the optional C<on_fail> callback can be used. This will be invoked on each
+individual C<socket()> or C<connect()> failure, which may be useful for
+debugging or logging.
 
 Because this module simply uses the C<getaddrinfo> resolver, it will be fully
 IPv6-aware if the underlying platform's resolver is. This allows programs to
@@ -140,64 +137,74 @@ sub _connect_addresses
    my $loop = $self->{loop};
 
    my $sock;
-   my $address;
+   my ( $connecterr, $binderr, $socketerr );
 
-   while( my $addr = shift @$addrlist ) {
-      ( my ( $family, $socktype, $proto ), $address ) = @$addr;
+   kforeach( $addrlist,
+      sub {
+         my ( $addr, $knext, $klast ) = @_;
+         my ( $family, $socktype, $protocol, $localaddr, $peeraddr ) = 
+            @{$addr}{qw( family socktype protocol localaddr peeraddr )};
 
-      $sock = $loop->socket( $family, $socktype, $proto ) and last;
+         $sock = $loop->socket( $family, $socktype, $protocol );
 
-      undef $sock;
-      $on_fail->( "socket", $family, $socktype, $proto, $! ) if $on_fail;
-   }
-
-   if( not $sock and not @$addrlist ) {
-      # Have now ran out of addresses to use
-      $on_connect_error->();
-      return;
-   }
-
-   $sock->blocking( 0 );
-
-   my $ret = connect( $sock, $address );
-   if( $ret ) {
-      # Succeeded already? Dubious, but OK. Can happen e.g. with connections to
-      # localhost, or UNIX sockets, or something like that.
-      $on_connected->( $sock );
-      return; # All done
-   }
-   elsif( $! != EINPROGRESS ) {
-      $on_fail->( "connect", $sock, $address, $! ) if $on_fail;
-      $self->_connect_addresses( $addrlist, $on_connected, $on_connect_error, $on_fail );
-      return;
-   }
-
-   $loop->watch_io(
-      handle => $sock,
-
-      on_write_ready => sub {
-         # Whatever happens we want to remove this watch, it's now done its job.
-         # Do it early before we forget
-
-         $loop->unwatch_io( handle => $sock, on_write_ready => 1 );
-
-         my $err = _get_sock_err( $sock );
-
-         if( !defined $err ) {
-             $on_connected->( $sock );
-             return;
+         if( !$sock ) {
+            $socketerr = $!;
+            $on_fail->( "socket", $family, $socktype, $protocol, $! ) if $on_fail;
+            goto &$knext;
          }
 
-         $on_fail->( "connect", $sock, $address, $err ) if $on_fail;
+         if( $localaddr and not $sock->bind( $localaddr ) ) {
+            $binderr = $!;
+            $on_fail->( "bind", $sock, $localaddr, $! ) if $on_fail;
+            undef $sock;
+            goto &$knext;
+         }
 
-         # Try the next one
-         $self->_connect_addresses( $addrlist, $on_connected, $on_connect_error, $on_fail );
-         return;
+         $sock->blocking( 0 );
+
+         # TODO: $sock->connect returns success masking EINPROGRESS
+         my $ret = connect( $sock, $peeraddr );
+         if( $ret ) {
+            # Succeeded already? Dubious, but OK. Can happen e.g. with connections to
+            # localhost, or UNIX sockets, or something like that.
+            goto &$klast;
+         }
+         elsif( $! != EINPROGRESS ) {
+            $connecterr = $!;
+            $on_fail->( "connect", $sock, $peeraddr, $! ) if $on_fail;
+            undef $sock;
+            goto &$knext;
+         }
+
+         $loop->watch_io(
+            handle => $sock,
+            on_write_ready => sub {
+               $loop->unwatch_io( handle => $sock, on_write_ready => 1 );
+
+               my $err = _get_sock_err( $sock );
+
+               goto &$klast if !defined $err;
+
+               $connecterr = $!;
+               $on_fail->( "connect", $sock, $peeraddr, $err ) if $on_fail;
+               undef $sock;
+               goto &$knext;
+            },
+         );
       },
+      sub {
+         if( $sock ) {
+            return $on_connected->( $sock );
+         }
+         else {
+            return $on_connect_error->( connect => $connecterr ) if $connecterr;
+            return $on_connect_error->( bind    => $binderr    ) if $binderr;
+            return $on_connect_error->( socket  => $socketerr  ) if $socketerr;
+            # If it gets this far then something went wrong
+            die 'Oops; $loop->connect failed but no error cause was found';
+         }
+      }
    );
-
-   # All done for now; all we can do is wait on that to complete
-   return;
 }
 
 =head2 $loop->connect( %params )
@@ -215,13 +222,17 @@ Reference to an array of (possibly-multiple) address structures to attempt to
 connect to. Each should be in the layout described for C<addr>. Such a layout
 is returned by the C<getaddrinfo> named resolver.
 
-=item addr => ARRAY
+=item addr => HASH or ARRAY
 
 Shortcut for passing a single address to connect to; it may be passed directly
 with this key, instead of in another array on its own.
 
 The address (or each element of the C<addrs> array) should be a reference to
-an array, with at least the following elements:
+either a hash with the following keys:
+ 
+ family, socktype, protocol, addr
+
+or an array, with the following elements:
 
  [ $family, $socktype, $protocol, $address ]
 
@@ -230,6 +241,14 @@ successful, the fourth to a C<connect()> call on the resulting socket. Any
 trailing elements will be ignored. Note that C<$address> must be a packed
 socket address, such as returned by C<pack_sockaddr_in> or
 C<pack_sockaddr_un>. See also the C<EXAMPLES> section,
+
+=item local_addrs => ARRAY
+
+=item local_addr => HASH or ARRAY
+
+Optional. Similar to the C<addrs> or C<addr> parameters, these specify a local
+address or set of addresses to C<bind()> the socket to before C<connect()>ing
+it.
 
 =item on_connected => CODE
 
@@ -258,9 +277,12 @@ This is most useful for C<SOCK_DGRAM> or C<SOCK_RAW> sockets.
 =item on_connect_error => CODE
 
 A continuation that is invoked after all of the addresses have been tried, and
-none of them succeeded. Because there is no one error message that stands out
-as particularly noteworthy, none is given to this continuation. To track
-individual errors, see the C<on_fail> callback.
+none of them succeeded. It will be passed the most significant error that
+occurred, and the name of the operation it occurred in. Errors from the
+C<connect()> syscall are considered most significant, then C<bind()>, then
+finally C<socket()>.
+
+ $on_connect_error->( $syscall, $! )
 
 =item on_fail => CODE
 
@@ -270,6 +292,8 @@ syscall that failed, the arguments that were passed to it, and the error it
 generated. I.e.
 
  $on_fail->( "socket", $family, $socktype, $protocol, $! );
+
+ $on_fail->( "bind", $sock, $address, $! );
 
  $on_fail->( "connect", $sock, $address, $! );
 
@@ -288,6 +312,13 @@ ignored, and instead the following keys are taken:
 =item service => STRING
 
 The hostname and service name to connect to.
+
+=item local_host => STRING
+
+=item local_service => STRING
+
+Optional. The hostname and/or service name to C<bind()> the socket to locally
+before connecting to the peer.
 
 =item family => INT
 
@@ -355,38 +386,107 @@ sub connect
 
    my $on_fail = $params{on_fail};
 
-   if( exists $params{host} and exists $params{service} ) {
-      my $on_resolve_error = $params{on_resolve_error} or croak "Expected 'on_resolve_error' callback";
+   my $loop = $self->{loop};
 
-      my $host    = $params{host}    or croak "Expected 'host'";
-      my $service = $params{service} or croak "Expected 'service'";
+   my %gai_hints;
+   exists $params{$_} and $gai_hints{$_} = $params{$_} for qw( family socktype protocol flags );
 
-      my $loop = $self->{loop};
+   my @localaddrs;
+   my @peeraddrs;
 
-      my $family   = $params{family}   || 0;
-      my $socktype = $params{socktype} || 0;
-      my $protocol = $params{protocol} || 0;
-      my $flags    = $params{flags}    || 0;
+   kpar(
+      sub {
+         my ( $k ) = @_;
+         if( exists $params{host} and exists $params{service} ) {
+            my $on_resolve_error = $params{on_resolve_error} or croak "Expected 'on_resolve_error' callback";
 
-      $loop->resolve(
-         type => 'getaddrinfo',
-         data => [ $host, $service, $family, $socktype, $protocol, $flags ],
+            my $host    = $params{host}    or croak "Expected 'host'";
+            my $service = $params{service} or croak "Expected 'service'";
 
-         on_error => $on_resolve_error,
+            $loop->resolver->getaddrinfo(
+               host    => $host,
+               service => $service,
+               %gai_hints,
 
-         on_resolved => sub {
-            my @addrs = @_;
-            $self->_connect_addresses( \@addrs, $on_connected, $on_connect_error, $on_fail );
-         },
-      );
-   }
-   elsif( exists $params{addrs} or exists $params{addr} ) {
-      my @addrs = exists $params{addrs} ? @{ $params{addrs} } : ( $params{addr} );
-      $self->_connect_addresses( \@addrs, $on_connected, $on_connect_error, $on_fail );
-   }
-   else {
-      croak "Expected 'host' and 'service' or 'addrs' or 'addr' arguments";
-   }
+               on_error => $on_resolve_error,
+
+               on_resolved => sub {
+                  @peeraddrs = @_;
+                  goto &$k;
+               },
+            );
+         }
+         elsif( exists $params{addrs} or exists $params{addr} ) {
+            @peeraddrs = exists $params{addrs} ? @{ $params{addrs} } : ( $params{addr} );
+            goto &$k;
+         }
+         else {
+            croak "Expected 'host' and 'service' or 'addrs' or 'addr' arguments";
+         }
+      },
+      sub {
+         my ( $k ) = @_;
+         if( exists $params{local_host} or exists $params{local_service} ) {
+            my $on_resolve_error = $params{on_resolve_error} or croak "Expected 'on_resolve_error' callback";
+
+            # Empty is fine on either of these
+            my $host    = $params{local_host};
+            my $service = $params{local_service};
+
+            $loop->resolver->getaddrinfo(
+               host    => $host,
+               service => $service,
+               %gai_hints,
+
+               on_error => $on_resolve_error,
+
+               on_resolved => sub {
+                  @localaddrs = @_;
+                  goto &$k;
+               },
+            );
+         }
+         elsif( exists $params{local_addrs} or exists $params{local_addr} ) {
+            @localaddrs = exists $params{local_addrs} ? @{ $params{local_addrs} } : ( $params{local_addr} );
+            goto &$k;
+         }
+         else {
+            @localaddrs = ( {} );
+            goto &$k;
+         }
+      },
+      sub {
+         my @addrs;
+
+         foreach my $local ( @localaddrs ) {
+            my ( $l_family, $l_socktype, $l_protocol, $l_addr ) = 
+               ref $local eq "ARRAY" ? @$local
+                                     : @{$local}{qw( family socktype protocol addr )};
+            foreach my $peer ( @peeraddrs ) {
+               my ( $p_family, $p_socktype, $p_protocol, $p_addr ) = 
+                  ref $peer eq "ARRAY" ? @$peer
+                                        : @{$peer}{qw( family socktype protocol addr )};
+
+               next if defined $l_family and defined $p_family and
+                  $l_family != $p_family;
+               next if defined $l_socktype and defined $p_socktype and
+                  $l_socktype != $p_socktype;
+               next if defined $l_protocol and defined $p_protocol and
+                  $l_protocol != $p_protocol;
+
+               push @addrs, {
+                  family    => $l_family   || $p_family,
+                  socktype  => $l_socktype || $p_socktype,
+                  protocol  => $l_protocol || $p_protocol,
+                  localaddr => $l_addr,
+                  peeraddr  => $p_addr,
+               };
+            }
+         }
+
+         $self->_connect_addresses( \@addrs, $on_connected, $on_connect_error, $on_fail );
+      }
+   );
 }
 
 # Keep perl happy; keep Britain tidy
@@ -407,12 +507,11 @@ TCP port 8001 on address 10.0.0.1:
  ...
 
  $loop->connect(
-    addr => [
-       PF_INET,
-       SOCK_STREAM,
-       0, # Don't need to supply a protocol as kernel will do that
-       pack_sockaddr_in( 8001, inet_aton( "10.0.0.1" ) ),
-    ],
+    addr => {
+       family   => PF_INET,
+       socktype => SOCK_STREAM,
+       addr     => pack_sockaddr_in( 8001, inet_aton( "10.0.0.1" ) ),
+    },
     ...
  );
 
@@ -423,12 +522,11 @@ This example shows another way to connect to a UNIX socket at F<echo.sock>.
  ...
 
  $loop->connect(
-    addr => [
-       PF_UNIX,
-       SOCK_STREAM,
-       0, # Don't need to supply a protocol as kernel will do that
-       pack_sockaddr_un( "echo.sock" ),
-    ],
+    addr => {
+       family   => PF_UNIX,
+       socktype => SOCK_STREAM,
+       addr     => pack_sockaddr_un( "echo.sock" ),
+    },
     ...
  );
 

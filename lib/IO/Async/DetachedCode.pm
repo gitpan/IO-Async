@@ -8,7 +8,7 @@ package IO::Async::DetachedCode;
 use strict;
 use warnings;
 
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 use IO::Async::Stream;
 
@@ -147,7 +147,7 @@ constructed by the C<call> method to replace it, if necessary.
 =item setup => ARRAY
 
 Optional array reference. Specifies the C<setup> key to pass to the underlying
-C<detach_child> when detaching the code block. If not supplied, a default one
+C<spawn_child> when detaching the code block. If not supplied, a default one
 will be created which just closes C<STDIN> and C<STDOUT>; C<STDERR> will be
 left unaffected.
 

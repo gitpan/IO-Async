@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 use IO::Async::Handle;
 
@@ -299,7 +299,11 @@ Shortcut for passing a single address to listen on; it may be passed directly
 with this key, instead of in another array of its own.
 
 The address (or each element of the C<addrs> array) should be a reference to
-an array, with at least the following elements:
+either a hash with the following keys:
+ 
+ family, socktype, protocol, addr
+
+or an array, with the following elements:
 
  [ $family, $socktype, $protocol, $address ]
 
@@ -364,9 +368,10 @@ Optional. A callback that is invoked when the listening socket is ready.
 =item on_listen_error => CODE
 
 A continuation this is invoked after all of the addresses have been tried, and
-none of them succeeded. Becasue there is no one error message that stands out
-as particularly noteworthy, none is given to this continuation. To track
-individual errors, see the C<on_fail> callback.
+none of them succeeded. It will be passed the most significant error that
+occurred, and the name of the operation it occurred in. Errors from the
+C<listen()> syscall are considered most significant, then C<bind()>, then
+C<sockopt()>, then finally C<socket()>.
 
 =item on_fail => CODE
 
@@ -433,29 +438,37 @@ sub listen
       my $reuseaddr = 1;
       $reuseaddr = 0 if defined $params{reuseaddr} and not $params{reuseaddr};
 
+      my ( $listenerr, $binderr, $sockopterr, $socketerr );
+
       foreach my $addr ( @$addrlist ) {
-         my ( $family, $socktype, $proto, $address ) = @$addr;
+         my ( $family, $socktype, $proto, $address ) = 
+            ref $addr eq "ARRAY" ? @$addr
+                                 : @{$addr}{qw( family socktype protocol addr )};
 
          my $sock;
 
          unless( $sock = $loop->socket( $family, $socktype, $proto ) ) {
+            $socketerr = $!;
             $on_fail->( "socket", $family, $socktype, $proto, $! ) if $on_fail;
             next;
          }
 
          if( $reuseaddr ) {
             unless( $sock->sockopt( SO_REUSEADDR, 1 ) ) {
+               $sockopterr = $!;
                $on_fail->( "sockopt", $sock, SO_REUSEADDR, 1, $! ) if $on_fail;
                next;
             }
          }
 
          unless( $sock->bind( $address ) ) {
+            $binderr = $!;
             $on_fail->( "bind", $sock, $address, $! ) if $on_fail;
             next;
          }
 
          unless( $sock->listen( $queuesize ) ) {
+            $listenerr = $!;
             $on_fail->( "listen", $sock, $queuesize, $! ) if $on_fail;
             next;
          }
@@ -468,7 +481,11 @@ sub listen
       }
 
       # If we got this far, then none of the addresses succeeded
-      $on_listen_error->();
+      return $on_listen_error->( listen  => $listenerr  ) if $listenerr;
+      return $on_listen_error->( bind    => $binderr    ) if $binderr;
+      return $on_listen_error->( sockopt => $sockopterr ) if $sockopterr;
+      return $on_listen_error->( socket  => $socketerr  ) if $socketerr;
+      die 'Oops; $loop->listen failed but no error cause was found';
    }
 
    elsif( defined $params{service} ) {
@@ -480,15 +497,15 @@ sub listen
       my $service = delete $params{service};
       defined $service or $service = ""; # might be 0
 
-      my $family   = delete $params{family} || 0;
-      my $socktype = delete $params{socktype} || 0;
-      my $protocol = delete $params{protocol} || 0;
+      my %gai_hints;
+      exists $params{$_} and $gai_hints{$_} = $params{$_} for qw( family socktype protocol flags );
 
-      my $flags = ( delete $params{flags} || 0 ) | AI_PASSIVE;
+      $gai_hints{flags} |= AI_PASSIVE;
 
-      $loop->resolve(
-         type => 'getaddrinfo',
-         data => [ $host, $service, $family, $socktype, $protocol, $flags ],
+      $loop->resolver->getaddrinfo(
+         host    => $host,
+         service => $service,
+         %gai_hints,
 
          on_resolved => sub {
             $self->listen( 
@@ -566,12 +583,11 @@ TCP port 8001 on address 10.0.0.1:
  ...
 
  $listener->listen(
-    addr => [
-       PF_INET,
-       SOCK_STREAM,
-       0, # Don't need to supply a protocol as kernel will do that
-       pack_sockaddr_in( 8001, inet_aton( "10.0.0.1" ) ),
-    ],
+    addr => {
+       family   => PF_INET,
+       socktype => SOCK_STREAM,
+       addr     => pack_sockaddr_in( 8001, inet_aton( "10.0.0.1" ) ),
+    },
     ...
  );
 
@@ -583,12 +599,11 @@ earlier example:
  ...
 
  $listener->listen(
-    addr => [
-       PF_UNIX,
-       SOCK_STREAM,
-       0, # Don't need to supply a protocol as kernel will do that
-       pack_sockaddr_un( "echo.sock" ),
-    ],
+    addr => {
+       family   => PF_UNIX,
+       socktype => SOCK_STREAM,
+       addr     => pack_sockaddr_un( "echo.sock" ),
+    },
     ...
  );
 

@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 =head1 NAME
 
@@ -131,7 +131,7 @@ order.
 =head2 Merge Points
 
 The L<IO::Async::MergePoint> object class allows for a program to wait on the
-completion of multiple seperate subtasks. It allows for each subtask to return
+completion of multiple separate subtasks. It allows for each subtask to return
 some data, which will be collected and given to the callback provided to the
 merge point, which is called when every subtask has completed.
 

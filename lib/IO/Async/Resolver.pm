@@ -8,10 +8,24 @@ package IO::Async::Resolver;
 use strict;
 use warnings;
 
-our $VERSION = '0.33';
+our $VERSION = '0.34';
 
 use Socket::GetAddrInfo qw( :newapi getaddrinfo getnameinfo );
+
+# We're going to implement methods called getaddrinfo and getnameinfo.
+# We therefore need to rename these imports. We couldn't just perform an empty
+# import and call fully-qualified because Socket::GetAddrInfo's import method
+# does special magic
+BEGIN {
+   my $stash = do { no strict 'refs'; \%{__PACKAGE__."::"} };
+
+   $stash->{_getaddrinfo} = delete $stash->{getaddrinfo};
+   $stash->{_getnameinfo} = delete $stash->{getnameinfo};
+}
+
 use Socket qw( SOCK_STREAM SOCK_DGRAM SOCK_RAW );
+
+use Time::HiRes qw( alarm );
 
 use Carp;
 
@@ -68,10 +82,17 @@ sub new
 
    my $code = $loop->detach_code(
       code => sub {
-         my ( $type, @data ) = @_;
+         my ( $type, $timeout, @data ) = @_;
 
          if( my $code = $METHODS{$type} ) {
-            return $code->( @data );
+            local $SIG{ALRM} = sub { die "Timed out\n" };
+
+            alarm( $timeout );
+            my @ret = eval { $code->( @data ) };
+            alarm( 0 );
+
+            die $@ if $@;
+            return @ret;
          }
          else {
             die "Unrecognised resolver request '$type'";
@@ -114,6 +135,11 @@ list of available operations.
 Arguments to pass to the resolver function. Exact meaning depends on the
 specific function chosen by the C<type>; see BUILT-IN RESOLVERS.
 
+=item timeout => NUMBER
+
+Optional. Timeout in seconds, after which the resolver operation will abort
+with a timeout exception. If not supplied, a default of 10 seconds will apply.
+
 =item on_resolved => CODE
 
 A continuation that is invoked when the resolver function returns a successful
@@ -135,6 +161,10 @@ sub resolve
 
    my $type = $args{type};
    defined $type or croak "Expected 'type'";
+
+   # Legacy
+   $type = "getaddrinfo_array" if $type eq "getaddrinfo";
+
    exists $METHODS{$type} or croak "Expected 'type' to be an existing resolver method, got '$type'";
 
    my $on_resolved = $args{on_resolved};
@@ -143,11 +173,132 @@ sub resolve
    my $on_error = $args{on_error};
    ref $on_error or croak "Expected 'on_error' to be a reference";
 
+   my $timeout = $args{timeout} || 10;
+
    my $code = $self->{code};
    $code->call(
-      args      => [ $type, @{$args{data}} ],
+      args      => [ $type, $timeout, @{$args{data}} ],
       on_return => $on_resolved,
       on_error  => $on_error,
+   );
+}
+
+=head2 $resolver->getaddrinfo( %args )
+
+A shortcut wrapper around the C<getaddrinfo> resolver, taking its arguments in
+a more convenient form.
+
+=over 8
+
+=item host => STRING
+
+=item service => STRING
+
+The host and service names to look up. At least one must be provided.
+
+=item family => INT
+
+=item socktype => INT
+
+=item protocol => INT
+
+Hint values used to filter the results.
+
+=item flags => INT
+
+Flags to control the C<getaddrinfo(3)> function. See the C<AI_*> constants in
+L<Socket::GetAddrInfo> for more detail.
+
+=item timeout => NUMBER
+
+Time in seconds after which to abort the lookup with a C<Timed out> exception
+
+=item on_resolved => CODE
+
+Callback which is invoked after a successful lookup. Will be passed a list of
+HASH references; each containing one result. Each result will contain fields
+called C<family>, C<socktype>, C<protocol> and C<addr>. If requested by
+C<AI_CANONNAME> then the C<canonname> field will also be valid.
+
+ $on_resolved->( @addrs )
+
+=item on_error => CODE
+
+Callback which is invoked after a failed lookup, including for a timeout.
+
+ $on_error->( $exception )
+
+=back
+
+=cut
+
+sub getaddrinfo
+{
+   my $self = shift;
+   my %args = @_;
+
+   $self->resolve(
+      type    => "getaddrinfo_hash",
+      # I really want hash slices
+      data    => [ map { exists $args{$_} ? ( $_ => $args{$_} ) : () } qw( host service family socktype protocol flags ) ],
+      timeout => $args{timeout},
+      on_resolved => $args{on_resolved},
+      on_error    => $args{on_error},
+   );
+}
+
+=head2 $resolver->getnameinfo( %args )
+
+A shortcut wrapper around the C<getnameinfo> resolver, taking its arguments in
+a more convenient form.
+
+=over 8
+
+=item addr => STRING
+
+The packed socket address to look up.
+
+=item flags => INT
+
+Flags to control the C<getnameinfo(3)> function. See the C<NI_*> constants in
+L<Socket::GetAddrInfo> for more detail.
+
+=item timeout => NUMBER
+
+Time in seconds after which to abort the lookup with a C<Timed out> exception
+
+=item on_resolved => CODE
+
+Callback which is invoked after a successful lookup. 
+
+ $on_resolved->( $host, $service )
+
+=item on_error => CODE
+
+Callback which is invoked after a failed lookup, including for a timeout.
+
+ $on_error->( $exception )
+
+=back
+
+=cut
+
+sub getnameinfo
+{
+   my $self = shift;
+   my %args = @_;
+
+   my $on_resolved = $args{on_resolved};
+   ref $on_resolved or croak "Expected 'on_resolved' to be a reference";
+
+   $self->resolve(
+      type    => "getnameinfo",
+      data    => [ $args{addr}, $args{flags} ],
+      timeout => $args{timeout},
+      on_resolved => sub {
+         $on_resolved->( @{ $_[0] } ); # unpack the ARRAY ref
+      },
+      on_error    => $args{on_error},
    );
 }
 
@@ -233,19 +384,40 @@ register_resolver getnetbyaddr => sub { return getnetbyaddr( $_[0], $_[1] ) or d
 register_resolver getprotobyname   => sub { return getprotobyname( $_[0] ) or die "$!\n" };
 register_resolver getprotobynumber => sub { return getprotobynumber( $_[0] ) or die "$!\n" };
 
-# The two Socket::GetAddrInfo-based ones
+# The Socket::GetAddrInfo-based ones
 
 =pod
 
-The following two resolver names are implemented using the same-named
-functions from the C<Socket::GetAddrInfo> module.
+The following three resolver names are implemented using the the
+C<Socket::GetAddrInfo> module.
 
- getaddrinfo getnameinfo
+ getaddrinfo_hash
+ getaddrinfo_array
+ getnameinfo
 
-The C<getaddrinfo> resolver mangles the result of the function, so that the
-returned value is more useful to the caller. It splits up the list of 5-tuples
-into a list of ARRAY refs, where each referenced array contains one of the
-tuples of 5 values. The C<getnameinfo> resolver returns its result unchanged.
+The C<getaddrinfo_hash> resolver takes arguments in a hash of name/value pairs
+and returns a list of hash structures, as the C<getaddrinfo> function does under
+the C<:newapi> tag. For neatness it takes all its arguments as named values;
+taking the host and service names from arguments called C<host> and C<service>
+respectively; all the remaining arguments are passed into the hints hash.
+
+The C<getaddrinfo_array> resolver behaves more like the C<:Socket6api> version
+of the function. It takes hints in a flat list, and mangles the result of the
+function, so that the returned value is more useful to the caller. It splits
+up the list of 5-tuples into a list of ARRAY refs, where each referenced array
+contains one of the tuples of 5 values.
+
+As an extra convenience to the caller, both resolvers will also accept plain
+string names for the C<socktype> argument, converting C<stream>, C<dgram> or
+C<raw> into the appropriate C<SOCK_*> value.
+
+For backward-compatibility with older code, the resolver name C<getaddrinfo>
+is currently aliased to C<getaddrinfo_array>; but any code that wishes to rely
+on the array-like nature of its arguments and return values, should request it
+specifically by name, as this alias will be changed in a later version of
+C<IO::Async>.
+
+The C<getnameinfo> resolver returns its result in the same form as C<:newapi>.
 
 Because this module simply uses the system's C<getaddrinfo> resolver, it will
 be fully IPv6-aware if the underlying platform's resolver is. This allows
@@ -253,7 +425,26 @@ programs to be fully IPv6-capable.
 
 =cut
 
-register_resolver getaddrinfo => sub {
+register_resolver getaddrinfo_hash => sub {
+   my %args = @_;
+
+   my $host    = delete $args{host};
+   my $service = delete $args{service};
+
+   if( defined $args{socktype} ) {
+      $args{socktype} = SOCK_STREAM if $args{socktype} eq 'stream';
+      $args{socktype} = SOCK_DGRAM  if $args{socktype} eq 'dgram';
+      $args{socktype} = SOCK_RAW    if $args{socktype} eq 'raw';
+   }
+
+   my ( $err, @addrs ) = _getaddrinfo( $host, $service, \%args );
+
+   die $err if $err;
+
+   return @addrs;
+};
+
+register_resolver getaddrinfo_array => sub {
    my ( $host, $service, $family, $socktype, $protocol, $flags ) = @_;
 
    if( defined $socktype ) {
@@ -268,7 +459,7 @@ register_resolver getaddrinfo => sub {
    $hints{protocol} = $protocol if defined $protocol;
    $hints{flags}    = $flags    if defined $flags;
 
-   my ( $err, @addrs ) = getaddrinfo( $host, $service, \%hints );
+   my ( $err, @addrs ) = _getaddrinfo( $host, $service, \%hints );
 
    die "$err\n" if $err;
 
@@ -281,7 +472,7 @@ register_resolver getaddrinfo => sub {
 register_resolver getnameinfo => sub {
    my ( $addr, $flags ) = @_;
 
-   my ( $err, $host, $service ) = getnameinfo( $addr, $flags );
+   my ( $err, $host, $service ) = _getnameinfo( $addr, $flags || 0 );
 
    die "$err\n" if $err;
 
@@ -323,6 +514,16 @@ C<IO::Async::Resolver> itself.
 =head1 TODO
 
 =over 4
+
+=item *
+
+Have C<getaddrinfo> try a synchronous lookup first, using C<AI_NUMERICHOST>
+and C<AI_NUMERICSERV>, and only performing async. if that fails.
+
+=item *
+
+Have C<getnameinfo> perform a synchronous lookup if the C<NI_NUMERICHOST> and
+C<NI_NUMERICSERV> flags are both present.
 
 =item *
 
