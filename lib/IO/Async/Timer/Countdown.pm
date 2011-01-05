@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2009-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2009-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Timer::Countdown;
 
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 use Carp;
 
@@ -108,7 +108,7 @@ sub configure
       $self->{delay} = $delay;
    }
 
-   if( !$self->{on_expire} and !$self->can( 'on_expire' ) ) {
+   unless( $self->can_event( 'on_expire' ) ) {
       croak 'Expected either a on_expire callback or an ->on_expire method';
    }
 

@@ -2,11 +2,11 @@
 
 use strict;
 
-use Test::More tests => 29;
+use Test::More tests => 31;
 
 use IO::Async::Loop::Poll;
 
-use Socket qw( AF_INET SOCK_STREAM SOCK_DGRAM );
+use Socket qw( AF_INET SOCK_STREAM SOCK_DGRAM pack_sockaddr_in inet_aton );
 
 use POSIX qw( SIGTERM );
 
@@ -14,8 +14,8 @@ use Time::HiRes qw( time );
 
 my $loop = IO::Async::Loop::Poll->new();
 
-foreach my $family ( undef, AF_INET ) {
-   my ( $S1, $S2 ) = $loop->socketpair( $family, SOCK_STREAM )
+foreach my $family ( undef, "inet" ) {
+   my ( $S1, $S2 ) = $loop->socketpair( $family, "stream" )
       or die "Could not socketpair - $!";
 
    isa_ok( $S1, "IO::Socket", '$S1 isa IO::Socket' );
@@ -35,7 +35,7 @@ foreach my $family ( undef, AF_INET ) {
    $S2->syswrite( "Goodbye" );
    is( do { my $b; $S1->sysread( $b, 8192 ); $b }, "Goodbye", '$S2 --writes-> $S1' );
 
-   ( $S1, $S2 ) = $loop->socketpair( $family, SOCK_DGRAM )
+   ( $S1, $S2 ) = $loop->socketpair( $family, "dgram" )
       or die "Could not socketpair - $!";
 
    isa_ok( $S1, "IO::Socket", '$S1 isa IO::Socket' );
@@ -72,5 +72,19 @@ foreach my $family ( undef, AF_INET ) {
 }
 
 is( $loop->signame2num( 'TERM' ), SIGTERM, '$loop->signame2num' );
+
+my $sinaddr = pack_sockaddr_in( 56, inet_aton( "1.2.3.4" ) );
+
+is_deeply( [ $loop->unpack_addrinfo( [ "inet", "stream", 0, $sinaddr ] ) ],
+           [ AF_INET, SOCK_STREAM, 0, $sinaddr ],
+           '$loop->unpack_addrinfo( ARRAY )' );
+
+is_deeply( [ $loop->unpack_addrinfo( {
+               family   => "inet",
+               socktype => "stream",
+               addr     => $sinaddr 
+             } ) ],
+           [ AF_INET, SOCK_STREAM, 0, $sinaddr ],
+           '$loop->unpack_addrinfo( HASH )' );
 
 cmp_ok( $loop->time - time, "<", 0.1, '$loop->time gives the current time' );

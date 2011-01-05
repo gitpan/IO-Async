@@ -1,17 +1,20 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Notifier;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 use Carp;
 use Scalar::Util qw( weaken );
+
+# Perl 5.8.4 cannot do trampolines by modiying @_ then goto &$code
+use constant HAS_BROKEN_TRAMPOLINES => ( $] == "5.008004" );
 
 =head1 NAME
 
@@ -425,8 +428,13 @@ sub _capture_weakself
    weaken $self;
 
    return sub {
-      unshift @_, $self;
-      goto &$code;
+      if( HAS_BROKEN_TRAMPOLINES ) {
+         return $code->( $self, @_ );
+      }
+      else {
+         unshift @_, $self;
+         goto &$code;
+      }
    };
 }
 
@@ -471,11 +479,32 @@ sub _replace_weakself
    weaken $self;
 
    return sub {
-      # Don't assign to $_[0] directly or we will change caller's first argument
-      shift @_;
-      unshift @_, $self;
-      goto &$code;
+      if( HAS_BROKEN_TRAMPOLINES ) {
+         return $code->( $self, @_[1..$#_] );
+      }
+      else {
+         # Don't assign to $_[0] directly or we will change caller's first argument
+         shift @_;
+         unshift @_, $self;
+         goto &$code;
+      }
    };
+}
+
+=head2 $code = $notifier->can_event( $event_name )
+
+Returns a C<CODE> reference if the object can perform the given event name,
+either by a configured C<CODE> reference parameter, or by implementing a
+method. If the object is unable to handle this event, C<undef> is returned.
+
+=cut
+
+sub can_event
+{
+   my $self = shift;
+   my ( $event_name ) = @_;
+
+   return $self->{$event_name} || $self->can( $event_name );
 }
 
 =head2 $callback = $notifier->make_event_cb( $event_name )
@@ -497,7 +526,7 @@ sub make_event_cb
    my $self = shift;
    my ( $event_name ) = @_;
 
-   my $code = $self->{$event_name} || $self->can( $event_name )
+   my $code = $self->can_event( $event_name )
       or croak "$self cannot handle $event_name event";
 
    return $self->_capture_weakself( $code );
@@ -515,7 +544,7 @@ sub maybe_make_event_cb
    my $self = shift;
    my ( $event_name ) = @_;
 
-   my $code = $self->{$event_name} || $self->can( $event_name )
+   my $code = $self->can_event( $event_name )
       or return undef;
 
    return $self->_capture_weakself( $code );
@@ -535,7 +564,7 @@ sub invoke_event
    my $self = shift;
    my ( $event_name, @args ) = @_;
 
-   my $code = $self->{$event_name} || $self->can( $event_name )
+   my $code = $self->can_event( $event_name )
       or croak "$self cannot handle $event_name event";
 
    return $code->( $self, @args );
@@ -556,7 +585,7 @@ sub maybe_invoke_event
    my $self = shift;
    my ( $event_name, @args ) = @_;
 
-   my $code = $self->{$event_name} || $self->can( $event_name )
+   my $code = $self->can_event( $event_name )
       or return undef;
 
    return [ $code->( $self, @args ) ];

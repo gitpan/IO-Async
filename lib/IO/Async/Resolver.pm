@@ -1,16 +1,21 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Resolver;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
-use Socket::GetAddrInfo qw( :newapi getaddrinfo getnameinfo );
+use Socket::GetAddrInfo qw(
+   :newapi getaddrinfo getnameinfo
+   AI_NUMERICHOST AI_NUMERICSERV
+   NI_NUMERICHOST NI_NUMERICSERV
+   EAI_NONAME
+);
 
 # We're going to implement methods called getaddrinfo and getnameinfo.
 # We therefore need to rename these imports. We couldn't just perform an empty
@@ -23,7 +28,12 @@ BEGIN {
    $stash->{_getnameinfo} = delete $stash->{getnameinfo};
 }
 
-use Socket qw( SOCK_STREAM SOCK_DGRAM SOCK_RAW );
+BEGIN {
+   # More cheating
+   require IO::Async::Loop;
+   *_getfamilybyname   = \&IO::Async::Loop::_getfamilybyname;
+   *_getsocktypebyname = \&IO::Async::Loop::_getsocktypebyname;
+}
 
 use Time::HiRes qw( alarm );
 
@@ -196,9 +206,9 @@ a more convenient form.
 
 The host and service names to look up. At least one must be provided.
 
-=item family => INT
+=item family => INT or STRING
 
-=item socktype => INT
+=item socktype => INT or STRING
 
 =item protocol => INT
 
@@ -230,12 +240,53 @@ Callback which is invoked after a failed lookup, including for a timeout.
 
 =back
 
+As a specific optimsation, this method will try to perform a lookup of numeric
+values synchronously, rather than asynchronously, if it looks likely to
+succeed.
+
+Specifically, if the service name is entirely numeric, and the hostname looks
+like an IPv4 or IPv6 string, a synchronous lookup will first be performed
+using the C<AI_NUMERICHOST> and C<AI_NUMERICSERV> flags. If this gives an
+C<EAI_NONAME> error, then the lookup is performed asynchronously instead.
+
 =cut
 
 sub getaddrinfo
 {
    my $self = shift;
    my %args = @_;
+
+   my $host    = $args{host}    || "";
+   my $service = $args{service} || "";
+   my $flags   = $args{flags}   || 0;
+
+   $args{family}   = _getfamilybyname( $args{family} )     if defined $args{family};
+   $args{socktype} = _getsocktypebyname( $args{socktype} ) if defined $args{socktype};
+
+   # It's likely this will succeed with AI_NUMERICHOST|AI_NUMERICSERV if
+   #   host contains only [\d.] (IPv4) or [[:xdigit:]:] (IPv6)
+   #   service contains only \d
+   # These tests don't have to be perfect as if it fails we'll get EAI_NONAME
+   # and just try it asynchronously anyway
+   if( ( $host =~ m/^[\d.]+$/ or $host =~ m/^[[:xdigit:]:]$/ ) and
+       $service =~ m/^\d+$/ ) {
+
+       my ( $err, @results ) = _getaddrinfo( $host, $service,
+          { %args, flags => $flags | AI_NUMERICHOST|AI_NUMERICSERV }
+       );
+
+       if( !$err ) {
+          $args{on_resolved}->( @results );
+          return;
+       }
+       elsif( $err == EAI_NONAME ) {
+          # fallthrough to async case
+       }
+       else {
+          $args{on_error}->( "$err\n" );
+          return;
+       }
+   }
 
    $self->resolve(
       type    => "getaddrinfo_hash",
@@ -281,6 +332,10 @@ Callback which is invoked after a failed lookup, including for a timeout.
 
 =back
 
+As a specific optimsation, this method will try to perform a lookup of numeric
+values synchronously, rather than asynchronously, if both the
+C<NI_NUMERICHOST> and C<NI_NUMERICSERV> flags are given.
+
 =cut
 
 sub getnameinfo
@@ -291,9 +346,23 @@ sub getnameinfo
    my $on_resolved = $args{on_resolved};
    ref $on_resolved or croak "Expected 'on_resolved' to be a reference";
 
+   my $flags = $args{flags} || 0;
+
+   if( $flags & (NI_NUMERICHOST|NI_NUMERICSERV) ) {
+      # This is a numeric-only lookup that can be done synchronously
+      my ( $err, $host, $service ) = _getnameinfo( $args{addr}, $flags );
+      if( $err ) {
+         $args{on_error}->( "$err\n" );
+      }
+      else {
+         $on_resolved->( $host, $service );
+      }
+      return;
+   }
+
    $self->resolve(
       type    => "getnameinfo",
-      data    => [ $args{addr}, $args{flags} ],
+      data    => [ $args{addr}, $flags ],
       timeout => $args{timeout},
       on_resolved => sub {
          $on_resolved->( @{ $_[0] } ); # unpack the ARRAY ref
@@ -408,8 +477,9 @@ up the list of 5-tuples into a list of ARRAY refs, where each referenced array
 contains one of the tuples of 5 values.
 
 As an extra convenience to the caller, both resolvers will also accept plain
-string names for the C<socktype> argument, converting C<stream>, C<dgram> or
-C<raw> into the appropriate C<SOCK_*> value.
+string names for the C<family> argument, converting C<inet> and possibly
+C<inet6> into the appropriate C<AF_*> value, and for the C<socktype> argument,
+converting C<stream>, C<dgram> or C<raw> into the appropriate C<SOCK_*> value.
 
 For backward-compatibility with older code, the resolver name C<getaddrinfo>
 is currently aliased to C<getaddrinfo_array>; but any code that wishes to rely
@@ -431,15 +501,12 @@ register_resolver getaddrinfo_hash => sub {
    my $host    = delete $args{host};
    my $service = delete $args{service};
 
-   if( defined $args{socktype} ) {
-      $args{socktype} = SOCK_STREAM if $args{socktype} eq 'stream';
-      $args{socktype} = SOCK_DGRAM  if $args{socktype} eq 'dgram';
-      $args{socktype} = SOCK_RAW    if $args{socktype} eq 'raw';
-   }
+   $args{family}   = _getfamilybyname( $args{family} )     if defined $args{family};
+   $args{socktype} = _getsocktypebyname( $args{socktype} ) if defined $args{socktype};
 
    my ( $err, @addrs ) = _getaddrinfo( $host, $service, \%args );
 
-   die $err if $err;
+   die "$err\n" if $err;
 
    return @addrs;
 };
@@ -447,11 +514,8 @@ register_resolver getaddrinfo_hash => sub {
 register_resolver getaddrinfo_array => sub {
    my ( $host, $service, $family, $socktype, $protocol, $flags ) = @_;
 
-   if( defined $socktype ) {
-      $socktype = SOCK_STREAM if $socktype eq 'stream';
-      $socktype = SOCK_DGRAM  if $socktype eq 'dgram';
-      $socktype = SOCK_RAW    if $socktype eq 'raw';
-   }
+   $family   = _getfamilybyname( $family );
+   $socktype = _getsocktypebyname( $socktype );
 
    my %hints;
    $hints{family}   = $family   if defined $family;
@@ -514,16 +578,6 @@ C<IO::Async::Resolver> itself.
 =head1 TODO
 
 =over 4
-
-=item *
-
-Have C<getaddrinfo> try a synchronous lookup first, using C<AI_NUMERICHOST>
-and C<AI_NUMERICSERV>, and only performing async. if that fails.
-
-=item *
-
-Have C<getnameinfo> perform a synchronous lookup if the C<NI_NUMERICHOST> and
-C<NI_NUMERICSERV> flags are both present.
 
 =item *
 

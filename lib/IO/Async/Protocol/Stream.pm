@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2010-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Protocol::Stream;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 use base qw( IO::Async::Protocol );
 
@@ -59,7 +59,7 @@ protocol implementation would be likely to contain.
 
 =head1 DESCRIPTION
 
-This subclass of L<IO::Async:Notifier> is intended to stand as a base class
+This subclass of L<IO::Async::Protocol> is intended to stand as a base class
 for implementing stream-based protocols. It provides an interface similar to
 L<IO::Async::Stream>, primarily, a C<write> method and an C<on_read> event
 handler.
@@ -131,7 +131,7 @@ sub configure
    $self->SUPER::configure( %params );
 
    if( $self->get_loop ) {
-      $self->{on_read} or $self->can( "on_read" ) or
+      $self->can_event( "on_read" ) or
          croak 'Expected either an on_read callback or to be able to ->on_read';
    }
 }
@@ -140,7 +140,7 @@ sub _add_to_loop
 {
    my $self = shift;
 
-   $self->{on_read} or $self->can( "on_read" ) or
+   $self->can_event( "on_read" ) or
       croak 'Expected either an on_read callback or to be able to ->on_read';
 }
 

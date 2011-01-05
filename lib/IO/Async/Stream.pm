@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Stream;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 use base qw( IO::Async::Handle );
 
@@ -277,7 +277,7 @@ sub configure
    $self->SUPER::configure( %params );
 
    if( $self->get_loop and $self->read_handle ) {
-      $self->{on_read} or $self->can( "on_read" ) or
+      $self->can_event( "on_read" ) or
          croak 'Expected either an on_read callback or to be able to ->on_read';
    }
 }
@@ -287,7 +287,7 @@ sub _add_to_loop
    my $self = shift;
 
    if( defined $self->read_handle ) {
-      $self->{on_read} or $self->can( "on_read" ) or
+      $self->can_event( "on_read" ) or
          croak 'Expected either an on_read callback or to be able to ->on_read';
    }
 
@@ -469,17 +469,30 @@ sub write
    carp "Cannot write data to a Stream that is closing" and return if $self->{stream_closing};
    croak "Cannot write data to a Stream with no write_handle" unless my $handle = $self->write_handle;
 
-   push @{ $self->{writequeue} }, my $elem = [];
+   # Combine short writes we can
+   my $tail = @{ $self->{writequeue} } ? $self->{writequeue}[-1] : undef;
 
-   if( ref $data eq "CODE" ) {
-      $elem->[WQ_DATA] = "";
-      $elem->[WQ_GENSUB] = $data;
+   if( $tail and
+       !ref $data and
+       !$tail->[WQ_GENSUB] and
+       length($data) + length($tail->[WQ_DATA]) < $self->{write_len} and
+       !$params{on_flush} and
+       !$tail->[WQ_ON_FLUSH]) {
+      $tail->[WQ_DATA] .= $data;
    }
    else {
-      $elem->[WQ_DATA] = $data;
+      push @{ $self->{writequeue} }, my $elem = [];
+
+      if( ref $data eq "CODE" ) {
+         $elem->[WQ_DATA] = "";
+         $elem->[WQ_GENSUB] = $data;
+      }
+      else {
+         $elem->[WQ_DATA] = $data;
+      }
+
+      $elem->[WQ_ON_FLUSH] = $params{on_flush};
    }
-   
-   $elem->[WQ_ON_FLUSH] = $params{on_flush};
 
    if( $self->{autoflush} ) {
       1 while !$self->_is_empty and $self->_flush_one;
@@ -520,8 +533,7 @@ sub on_read_ready
 
       while(1) {
          my $on_read = $self->{current_on_read}
-                        || $self->{on_read}
-                        || $self->can( "on_read" );
+                        || $self->can_event( "on_read" );
 
          my $ret = $on_read->( $self, \$self->{readbuff}, $handleclosed );
 

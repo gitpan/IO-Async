@@ -1,21 +1,26 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
 
 use Carp;
 
-use Socket;
+use Socket qw( AF_INET AF_UNIX SOCK_STREAM SOCK_DGRAM SOCK_RAW );
+BEGIN {
+   # Not quite sure where we'll find AF_INET6
+   eval { Socket->import( 'AF_INET6' ); 1 } or
+      eval { require Socket6; Socket6->import( 'AF_INET6' ) }
+}
 use IO::Socket;
 use Time::HiRes qw(); # empty import
 use POSIX qw( _exit WNOHANG );
@@ -871,6 +876,36 @@ sub socket
    return IO::Socket->new->socket( $family, $socktype, $proto );
 }
 
+sub _getfamilybyname
+{
+   my ( $name ) = @_;
+
+   return undef unless defined $name;
+
+   return $name if $name =~ m/^\d+$/;
+
+   return AF_INET    if $name eq "inet";
+   return AF_INET6() if $name eq "inet6" and defined &AF_INET6;
+   return AF_UNIX    if $name eq "unix";
+
+   croak "Unrecognised socktype name '$name'";
+}
+
+sub _getsocktypebyname
+{
+   my ( $name ) = @_;
+
+   return undef unless defined $name;
+
+   return $name if $name =~ m/^\d+$/;
+
+   return SOCK_STREAM if $name eq "stream";
+   return SOCK_DGRAM  if $name eq "dgram";
+   return SOCK_RAW    if $name eq "raw";
+
+   croak "Unrecognised socktype name '$name'";
+}
+
 =head2 ( $S1, $S2 ) = $loop->socketpair( $family, $socktype, $proto )
 
 An abstraction of the C<socketpair()> syscall, where any argument may be
@@ -884,6 +919,9 @@ Additionally, this method supports building connected C<SOCK_STREAM> or
 C<SOCK_DGRAM> pairs in the C<AF_INET> family even if the underlying platform's
 C<socketpair(2)> does not, by connecting two normal sockets together.
 
+C<$family> and C<$socktype> may also be given symbolically similar to the
+behaviour of C<unpack_addrinfo>.
+
 =cut
 
 sub socketpair
@@ -892,12 +930,12 @@ sub socketpair
    my ( $family, $socktype, $proto ) = @_;
 
    # PF_UNSPEC and undef are both false
-   $family ||= AF_UNIX;
+   $family = _getfamilybyname( $family ) || AF_UNIX;
 
    # SOCK_STREAM is the most likely
-   defined $socktype or $socktype = SOCK_STREAM;
+   $socktype = _getsocktypebyname( $socktype ) || SOCK_STREAM;
 
-   defined $proto or $proto = 0;
+   $proto ||= 0;
 
    my ( $S1, $S2 ) = IO::Socket->new->socketpair( $family, $socktype, $proto );
    return ( $S1, $S2 ) if defined $S1;
@@ -1028,6 +1066,71 @@ sub signame2num
    %sig_num or $self->_init_signum;
 
    return $sig_num{$signame};
+}
+
+=head2 ( $family, $socktype, $protocol, $addr ) = $loop->unpack_addrinfo( $ai )
+
+Given an ARRAY or HASH reference value containing an addrinfo, returns a
+family, socktype and protocol argument suitable for a C<socket> call and an
+address suitable for C<connect> or C<bind>.
+
+If given an ARRAY it should be in the following form:
+
+ [ $family, $socktype, $protocol, $addr ]
+
+If given a HASH it should contain the following keys:
+
+ family socktype protocol addr
+
+Each field in the result will be initialised to 0 (or empty string for the
+address) if not defined in the C<$ai> value.
+
+The family type may also be given as a symbolic string; C<inet> or possibly
+C<inet6> if the host system supports it, or C<unix>; this will be converted to
+the appropriate C<AF_*> constant.
+
+The socktype may also be given as a symbolic string; C<stream>, C<dgram> or
+C<raw>; this will be converted to the appropriate C<SOCK_*> constant.
+
+Note that the addr field must be a packed socket address, such as returned
+by C<pack_sockaddr_in> or C<pack_sockaddr_un>.
+
+=cut
+
+use constant {
+   ADDRINFO_FAMILY => 0,
+   ADDRINFO_SOCKTYPE => 1,
+   ADDRINFO_PROTOCOL => 2,
+   ADDRINFO_ADDR => 3,
+};
+
+sub unpack_addrinfo
+{
+   my $self = shift;
+   my ( $ai, $argname ) = @_;
+
+   $argname ||= "addr";
+
+   my @ai;
+
+   if( ref $ai eq "ARRAY" ) {
+      @ai = @$ai;
+   }
+   elsif( ref $ai eq "HASH" ) {
+      @ai = @{$ai}{qw( family socktype protocol addr )};
+   }
+   else {
+      croak "Expected '$argname' to be an ARRAY or HASH reference";
+   }
+
+   $ai[ADDRINFO_FAMILY]   = _getfamilybyname( $ai[ADDRINFO_FAMILY] );
+   $ai[ADDRINFO_SOCKTYPE] = _getsocktypebyname( $ai[ADDRINFO_SOCKTYPE] );
+
+   # Make sure all fields are defined
+   $ai[$_] ||= 0 for ADDRINFO_FAMILY, ADDRINFO_SOCKTYPE, ADDRINFO_PROTOCOL;
+   $ai[ADDRINFO_ADDR]  = "" if !defined $ai[ADDRINFO_ADDR];
+
+   return @ai;
 }
 
 =head2 $time = $loop->time

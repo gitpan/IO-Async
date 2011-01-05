@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::Connector;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.34';
+our $VERSION = '0.35';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
@@ -225,22 +225,9 @@ is returned by the C<getaddrinfo> named resolver.
 =item addr => HASH or ARRAY
 
 Shortcut for passing a single address to connect to; it may be passed directly
-with this key, instead of in another array on its own.
-
-The address (or each element of the C<addrs> array) should be a reference to
-either a hash with the following keys:
- 
- family, socktype, protocol, addr
-
-or an array, with the following elements:
-
- [ $family, $socktype, $protocol, $address ]
-
-The first three arguments will be passed to a C<socket()> call and, if
-successful, the fourth to a C<connect()> call on the resulting socket. Any
-trailing elements will be ignored. Note that C<$address> must be a packed
-socket address, such as returned by C<pack_sockaddr_in> or
-C<pack_sockaddr_un>. See also the C<EXAMPLES> section,
+with this key, instead of in another array on its own. This should be in a
+format recognised by L<IO::Async::Loop>'s C<unpack_addrinfo> method. See also
+the C<EXAMPLES> section.
 
 =item local_addrs => ARRAY
 
@@ -460,19 +447,14 @@ sub connect
 
          foreach my $local ( @localaddrs ) {
             my ( $l_family, $l_socktype, $l_protocol, $l_addr ) = 
-               ref $local eq "ARRAY" ? @$local
-                                     : @{$local}{qw( family socktype protocol addr )};
+               $loop->unpack_addrinfo( $local, 'local_addr' );
             foreach my $peer ( @peeraddrs ) {
                my ( $p_family, $p_socktype, $p_protocol, $p_addr ) = 
-                  ref $peer eq "ARRAY" ? @$peer
-                                        : @{$peer}{qw( family socktype protocol addr )};
+                  $loop->unpack_addrinfo( $peer );
 
-               next if defined $l_family and defined $p_family and
-                  $l_family != $p_family;
-               next if defined $l_socktype and defined $p_socktype and
-                  $l_socktype != $p_socktype;
-               next if defined $l_protocol and defined $p_protocol and
-                  $l_protocol != $p_protocol;
+               next if $l_family   and $p_family   and $l_family   != $p_family;
+               next if $l_socktype and $p_socktype and $l_socktype != $p_socktype;
+               next if $l_protocol and $p_protocol and $l_protocol != $p_protocol;
 
                push @addrs, {
                   family    => $l_family   || $p_family,
@@ -502,14 +484,14 @@ The C<addr> or C<addrs> parameters should contain a packed socket address.
 This example shows how to use the C<Socket> functions to construct one for
 TCP port 8001 on address 10.0.0.1:
 
- use Socket qw( PF_INET SOCK_STREAM pack_sockaddr_in inet_aton );
+ use Socket qw( pack_sockaddr_in inet_aton );
 
  ...
 
  $loop->connect(
     addr => {
-       family   => PF_INET,
-       socktype => SOCK_STREAM,
+       family   => "inet",
+       socktype => "stream",
        addr     => pack_sockaddr_in( 8001, inet_aton( "10.0.0.1" ) ),
     },
     ...
@@ -517,14 +499,14 @@ TCP port 8001 on address 10.0.0.1:
 
 This example shows another way to connect to a UNIX socket at F<echo.sock>.
 
- use Socket qw( PF_UNIX SOCK_STREAM pack_sockaddr_un );
+ use Socket qw( pack_sockaddr_un );
 
  ...
 
  $loop->connect(
     addr => {
-       family   => PF_UNIX,
-       socktype => SOCK_STREAM,
+       family   => "unix",
+       socktype => "stream",
        addr     => pack_sockaddr_un( "echo.sock" ),
     },
     ...
