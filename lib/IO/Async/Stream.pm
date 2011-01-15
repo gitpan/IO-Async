@@ -8,7 +8,7 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 use base qw( IO::Async::Handle );
 
@@ -35,20 +35,14 @@ filehandle
 
 =head1 SYNOPSIS
 
- use IO::Socket::INET;
  use IO::Async::Stream;
 
  use IO::Async::Loop;
  my $loop = IO::Async::Loop->new();
 
- my $socket = IO::Socket::INET->new(
-    PeerHost => "some.other.host",
-    PeerPort => 12345,
-    Blocking => 0,                   # This line is very important
- );
-
  my $stream = IO::Async::Stream->new(
-    handle => $socket,
+    read_handle  => \*STDIN,
+    write_handle => \*STDOUT,
 
     on_read => sub {
        my ( $self, $buffref, $closed ) = @_;
@@ -92,22 +86,16 @@ Or
     }
  );
 
-Or
-
- use IO::Handle;
-
- my $stream = IO::Async::Stream->new(
-    read_handle  => \*STDIN,
-    write_handle => \*STDOUT,
-    ...
- );
-
 =head1 DESCRIPTION
 
 This subclass of L<IO::Async::Handle> contains a filehandle that represents
 a byte-stream. It provides buffering for both incoming and outgoing data. It
 invokes the C<on_read> handler when new data is read from the filehandle. Data
 may be written to the filehandle by calling the C<write()> method.
+
+For implementing real network protocols that are based on messages sent over a
+byte-stream (such as a TCP socket), it may be more appropriate to use a
+subclass of L<IO::Async::Protocol::Stream>.
 
 =cut
 
@@ -292,6 +280,10 @@ sub _add_to_loop
    }
 
    $self->SUPER::_add_to_loop( @_ );
+
+   if( !$self->_is_empty ) {
+      $self->want_writeready( 1 );
+   }
 }
 
 =head1 METHODS
@@ -459,6 +451,10 @@ yet empty; if more data has been queued since the call.
 
 =back
 
+If the object is not yet a member of a loop and doesn't yet have a
+C<write_handle>, then calls to the C<write> method will simply queue the data
+and return. It will be flushed when the object is added to the loop.
+
 =cut
 
 sub write
@@ -467,7 +463,12 @@ sub write
    my ( $data, %params ) = @_;
 
    carp "Cannot write data to a Stream that is closing" and return if $self->{stream_closing};
-   croak "Cannot write data to a Stream with no write_handle" unless my $handle = $self->write_handle;
+
+   # Allow writes without a filehandle if we're not yet in a Loop, just don't
+   # try to flush them
+   my $handle = $self->write_handle;
+
+   croak "Cannot write data to a Stream with no write_handle" if !$handle and $self->get_loop;
 
    # Combine short writes we can
    my $tail = @{ $self->{writequeue} } ? $self->{writequeue}[-1] : undef;
@@ -493,6 +494,8 @@ sub write
 
       $elem->[WQ_ON_FLUSH] = $params{on_flush};
    }
+
+   return unless $handle;
 
    if( $self->{autoflush} ) {
       1 while !$self->_is_empty and $self->_flush_one;
@@ -627,6 +630,9 @@ is ready (i.e. a whole line), and to remove it from the buffer. If no data is
 available then C<0> is returned, to indicate it should not be tried again. If
 a line was successfully extracted, then C<1> is returned, to indicate it
 should try again in case more lines exist in the buffer.
+
+For implementing real network protocols that are based on lines of text it may
+be more appropriate to use a subclass of L<IO::Async::Protocol::LineStream>.
 
 =head2 Dynamic replacement of C<on_read()>
 

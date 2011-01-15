@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 use Carp;
 
@@ -36,8 +36,6 @@ C<IO::Async::Timer::Absolute> - event callback at a fixed future time
        $loop->loop_stop;
     },
  );
-
- $timer->start;
 
  $loop->add( $timer );
 

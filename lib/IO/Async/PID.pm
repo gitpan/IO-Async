@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2010-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async::PID;
 
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 use Carp;
 
@@ -55,6 +55,10 @@ C<IO::Async::PID> - event callback on exit of a child process
 This subclass of L<IO::Async::Notifier> invokes its callback when a process
 exits.
 
+For most use cases, a L<IO::Async::Process> object provides more control of
+setting up the process, connecting filehandles to it, sending data to and
+receiving data from it.
+
 =cut
 
 =head1 EVENTS
@@ -76,7 +80,8 @@ The following named parameters may be passed to C<new> or C<configure>:
 
 =item pid => INT
 
-The process ID to watch. Can only be given at construction time.
+The process ID to watch. Must be given before the object has been added to the
+containing C<IO::Async::Loop> object.
 
 =item on_exit => CODE
 
@@ -89,23 +94,15 @@ object is removed from the containing C<IO::Async::Loop> object.
 
 =cut
 
-sub _init
-{
-   my $self = shift;
-   my ( $params ) = @_;
-
-   # Not valid to watch for 0
-   my $pid = delete $params->{pid} or croak "Expected 'pid'";
-
-   $self->{pid} = $pid;
-
-   $self->SUPER::_init( $params );
-}
-
 sub configure
 {
    my $self = shift;
    my %params = @_;
+
+   if( exists $params{pid} ) {
+      $self->get_loop and croak "Cannot configure 'pid' after adding to Loop";
+      $self->{pid} = delete $params{pid};
+   }
 
    if( exists $params{on_exit} ) {
       $self->{on_exit} = delete $params{on_exit};
@@ -126,13 +123,16 @@ sub _add_to_loop
    my $self = shift;
    my ( $loop ) = @_;
 
+   $self->pid or croak "Require a 'pid' in $self";
+
+   $self->SUPER::_add_to_loop( @_ );
+
    # on_exit continuation gets passed PID value; need to replace that with
    # $self
    $self->{cb} ||= $self->_capture_weakself( sub {
       my ( $self, $pid, $exitcode ) = @_;
 
-      $self->{on_exit} ? $self->{on_exit}->( $self, $exitcode )
-                       : $self->on_exit( $exitcode );
+      $self->invoke_event( on_exit => $exitcode );
 
       # Since this is a oneshot, we'll have to remove it from the loop or
       # parent Notifier

@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -651,11 +651,87 @@ sub spawn_child
    $childmanager->spawn_child( %params );
 }
 
-=head2 $loop->open_child( %params )
+=head2 $pid = $loop->open_child( %params )
 
-This method creates a new child process to run the given code block or command,
-and attaches filehandles to it that the parent will watch. For more detail,
-see the C<open_child()> method on the L<IO::Async::ChildManager> class.
+This creates a new child process to run the given code block or command, and
+attaches filehandles to it that the parent will watch. This method is a light
+wrapper around constructing a new L<IO::Async::Process> object, provided
+largely for backward compatibility. New code ought to construct such an object
+directly, as it may provide more features than are available here.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item command => ARRAY or STRING
+
+=item code => CODE
+
+The command or code to run in the child process (as per the C<spawn> method)
+
+=item on_finish => CODE
+
+A continuation to be called when the child process exits and has closed all of
+the filehandles that were set up for it. It will be invoked in the following
+way:
+
+ $on_finish->( $pid, $exitcode )
+
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+
+=item on_error => CODE
+
+Optional continuation to be called when the child code block throws an
+exception, or the command could not be C<exec()>ed. It will be invoked in the
+following way (as per C<spawn>)
+
+ $on_error->( $pid, $exitcode, $dollarbang, $dollarat )
+
+If this continuation is not supplied, then C<on_finish> is used instead. The
+value of C<$!> and C<$@> will not be reported.
+
+=item setup => ARRAY
+
+Optional reference to an array to pass to the underlying C<spawn> method.
+
+=back
+
+In addition, the hash takes keys that define how to set up file descriptors in
+the child process. (If the C<setup> array is also given, these operations will
+be performed after those specified by C<setup>.)
+
+=over 8
+
+=item fdI<n> => HASH
+
+A hash describing how to set up file descriptor I<n>. The hash may contain one
+of the following sets of keys:
+
+=over 4
+
+=item on_read => CODE
+
+The child will be given the writing end of a pipe. The reading end will be
+wrapped by an C<IO::Async::Stream> using this C<on_read> callback function.
+
+=item from => STRING
+
+The child will be given the reading end of a pipe. The string given by the
+C<from> parameter will be written to the child. When all of the data has been
+written the pipe will be closed.
+
+=back
+
+=item stdin => ...
+
+=item stdout => ...
+
+=item stderr => ...
+
+Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
+
+=back
 
 =cut
 
@@ -664,18 +740,82 @@ sub open_child
    my $self = shift;
    my %params = @_;
 
-   my $childmanager = $self->{childmanager} ||=
-      $self->__new_feature( "IO::Async::ChildManager" );
+   my $on_finish = delete $params{on_finish};
+   ref $on_finish or croak "Expected 'on_finish' to be a reference";
+   $params{on_finish} = sub {
+      my ( $process, $exitcode ) = @_;
+      $on_finish->( $process->pid, $exitcode );
+   };
 
-   $childmanager->open_child( %params );
+   if( my $on_error = delete $params{on_error} ) {
+      ref $on_error or croak "Expected 'on_error' to be a reference";
+
+      $params{on_exception} = sub {
+         my ( $process, $exception, $errno, $exitcode ) = @_;
+         # Swap order
+         $on_error->( $process->pid, $exitcode, $errno, $exception );
+      };
+   }
+
+   $params{on_exit} and croak "Cannot pass 'on_exit' parameter through ChildManager->open";
+
+   require IO::Async::Process;
+   my $process = IO::Async::Process->new( %params );
+
+   $self->add( $process );
+
+   return $process->pid;
 }
 
-=head2 $loop->run_child( %params )
+=head2 $pid = $loop->run_child( %params )
 
-This method creates a new child process to run the given code block or command,
-captures its STDOUT and STDERR streams, and passes them to the given
-continuation. For more detail see the C<run_child()> method on the
-L<IO::Async::ChildManager> class.
+This creates a new child process to run the given code block or command,
+capturing its STDOUT and STDERR streams. When the process exits, a
+continuation is invoked being passed the exitcode, and content of the streams.
+
+=over 8
+
+=item command => ARRAY or STRING
+
+=item code => CODE
+
+The command or code to run in the child process (as per the C<spawn_child>
+method)
+
+=item on_finish => CODE
+
+A continuation to be called when the child process exits and closed its STDOUT
+and STDERR streams. It will be invoked in the following way:
+
+ $on_finish->( $pid, $exitcode, $stdout, $stderr )
+
+The second argument is passed the plain perl C<$?> value. To use that
+usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+
+=item stdin => STRING
+
+Optional. String to pass in to the child process's STDIN stream.
+
+=item setup => ARRAY
+
+Optional reference to an array to pass to the underlying C<spawn> method.
+
+=back
+
+This method is intended mainly as an IO::Async-compatible replacement for the
+perl C<readpipe> function (`backticks`), allowing it to replace
+
+  my $output = `command here`;
+
+with
+
+ $loop->run_child(
+    command => "command here", 
+    on_finish => sub {
+       my ( undef, $exitcode, $output ) = @_;
+       ...
+    }
+ );
 
 =cut
 
@@ -684,10 +824,48 @@ sub run_child
    my $self = shift;
    my %params = @_;
 
-   my $childmanager = $self->{childmanager} ||=
-      $self->__new_feature( "IO::Async::ChildManager" );
+   my $on_finish = delete $params{on_finish};
+   ref $on_finish or croak "Expected 'on_finish' to be a reference";
 
-   $childmanager->run_child( %params );
+   my $child_out;
+   my $child_err;
+
+   my %subparams;
+
+   if( my $child_stdin = delete $params{stdin} ) {
+      ref $child_stdin and croak "Expected 'stdin' not to be a reference";
+      $subparams{stdin} = { from => $child_stdin };
+   }
+
+   $subparams{code}    = delete $params{code};
+   $subparams{command} = delete $params{command};
+   $subparams{setup}   = delete $params{setup};
+
+   croak "Unrecognised parameters " . join( ", ", keys %params ) if keys %params;
+
+   $self->open_child(
+      %subparams,
+      stdout => {
+         on_read => sub { 
+            my ( $stream, $buffref, $closed ) = @_;
+            $child_out = $$buffref if $closed;
+            return 0;
+         }
+      },
+
+      stderr => { 
+         on_read => sub {
+            my ( $stream, $buffref, $closed ) = @_;
+            $child_err = $$buffref if $closed;
+            return 0;
+         }
+      },
+
+      on_finish => sub {
+         my ( $kid, $exitcode ) = @_;
+         $on_finish->( $kid, $exitcode, $child_out, $child_err );
+      },
+   );
 }
 
 =head2 $loop->resolver

@@ -22,6 +22,7 @@ lib/IO/Async/LoopTests.pm
 lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
 lib/IO/Async/PID.pm
+lib/IO/Async/Process.pm
 lib/IO/Async/Protocol.pm
 lib/IO/Async/Protocol/LineStream.pm
 lib/IO/Async/Protocol/Stream.pm
@@ -75,9 +76,10 @@ t/26pid.t
 t/30loop-fork.t
 t/31loop-spawnchild.t
 t/32loop-spawnchild-setup.t
-t/33loop-openchild.t
-t/34loop-runchild.t
-t/35loop-child-root.t
+t/33process.t
+t/34loop-openchild.t
+t/35loop-runchild.t
+t/36loop-child-root.t
 t/40detachedcode-marshall.t
 t/41detachedcode-call.t
 t/50resolver.t

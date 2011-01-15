@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 use IO::Async::Handle;
 
@@ -71,7 +71,7 @@ This object can also be used indirectly via an C<IO::Async::Loop>:
     service  => "echo",
     socktype => 'stream',
 
-    on_accept => sub {
+    on_stream => sub {
        ...
     },
 
@@ -555,9 +555,12 @@ sockets.
 
  $loop->loop_forever;
 
-=head2 Passing Packed Socket Addresses
+=head2 Passing Plain Socket Addresses
 
-The C<addr> or C<addrs> parameters should contain a packed socket address.
+The C<addr> or C<addrs> parameters should contain a definition of a plain
+socket address in a form that the L<IO::Async::Loop> C<unpack_addrinfo> method
+can use.
+
 This example shows how to use the C<Socket> functions to construct one for
 TCP port 8001 on address 10.0.0.1:
 

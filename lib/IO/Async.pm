@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008-2010 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2011 -- leonerd@leonerd.org.uk
 
 package IO::Async;
 
@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 =head1 NAME
 
@@ -30,12 +30,10 @@ C<IO::Async> - Asynchronous event-driven programming
     service  => 12345,
     socktype => 'stream',
 
-    on_connected => sub {
-       my ( $socket ) = @_;
+    on_stream => sub {
+       my ( $stream ) = @_;
 
-       my $stream = IO::Async::Stream->new(
-          handle => $socket,
-
+       $stream->configure(
           on_read => sub {
              my ( $self, $buffref, $closed ) = @_;
 
@@ -52,7 +50,8 @@ C<IO::Async> - Asynchronous event-driven programming
        $loop->add( $stream );
     },
 
-    ...
+    on_resolve_error => sub { die "Cannot resolve - $_[-1]\n"; },
+    on_connect_error => sub { die "Cannot connect - $_[0] failed $_[-1]\n"; },
  );
 
  $loop->loop_forever();
@@ -128,6 +127,14 @@ callback when the given signal is received by the process. Multiple objects
 watching the same signal can be used; they will all invoke in no particular
 order.
 
+=head2 Processes Management
+
+An L<IO::Async::PID> object invokes its event when a given child process
+exits. An L<IO::Async::Process> object can start a new child process running
+either a given block of code, or executing a given command, set up pipes on
+its filehandles, write to or read from these pipes, and invoke its event when
+the child process exits.
+
 =head2 Merge Points
 
 The L<IO::Async::MergePoint> object class allows for a program to wait on the
@@ -160,10 +167,9 @@ implementation exists for the specific OS it runs on.
 
 The L<IO::Async::Loop> object provides a number of methods to facilitate the
 running of child processes. C<spawn_child> is primarily a wrapper around the
-typical C<fork()>/C<exec()> style of starting child processes, C<open_child>
-builds on this to provide management of child process file handles and streams
-connected to them, and finally C<run_child> builds on that to provide a method
-similar to perl's C<readpipe()> (which is used to implement backticks C<``>).
+typical C<fork()>/C<exec()> style of starting child processes, and
+C<run_child> provide a method similar to perl's C<readpipe()> (which is used
+to implement backticks C<``>).
 
 =head2 Detached Code
 

@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.35';
+our $VERSION = '0.36';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -102,6 +102,10 @@ L<IO::Async::Signal> - event callback on receipt of a POSIX signal
 =item *
 
 L<IO::Async::PID> - event callback on exit of a child process
+
+=item *
+
+L<IO::Async::Process> - start and manage a child process
 
 =back
 

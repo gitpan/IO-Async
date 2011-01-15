@@ -12,12 +12,10 @@ SYNOPSIS
         service  => 12345,
         socktype => 'stream',
 
-        on_connected => sub {
-           my ( $socket ) = @_;
+        on_stream => sub {
+           my ( $stream ) = @_;
 
-           my $stream = IO::Async::Stream->new(
-              handle => $socket,
-
+           $stream->configure(
               on_read => sub {
                  my ( $self, $buffref, $closed ) = @_;
 
@@ -34,7 +32,8 @@ SYNOPSIS
            $loop->add( $stream );
         },
 
-        ...
+        on_resolve_error => sub { die "Cannot resolve - $_[-1]\n"; },
+        on_connect_error => sub { die "Cannot connect - $_[0] failed $_[-1]\n"; },
      );
 
      $loop->loop_forever();
@@ -109,6 +108,13 @@ DESCRIPTION
     objects watching the same signal can be used; they will all invoke in no
     particular order.
 
+  Processes Management
+    An IO::Async::PID object invokes its event when a given child process
+    exits. An IO::Async::Process object can start a new child process
+    running either a given block of code, or executing a given command, set
+    up pipes on its filehandles, write to or read from these pipes, and
+    invoke its event when the child process exits.
+
   Merge Points
     The IO::Async::MergePoint object class allows for a program to wait on
     the completion of multiple separate subtasks. It allows for each subtask
@@ -140,10 +146,8 @@ DESCRIPTION
     The IO::Async::Loop object provides a number of methods to facilitate
     the running of child processes. "spawn_child" is primarily a wrapper
     around the typical "fork()"/"exec()" style of starting child processes,
-    "open_child" builds on this to provide management of child process file
-    handles and streams connected to them, and finally "run_child" builds on
-    that to provide a method similar to perl's "readpipe()" (which is used
-    to implement backticks ``).
+    and "run_child" provide a method similar to perl's "readpipe()" (which
+    is used to implement backticks ``).
 
   Detached Code
     The "IO::Async" framework generally provides mechanisms for multiplexing
