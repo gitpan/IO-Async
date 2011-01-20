@@ -8,7 +8,7 @@ package IO::Async::ChildManager;
 use strict;
 use warnings;
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 # Not a notifier
 
@@ -57,7 +57,7 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
     stdout => {
        on_read => sub {
-          my ( $stream, $buffref, $closed ) = @_;
+          my ( $stream, $buffref, $eof ) = @_;
           if( $$buffref =~ s/^(.*)\n// ) {
              print "PING wrote: $1\n";
              return 1;
@@ -468,7 +468,7 @@ sub _spawn_in_parent
       read_handle => $readpipe,
 
       on_read => sub {
-         my ( $self, $buffref, $closed ) = @_;
+         my ( $self, $buffref, $eof ) = @_;
 
          if( !defined $dollarbang ) {
             if( length( $$buffref ) >= 2 * LENGTH_OF_I ) {
@@ -484,7 +484,7 @@ sub _spawn_in_parent
             }
          }
 
-         if( $closed ) {
+         if( $eof ) {
             $dollarbang = 0  if !defined $dollarbang;
             if( !defined $length_dollarat ) {
                $length_dollarat = 0;
@@ -642,49 +642,6 @@ sub _spawn_in_child
    syswrite( $writepipe, $writebuffer );
 
    return $exitvalue;
-}
-
-=head2 $pid = $loop->open_child( %params )
-
-This creates a new child process to run the given code block or command, and
-attaches filehandles to it that the parent will watch. This method is a light
-wrapper around constructing a new L<IO::Async::Process> object, provided
-largely for backward compatibility. New code ought to construct such an object
-directly, as it may provide more features than are available here.
-
-For more detail on this legacy interface, see the L<IO::Async::Loop>
-C<open_child> documentation directly.
-
-=cut
-
-sub open_child
-{
-   my $self = shift;
-
-   my $loop = $self->{loop};
-   return $loop->open_child( @_ );
-}
-
-=head2 $pid = $loop->run_child( %params )
-
-This creates a new child process to run the given code block or command,
-capturing its STDOUT and STDERR streams. When the process exits, a
-continuation is invoked being passed the exitcode, and content of the streams.
-This method is a light wrapper around constructing a new L<IO::Async::Process>
-object, provided largely for backward compatibility. New code ought to construct
-such an object directly, as it may provide more features than are available here.
-
-For more detail on this legacy interface, see the L<IO::Async::Loop>
-C<run_child> documentation directly.
-
-=cut
-
-sub run_child
-{
-   my $self = shift;
-
-   my $loop = $self->{loop};
-   return $loop->run_child( @_ );
 }
 
 # Keep perl happy; keep Britain tidy

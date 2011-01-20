@@ -77,9 +77,10 @@ t/30loop-fork.t
 t/31loop-spawnchild.t
 t/32loop-spawnchild-setup.t
 t/33process.t
-t/34loop-openchild.t
-t/35loop-runchild.t
-t/36loop-child-root.t
+t/34process-handles.t
+t/35loop-openchild.t
+t/36loop-runchild.t
+t/37loop-child-root.t
 t/40detachedcode-marshall.t
 t/41detachedcode-call.t
 t/50resolver.t

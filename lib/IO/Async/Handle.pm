@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 use Carp;
 
@@ -337,25 +337,57 @@ sub close
    return if $self->{handle_closing};
    $self->{handle_closing} = 1;
 
-   $self->maybe_invoke_event( on_closed => );
-
-   if( my $parent = $self->{parent} ) {
-      $parent->remove_child( $self );
-   }
-   elsif( my $loop = $self->get_loop ) {
-      $loop->remove( $self );
-   }
+   $self->want_readready( 0 );
+   $self->want_writeready( 0 );
 
    my $read_handle = delete $self->{read_handle};
    $read_handle->close if defined $read_handle;
 
    my $write_handle = delete $self->{write_handle};
-   $write_handle->close if defined $write_handle and ( not defined $read_handle or $write_handle != $read_handle );
+   $write_handle->close if defined $write_handle;
 
-   # Clear the want* states, so if we get a new handle and are re-opened,
-   # we'll rearm the underlying loop
-   undef $self->{want_readready};
-   undef $self->{want_writeready};
+   $self->maybe_invoke_event( on_closed => );
+   $self->_remove_from_outer;
+}
+
+=head2 $handle->close_read
+
+=head2 $handle->close_write
+
+Closes the underlying read or write handle, and deconfigures it from the
+object. Neither of these methods will invoke the C<on_closed> event, nor
+remove the object from the Loop.
+
+=cut
+
+sub close_read
+{
+   my $self = shift;
+
+   $self->want_readready( 0 );
+
+   my $read_handle = delete $self->{read_handle};
+   $read_handle->close if defined $read_handle;
+
+   if( !$self->{write_handle} ) {
+      $self->maybe_invoke_event( on_closed => );
+      $self->_remove_from_outer;
+   }
+}
+
+sub close_write
+{
+   my $self = shift;
+
+   $self->want_writeready( 0 );
+
+   my $write_handle = delete $self->{write_handle};
+   $write_handle->close if defined $write_handle;
+
+   if( !$self->{read_handle} ) {
+      $self->maybe_invoke_event( on_closed => );
+      $self->_remove_from_outer;
+   }
 }
 
 =head2 $handle = $handle->read_handle

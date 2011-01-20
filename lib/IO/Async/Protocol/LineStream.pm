@@ -8,7 +8,7 @@ package IO::Async::Protocol::LineStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 use base qw( IO::Async::Protocol::Stream );
 
@@ -106,7 +106,7 @@ sub configure
 sub on_read
 {
    my $self = shift;
-   my ( $buffref, $closed ) = @_;
+   my ( $buffref, $eof ) = @_;
 
    $$buffref =~ s/^(.*?)$self->{eol_pattern}// or return 0;
 

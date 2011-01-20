@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 use IO::Async::Handle;
 
@@ -37,7 +37,7 @@ C<IO::Async::Listener> - listen on network sockets for incoming connections
 
        $stream->configure(
           on_read => sub {
-             my ( $self, $buffref, $closed ) = @_;
+             my ( $self, $buffref, $eof ) = @_;
              $self->write( $$buffref );
              $$buffref = "";
              return 0;
@@ -296,7 +296,7 @@ is returned by the C<getaddrinfo> named resolver.
 
 Shortcut for passing a single address to listen on; it may be passed directly
 with this key, instead of in another array of its own. This should be in a
-format recognised by L<IO::Async::Loop>'s C<unpack_addrinfo> method. See also
+format recognised by L<IO::Async::Loop>'s C<extract_addrinfo> method. See also
 the C<EXAMPLES> section.
 
 =back
@@ -426,7 +426,7 @@ sub listen
       my ( $listenerr, $binderr, $sockopterr, $socketerr );
 
       foreach my $addr ( @$addrlist ) {
-         my ( $family, $socktype, $proto, $address ) = $loop->unpack_addrinfo( $addr );
+         my ( $family, $socktype, $proto, $address ) = $loop->extract_addrinfo( $addr );
 
          my $sock;
 
@@ -531,7 +531,7 @@ sockets.
 
        $stream->configure(
           on_read => sub {
-             my ( $self, $buffref, $closed ) = @_;
+             my ( $self, $buffref, $eof ) = @_;
              $self->write( $$buffref );
              $$buffref = "";
              return 0;
@@ -558,21 +558,18 @@ sockets.
 =head2 Passing Plain Socket Addresses
 
 The C<addr> or C<addrs> parameters should contain a definition of a plain
-socket address in a form that the L<IO::Async::Loop> C<unpack_addrinfo> method
-can use.
+socket address in a form that the L<IO::Async::Loop> C<extract_addrinfo>
+method can use.
 
 This example shows how to use the C<Socket> functions to construct one for
 TCP port 8001 on address 10.0.0.1:
-
- use Socket qw( pack_sockaddr_in inet_aton );
-
- ...
 
  $listener->listen(
     addr => {
        family   => "inet",
        socktype => "stream",
-       addr     => pack_sockaddr_in( 8001, inet_aton( "10.0.0.1" ) ),
+       port     => 8001,
+       ip       => "10.0.0.1",
     },
     ...
  );
@@ -580,15 +577,11 @@ TCP port 8001 on address 10.0.0.1:
 This example shows another way to listen on a UNIX socket, similar to the
 earlier example:
 
- use Socket qw( pack_sockaddr_un );
-
- ...
-
  $listener->listen(
     addr => {
        family   => "unix",
        socktype => "stream",
-       addr     => pack_sockaddr_un( "echo.sock" ),
+       path     => "echo.sock",
     },
     ...
  );

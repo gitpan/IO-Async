@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 use Carp;
 
@@ -191,7 +191,7 @@ For example, to expire an accepted connection after 30 seconds of inactivity:
        handle => $newclient,
 
        on_read => sub {
-          my ( $self, $buffref, $closed ) = @_;
+          my ( $self, $buffref, $eof ) = @_;
           $watchdog->reset;
 
           ...

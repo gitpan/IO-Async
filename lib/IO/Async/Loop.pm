@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -67,7 +67,7 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 
  $loop->add( IO::Async::Stream->new_for_stdin(
     on_read => sub {
-       my ( $self, $buffref, $closed ) = @_;
+       my ( $self, $buffref, $eof ) = @_;
 
        if( $$buffref =~ s/^(.*)\n// ) {
           print "You typed a line $1\n";
@@ -827,8 +827,8 @@ sub run_child
    my $on_finish = delete $params{on_finish};
    ref $on_finish or croak "Expected 'on_finish' to be a reference";
 
-   my $child_out;
-   my $child_err;
+   my $stdout;
+   my $stderr;
 
    my %subparams;
 
@@ -843,29 +843,21 @@ sub run_child
 
    croak "Unrecognised parameters " . join( ", ", keys %params ) if keys %params;
 
-   $self->open_child(
+   require IO::Async::Process;
+   my $process = IO::Async::Process->new(
       %subparams,
-      stdout => {
-         on_read => sub { 
-            my ( $stream, $buffref, $closed ) = @_;
-            $child_out = $$buffref if $closed;
-            return 0;
-         }
-      },
-
-      stderr => { 
-         on_read => sub {
-            my ( $stream, $buffref, $closed ) = @_;
-            $child_err = $$buffref if $closed;
-            return 0;
-         }
-      },
+      stdout => { into => \$stdout },
+      stderr => { into => \$stderr },
 
       on_finish => sub {
-         my ( $kid, $exitcode ) = @_;
-         $on_finish->( $kid, $exitcode, $child_out, $child_err );
+         my ( $process, $exitcode ) = @_;
+         $on_finish->( $process->pid, $exitcode, $stdout, $stderr );
       },
    );
+
+   $self->add( $process );
+
+   return $process->pid;
 }
 
 =head2 $loop->resolver
@@ -1098,7 +1090,7 @@ C<SOCK_DGRAM> pairs in the C<AF_INET> family even if the underlying platform's
 C<socketpair(2)> does not, by connecting two normal sockets together.
 
 C<$family> and C<$socktype> may also be given symbolically similar to the
-behaviour of C<unpack_addrinfo>.
+behaviour of C<extract_addrinfo>.
 
 =cut
 
@@ -1246,7 +1238,7 @@ sub signame2num
    return $sig_num{$signame};
 }
 
-=head2 ( $family, $socktype, $protocol, $addr ) = $loop->unpack_addrinfo( $ai )
+=head2 ( $family, $socktype, $protocol, $addr ) = $loop->extract_addrinfo( $ai )
 
 Given an ARRAY or HASH reference value containing an addrinfo, returns a
 family, socktype and protocol argument suitable for a C<socket> call and an
@@ -1270,8 +1262,14 @@ the appropriate C<AF_*> constant.
 The socktype may also be given as a symbolic string; C<stream>, C<dgram> or
 C<raw>; this will be converted to the appropriate C<SOCK_*> constant.
 
-Note that the addr field must be a packed socket address, such as returned
-by C<pack_sockaddr_in> or C<pack_sockaddr_un>.
+Note that the C<addr> field, if provided, must be a packed socket address,
+such as returned by C<pack_sockaddr_in> or C<pack_sockaddr_un>.
+
+If the HASH form is used, rather than passing a packed socket address in the
+C<addr> field, certain other hash keys may be used instead for convenience on
+certain named families.
+
+=over 4
 
 =cut
 
@@ -1282,7 +1280,7 @@ use constant {
    ADDRINFO_ADDR => 3,
 };
 
-sub unpack_addrinfo
+sub extract_addrinfo
 {
    my $self = shift;
    my ( $ai, $argname ) = @_;
@@ -1301,6 +1299,14 @@ sub unpack_addrinfo
       croak "Expected '$argname' to be an ARRAY or HASH reference";
    }
 
+   if( defined $ai[ADDRINFO_FAMILY] and !defined $ai[ADDRINFO_ADDR] and ref $ai eq "HASH" ) {
+      my $family = $ai[ADDRINFO_FAMILY];
+      my $method = "_extract_addrinfo_$family";
+      my $code = $self->can( $method ) or croak "Cannot determine addr for extract_addrinfo on family='$family'";
+
+      $ai[ADDRINFO_ADDR] = $code->( $self, $ai );
+   }
+
    $ai[ADDRINFO_FAMILY]   = _getfamilybyname( $ai[ADDRINFO_FAMILY] );
    $ai[ADDRINFO_SOCKTYPE] = _getsocktypebyname( $ai[ADDRINFO_SOCKTYPE] );
 
@@ -1310,6 +1316,75 @@ sub unpack_addrinfo
 
    return @ai;
 }
+
+=item family => 'inet'
+
+Will pack an IP address and port number from keys called C<ip> and C<port>.
+
+=cut
+
+sub _extract_addrinfo_inet
+{
+   my $self = shift;
+   my ( $ai ) = @_;
+
+   defined( my $port = $ai->{port} ) or croak "Expected 'port' for extract_addrinfo on family='inet'";
+   defined( my $ip   = $ai->{ip}   ) or croak "Expected 'ip' for extract_addrinfo on family='inet'";
+
+   return Socket::pack_sockaddr_in( $port, Socket::inet_aton( $ip ) );
+}
+
+sub _extract_addrinfo_inet6
+{
+   my $self = shift;
+   my ( $ai ) = @_;
+
+   defined( my $port = $ai->{port} ) or croak "Expected 'port' for extract_addrinfo on family='inet6'";
+   defined( my $ip   = $ai->{ip}   ) or croak "Expected 'ip' for extract_addrinfo on family='inet6'";
+
+   my $scopeid  = $ai->{scopeid}  || 0;
+   my $flowinfo = $ai->{flowinfo} || 0;
+
+   # We're not quite sure where pack_sockaddr_in6 might come from. Perl's
+   # Socket module added it in 5.13.8 but before then Socket6 is our best bet.
+   # Socket6 isn't core though.
+   if( defined &Socket::pack_sockaddr_in6 ) {
+      return Socket::pack_sockaddr_in6( $port, Socket::inet_pton( Socket::AF_INET6(), $ip ), $scopeid, $flowinfo );
+   }
+   elsif( defined &Socket6::pack_sockaddr_in6_all ) {
+      return Socket6::pack_sockaddr_in6_all( $port, $flowinfo, Socket6::inet_pton( Socket6::AF_INET6(), $ip ), $scopeid );
+   }
+   else {
+      croak "Cannot pack_sockaddr_in6";
+   }
+}
+
+=item family => 'unix'
+
+Will pack a UNIX socket path from a key called C<path>.
+
+=cut
+
+sub _extract_addrinfo_unix
+{
+   my $self = shift;
+   my ( $ai ) = @_;
+
+   defined( my $path = $ai->{path} ) or croak "Expected 'path' for extract_addrinfo on family='unix'";
+
+   return Socket::pack_sockaddr_un( $path );
+}
+
+=pod
+
+=back
+
+This method used to be called C<unpack_addrinfo>. A backward compatibility
+wrapper is provided temporarily, but will be removed in a later version.
+
+=cut
+
+sub unpack_addrinfo { goto &extract_addrinfo }
 
 =head2 $time = $loop->time
 

@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.36';
+our $VERSION = '0.37';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -38,7 +38,7 @@ Usually not directly used by a program, but one valid use case may be:
     IO::Async::Stream->new_for_stdin(
        on_read => sub {
           my $self = shift;
-          my ( $buffref, $closed ) = @_;
+          my ( $buffref, $eof ) = @_;
           $$buffref =~ s/^(.*)\n// or return 0;
           print "You said $1\n";
           return 1;
@@ -314,6 +314,18 @@ sub remove_child
 
    if( defined( my $loop = $self->{loop} ) ) {
       $loop->remove( $child );
+   }
+}
+
+sub _remove_from_outer
+{
+   my $self = shift;
+
+   if( my $parent = $self->parent ) {
+      $parent->remove_child( $self );
+   }
+   elsif( my $loop = $self->get_loop ) {
+      $loop->remove( $self );
    }
 }
 
