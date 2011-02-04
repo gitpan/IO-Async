@@ -8,7 +8,7 @@ package IO::Async::ChildManager;
 use strict;
 use warnings;
 
-our $VERSION = '0.37';
+our $VERSION = '0.38';
 
 # Not a notifier
 
@@ -18,7 +18,6 @@ use IO::Async::MergePoint;
 use Carp;
 use Scalar::Util qw( weaken );
 
-use Fcntl qw( F_GETFL F_SETFL FD_CLOEXEC );
 use POSIX qw( _exit sysconf _SC_OPEN_MAX dup2 nice );
 
 use constant LENGTH_OF_I => length( pack( "I", 0 ) );
@@ -140,21 +139,6 @@ object.
 
 =cut
 
-=head2 $pid = $loop->detach_child( %params )
-
-This method creates a new child process to run a given code block. It is a
-legacy wrapper around C<IO::Async::Loop> C<fork>.
-
-=cut
-
-sub detach_child
-{
-   my $self = shift;
-
-   my $loop = $self->{loop};
-   return $loop->fork( @_ );
-}
-
 =head2 $pid = $loop->spawn_child( %params )
 
 This method creates a new child process to run a given code block or command.
@@ -237,12 +221,15 @@ sub spawn_child
 
    my $loop = $self->{loop};
 
-   my ( $readpipe, $writepipe ) = $loop->pipepair() or croak "Cannot pipe() - $!";
+   my ( $readpipe, $writepipe );
 
-   my $flags = fcntl( $writepipe, F_GETFL, 0 ) or 
-      croak "Cannot fcntl(F_GETFL) - $!";
-   fcntl( $writepipe, F_SETFL, $flags | FD_CLOEXEC ) or
-      croak "Cannot fcntl(F_SETFL) - $!";
+   {
+      # Ensure it's FD_CLOEXEC - this is a bit more portable than manually
+      # fiddling with F_GETFL and F_SETFL (e.g. MSWin32)
+      local $^F = -1;
+
+      ( $readpipe, $writepipe ) = $loop->pipepair() or croak "Cannot pipe() - $!";
+   }
 
    if( defined $command ) {
       my @command = ref( $command ) ? @$command : ( $command );

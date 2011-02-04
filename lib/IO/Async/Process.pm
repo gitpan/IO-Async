@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.37';
+our $VERSION = '0.38';
 
 use Carp;
 
@@ -68,7 +68,9 @@ references in parameters:
 
 =head2 on_finish $exitcode
 
-Invoked when the process exits by normal means.
+Invoked after the process has exited by normal means (i.e. an C<exit(2)>
+syscall from a process, or C<return>ing from the code block), and has closed
+all its file descriptors.
 
 =head2 on_exception $exception, $errno, $exitcode
 
@@ -263,12 +265,10 @@ sub configure
    $self->SUPER::configure( %params );
 }
 
-use constant {
-   # These are from the perspective of the parent
-   FD_VIA_PIPEREAD  => 1,
-   FD_VIA_PIPEWRITE => 2,
-   FD_VIA_PIPERDWR  => 3, # Only valid for stdio pseudo-fd
-};
+# These are from the perspective of the parent
+use constant FD_VIA_PIPEREAD  => 1;
+use constant FD_VIA_PIPEWRITE => 2;
+use constant FD_VIA_PIPERDWR  => 3; # Only valid for stdio pseudo-fd
 
 my %via_names = (
    pipe_read  => FD_VIA_PIPEREAD,

@@ -149,7 +149,7 @@ DESCRIPTION
     and "run_child" provide a method similar to perl's "readpipe()" (which
     is used to implement backticks ``).
 
-  Detached Code
+  Asynchronous Functions
     The "IO::Async" framework generally provides mechanisms for multiplexing
     IO tasks between different handles, so there aren't many occasions when
     it is necessary to run code in another thread or process. Two cases
@@ -161,10 +161,10 @@ DESCRIPTION
     *   An OS or library-level function needs to be called, that will block,
         and no asynchronous version is supplied.
 
-    For these cases, an instance of IO::Async::DetachedCode can be used
-    around a code block, to execute it in a detached child process. The code
-    in the sub-process runs isolated from the main program, communicating
-    only by function call arguments and return values.
+    For these cases, an instance of IO::Async::Function can be used around a
+    code block, to execute it in a worker child process or set of processes.
+    The code in the sub-process runs isolated from the main program,
+    communicating only by function call arguments and return values.
 
   Networking
     The IO::Async::Loop provides several methods for performing
@@ -195,9 +195,9 @@ TODO
         classes. For example, Win32 would probably need an
         extensively-different "ChildManager", or OSes may have specific ways
         to perform asynchronous name resolution operations better than the
-        generic "DetachedCode" approach. This should be easier to implement
-        now that the IO::Async::Loop magic constructor looks for OS-specific
-        subclasses first.
+        generic "IO::Async::Function" approach. This should be easier to
+        implement now that the IO::Async::Loop magic constructor looks for
+        OS-specific subclasses first.
 
     *   A consideration of whether it is useful and possible to provide
         integration with AnyEvent.

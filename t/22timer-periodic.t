@@ -5,7 +5,7 @@ use strict;
 use IO::Async::Test;
 
 use Test::More tests => 31;
-use Test::Exception;
+use Test::Fatal;
 use Test::Refcount;
 
 use Time::HiRes qw( time );
@@ -30,7 +30,10 @@ sub time_about
    my $took = (time - $now) / AUT;
 
    cmp_ok( $took, '>', $lower, "$name took at least $lower" );
-   cmp_ok( $took, '<', $upper, "$name took no more than $upper" );
+   cmp_ok( $took, '<', $upper * 3, "$name took no more than $upper" );
+   if( $took > $upper and $took <= $upper * 3 ) {
+      diag( "$name took longer than $upper - this may just be an indication of a busy testing machine rather than a bug" );
+   }
 }
 
 my $loop = IO::Async::Loop::Poll->new();
@@ -95,8 +98,8 @@ $timer->start;
 
 time_about( sub { wait_for { $tick == 3 } }, 1, 'Reconfigured timer interval works' );
 
-dies_ok( sub { $timer->configure( interval => 5 ); },
-         'Configure a running timer fails' );
+ok( exception { $timer->configure( interval => 5 ); },
+    'Configure a running timer fails' );
 
 $loop->remove( $timer );
 

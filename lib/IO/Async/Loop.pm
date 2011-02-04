@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.37';
+our $VERSION = '0.38';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -119,7 +119,7 @@ sub __new
 
    my $self = bless {
       notifiers    => {}, # {nkey} = notifier
-      iowatches    => {}, # {fd} = [ onread, onwrite ] - TODO
+      iowatches    => {}, # {fd} = [ $on_read_ready, $on_write_ready, $on_hangup ]
       sigattaches  => {}, # {sig} => \@callbacks
       sigproxy     => undef,
       childmanager => undef,
@@ -366,6 +366,19 @@ sub _remove_noparentcheck
    $self->_remove_noparentcheck( $_ ) for $notifier->children;
 
    return;
+}
+
+=head2 @notifiers = $loop->notifiers
+
+Returns a list of all the notifier objects currently stored in the Loop.
+
+=cut
+
+sub notifiers
+{
+   my $self = shift;
+   # Sort so the order remains stable under additions/removals
+   return map { $self->{notifiers}->{$_} } sort keys %{ $self->{notifiers} };
 }
 
 ###################
@@ -616,6 +629,10 @@ sub detach_child
 This method creates a new detached code object. It is equivalent to calling
 the C<IO::Async::DetachedCode> constructor, passing in the given loop. See the
 documentation on this class for more information.
+
+Note that this behaviour is now deprecated, in favour of constructing a
+L<IO::Async::Function> object instead, and adding it to the loop. This object
+is more flexible and more powerful than the legacy C<DetachedCode>.
 
 =cut
 
@@ -870,7 +887,13 @@ resolution operations by the C<resolve>, C<connect> and C<listen> methods.
 sub resolver
 {
    my $self = shift;
-   return $self->{resolver} ||= $self->__new_feature( "IO::Async::Resolver" );
+
+   return $self->{resolver} ||= do {
+      require IO::Async::Resolver;
+      my $resolver = IO::Async::Resolver->new;
+      $self->add( $resolver );
+      $resolver;
+   }
 }
 
 =head2 $loop->resolve( %params )
@@ -1273,12 +1296,10 @@ certain named families.
 
 =cut
 
-use constant {
-   ADDRINFO_FAMILY => 0,
-   ADDRINFO_SOCKTYPE => 1,
-   ADDRINFO_PROTOCOL => 2,
-   ADDRINFO_ADDR => 3,
-};
+use constant ADDRINFO_FAMILY   => 0;
+use constant ADDRINFO_SOCKTYPE => 1;
+use constant ADDRINFO_PROTOCOL => 2;
+use constant ADDRINFO_ADDR     => 3;
 
 sub extract_addrinfo
 {
@@ -1333,6 +1354,17 @@ sub _extract_addrinfo_inet
 
    return Socket::pack_sockaddr_in( $port, Socket::inet_aton( $ip ) );
 }
+
+=item family => 'inet6'
+
+Will pack an IP address and port number from keys called C<ip> and C<port>.
+Optionally will also include values from C<scopeid> and C<flowinfo> keys if
+provided.
+
+This will only work if a C<pack_sockaddr_in6()> function can be found, either
+in C<Socket> or C<Socket6>.
+
+=cut
 
 sub _extract_addrinfo_inet6
 {
@@ -1552,6 +1584,11 @@ sub __watch_io
    if( $params{on_write_ready} ) {
       $watch->[2] = $params{on_write_ready};
    }
+
+   if( $params{on_hangup} ) {
+      $self->_CAN_ON_HANGUP or croak "Cannot watch_io for 'on_hangup' in ".ref($self);
+      $watch->[3] = $params{on_hangup};
+   }
 }
 
 =head2 $loop->unwatch_io( %params )
@@ -1601,7 +1638,12 @@ sub __unwatch_io
       undef $watch->[2];
    }
 
-   if( not $watch->[1] and not $watch->[2] ) {
+   if( $params{on_hangup} ) {
+      $self->_CAN_ON_HANGUP or croak "Cannot watch_io for 'on_hangup' in ".ref($self);
+      undef $watch->[3];
+   }
+
+   if( not $watch->[1] and not $watch->[2] and not $watch->[3] ) {
       delete $self->{iowatches}->{$handle->fileno};
    }
 }

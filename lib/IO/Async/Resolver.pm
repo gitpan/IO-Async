@@ -7,16 +7,17 @@ package IO::Async::Resolver;
 
 use strict;
 use warnings;
+use base qw( IO::Async::Function );
 
-our $VERSION = '0.37';
+our $VERSION = '0.38';
 
 BEGIN {
    # We're going to implement methods called getaddrinfo and getnameinfo. We
    # therefore need import them with different names prefixed with underscores
 
    my @constants = qw(
-      AI_NUMERICHOST
-      NI_NUMERICHOST NI_NUMERICSERV
+      AI_NUMERICHOST AI_PASSIVE
+      NI_NUMERICHOST NI_NUMERICSERV NI_DGRAM
       EAI_NONAME
    );
 
@@ -101,7 +102,7 @@ functions asynchronously. It provides a number of named resolvers, each one
 providing an asynchronous wrapper around a single resolver function.
 
 Because the system may not provide asynchronous versions of its resolver
-functions, this class is implemented using a C<IO::Async::DetachedCode> object
+functions, this class is implemented using a C<IO::Async::Function> object
 that wraps the normal (blocking) functions. In this case, name resolutions
 will be performed asynchronously from the rest of the program, but will likely
 be done by a single background worker process, so will be processed in the
@@ -111,47 +112,31 @@ used; see the C<workers> argument to the constructor.
 
 =cut
 
-# Internal constructor
-sub new
+sub _init
 {
-   my $class = shift;
-   my ( %params ) = @_;
+   my $self = shift;
+   my ( $params ) = @_;
+   $self->SUPER::_init( @_ );
 
-   my $loop = delete $params{loop} or croak "Expected a 'loop'";
+   $params->{code} = sub {
+      my ( $type, $timeout, @data ) = @_;
 
-   my $workers = delete $params{workers};
+      if( my $code = $METHODS{$type} ) {
+         local $SIG{ALRM} = sub { die "Timed out\n" };
 
-   my $code = $loop->detach_code(
-      code => sub {
-         my ( $type, $timeout, @data ) = @_;
+         alarm( $timeout );
+         my @ret = eval { $code->( @data ) };
+         alarm( 0 );
 
-         if( my $code = $METHODS{$type} ) {
-            local $SIG{ALRM} = sub { die "Timed out\n" };
-
-            alarm( $timeout );
-            my @ret = eval { $code->( @data ) };
-            alarm( 0 );
-
-            die $@ if $@;
-            return @ret;
-         }
-         else {
-            die "Unrecognised resolver request '$type'";
-         }
-      },
-
-      marshaller => 'storable',
-
-      workers => $workers,
-   );
+         die $@ if $@;
+         return @ret;
+      }
+      else {
+         die "Unrecognised resolver request '$type'";
+      }
+   };
 
    $started = 1;
-
-   my $self = bless {
-      code => $code,
-   }, $class;
-
-   return $self;
 }
 
 =head1 METHODS
@@ -216,8 +201,7 @@ sub resolve
 
    my $timeout = $args{timeout} || 10;
 
-   my $code = $self->{code};
-   $code->call(
+   $self->call(
       args      => [ $type, $timeout, @{$args{data}} ],
       on_return => $on_resolved,
       on_error  => $on_error,
@@ -249,6 +233,12 @@ Hint values used to filter the results.
 
 Flags to control the C<getaddrinfo(3)> function. See the C<AI_*> constants in
 L<Socket::GetAddrInfo> for more detail.
+
+=item passive => BOOL
+
+If true, sets the C<AI_PASSIVE> flag. This is provided as a convenience to
+avoid the caller from having to import the C<AI_PASSIVE> constant from
+whichever of C<Socket> or C<Socket::GetAddrInfo> it happens to be provided by.
 
 =item timeout => NUMBER
 
@@ -290,6 +280,8 @@ sub getaddrinfo
    my $host    = $args{host}    || "";
    my $service = $args{service} || "";
    my $flags   = $args{flags}   || 0;
+
+   $flags |= AI_PASSIVE if $args{passive};
 
    $args{family}   = _getfamilybyname( $args{family} )     if defined $args{family};
    $args{socktype} = _getsocktypebyname( $args{socktype} ) if defined $args{socktype};
@@ -347,6 +339,18 @@ The packed socket address to look up.
 Flags to control the C<getnameinfo(3)> function. See the C<NI_*> constants in
 L<Socket::GetAddrInfo> for more detail.
 
+=item numerichost => BOOL
+
+=item numericserv => BOOL
+
+=item dgram => BOOL
+
+If true, set the C<NI_NUMERICHOST>, C<NI_NUMERICSERV> or C<NI_DGRAM> flags.
+
+=item numeric => BOOL
+
+If true, sets both C<NI_NUMERICHOST> and C<NI_NUMERICSERV> flags.
+
 =item timeout => NUMBER
 
 Time in seconds after which to abort the lookup with a C<Timed out> exception
@@ -380,6 +384,12 @@ sub getnameinfo
    ref $on_resolved or croak "Expected 'on_resolved' to be a reference";
 
    my $flags = $args{flags} || 0;
+
+   $flags |= NI_NUMERICHOST if $args{numerichost};
+   $flags |= NI_NUMERICSERV if $args{numericserv};
+   $flags |= NI_DGRAM       if $args{dgram};
+
+   $flags |= NI_NUMERICHOST|NI_NUMERICSERV if $args{numeric};
 
    if( $flags & (NI_NUMERICHOST|NI_NUMERICSERV) ) {
       # This is a numeric-only lookup that can be done synchronously
@@ -431,13 +441,6 @@ be passed to the C<on_error> continuation. If it returns normally, the list of
 values it returns will be passed to C<on_resolved>.
 
 =back
-
-The C<IO::Async::DetachedCode> object underlying this class uses the
-C<storable> argument marshalling type, which means complex data structures
-can be passed by reference. Because the resolver will run in a separate
-process, the function should make sure to return all of the result in the
-returned list; i.e. modifications to call arguments will not be propagated
-back to the caller.
 
 =cut
 

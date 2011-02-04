@@ -9,8 +9,7 @@ lib/IO/Async.pm
 lib/IO/Async/ChildManager.pm
 lib/IO/Async/Connector.pm
 lib/IO/Async/DetachedCode.pm
-lib/IO/Async/DetachedCode/FlatMarshaller.pm
-lib/IO/Async/DetachedCode/StorableMarshaller.pm
+lib/IO/Async/Function.pm
 lib/IO/Async/Handle.pm
 lib/IO/Async/Internals/SignalProxy.pm
 lib/IO/Async/Internals/TimeQueue.pm
@@ -81,8 +80,8 @@ t/34process-handles.t
 t/35loop-openchild.t
 t/36loop-runchild.t
 t/37loop-child-root.t
-t/40detachedcode-marshall.t
 t/41detachedcode-call.t
+t/41function.t
 t/50resolver.t
 t/51loop-connect.t
 t/52loop-listen.t

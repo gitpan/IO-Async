@@ -2,8 +2,8 @@
 
 use strict;
 
-use Test::More tests => 32;
-use Test::Exception;
+use Test::More tests => 35;
+use Test::Fatal;
 use Test::Refcount;
 
 use IO::Async::Loop;
@@ -12,6 +12,10 @@ use IO::Async::Notifier;
 my $loop = IO::Async::Loop->new;
 
 is_refcount( $loop, 2, '$loop has refcount 2 initially' );
+
+is_deeply( [ $loop->notifiers ],
+           [],
+           '$loop->notifiers empty' );
 
 my $notifier = IO::Async::Notifier->new( );
 
@@ -29,17 +33,25 @@ is_refcount( $notifier, 2, '$notifier has refcount 2 after adding to Loop' );
 
 is( $notifier->get_loop, $loop, 'get_loop $loop' );
 
-dies_ok( sub { $loop->add( $notifier ) }, 'adding again produces error' );
+is_deeply( [ $loop->notifiers ],
+           [ $notifier ],
+           '$loop->notifiers contains new Notifier' );
+
+ok( exception { $loop->add( $notifier ) }, 'adding again produces error' );
 
 $loop->remove( $notifier );
 
 is( $notifier->get_loop, undef, '$notifier->get_loop is undef' );
 
-lives_ok( sub { $notifier->configure; },
-          '$notifier->configure no params succeeds' );
+is_deeply( [ $loop->notifiers ],
+           [],
+           '$loop->notifiers empty once more' );
 
-dies_ok( sub { $notifier->configure( oranges => 1 ) },
-         '$notifier->configure an unrecognised parameter fails' );
+ok( !exception { $notifier->configure; },
+    '$notifier->configure no params succeeds' );
+
+ok( exception { $notifier->configure( oranges => 1 ) },
+    '$notifier->configure an unrecognised parameter fails' );
 
 my @args;
 my $mref = $notifier->_capture_weakself( sub { @args = @_ } );
@@ -91,8 +103,8 @@ is_deeply( \@subargs, [ $notifier, 456 ], '@subargs after invoking $mref on name
 
 undef @subargs;
 
-dies_ok( sub { $notifier->_capture_weakself( 'cannotdo' ) },
-         '$notifier->_capture_weakself on unknown method name fails' );
+ok( exception { $notifier->_capture_weakself( 'cannotdo' ) },
+    '$notifier->_capture_weakself on unknown method name fails' );
 
 $notifier->invoke_event( 'frobnicate', 78 );
 is_deeply( \@subargs, [ $notifier, 78 ], '@subargs after ->invoke_event' );

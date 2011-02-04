@@ -4,8 +4,8 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 42;
-use Test::Exception;
+use Test::More tests => 33;
+use Test::Fatal;
 use Test::Refcount;
 
 use File::Temp qw( tempdir );
@@ -35,20 +35,20 @@ my @workers = $code->workers;
 is( scalar @workers, 1, '@workers has 1 value' );
 ok( kill( 0, $workers[0] ), '$workers[0] is a PID' );
 
-dies_ok( sub { $code->call( args => [], on_result => "hello" ) },
-         'call with on_result not CODE ref fails' );
+ok( exception { $code->call( args => [], on_result => "hello" ) },
+    'call with on_result not CODE ref fails' );
 
-dies_ok( sub { $code->call( args => [], on_return => sub {} ) },
-         'call missing on_error ref fails' );
+ok( exception { $code->call( args => [], on_return => sub {} ) },
+    'call missing on_error ref fails' );
 
-dies_ok( sub { $code->call( args => [], on_error => sub {} ) },
-         'call missing on_return ref fails' );
+ok( exception { $code->call( args => [], on_error => sub {} ) },
+    'call missing on_return ref fails' );
 
-dies_ok( sub { $code->call( args => [], on_return => "hello", on_error => sub {} ) },
-         'call with on_return not a CODE ref fails' );
+ok( exception { $code->call( args => [], on_return => "hello", on_error => sub {} ) },
+    'call with on_return not a CODE ref fails' );
 
-dies_ok( sub { $code->call( args => [], on_return => sub {}, on_error => "hello" ) },
-         'call with on_error not a CODE ref fails' );
+ok( exception { $code->call( args => [], on_return => sub {}, on_error => "hello" ) },
+    'call with on_error not a CODE ref fails' );
 
 my $result;
 
@@ -88,100 +88,6 @@ wait_for { @result == 2 };
 is_deeply( \@result, [ 3, 7 ], '@result after both calls return' );
 
 is( scalar $code->workers, 1, '$code->workers is still 1 after 2 calls return' );
-
-$code = IO::Async::DetachedCode->new(
-   loop => $loop,
-   code => sub { return $_[0] + $_[1] },
-   stream => "socket",
-);
-
-is( scalar $code->workers, 1, '$code->workers is 1 for socket stream' );
-
-$code->call(
-   args => [ 5, 6 ],
-   on_return => sub { $result = shift },
-   on_error  => sub { die "Test failed early - @_" },
-);
-
-undef $result;
-wait_for { defined $result };
-
-is( $result, 11, '$result of code over socket' );
-
-$code = IO::Async::DetachedCode->new(
-   loop => $loop,
-   code => sub { return $_[0] + $_[1] },
-   stream => "pipe",
-);
-
-$code->call(
-   args => [ 5, 6 ],
-   on_return => sub { $result = shift },
-   on_error  => sub { die "Test failed early - @_" },
-);
-
-is( scalar $code->workers, 1, '$code->workers is 1 for pipe stream' );
-
-undef $result;
-wait_for { defined $result };
-
-is( $result, 11, '$result of code over pipe' );
-
-dies_ok( sub { IO::Async::DetachedCode->new(
-                  loop => $loop,
-                  code => sub { return $_[0] },
-                  stream => "oranges",
-               ); },
-         'Unrecognised stream type fails' );
-
-$code = IO::Async::DetachedCode->new(
-   loop => $loop,
-   code => sub { return $_[0] + $_[1] },
-   marshaller => "flat",
-);
-
-$code->call(
-   args => [ 7, 8 ],
-   on_return => sub { $result = shift },
-   on_error  => sub { die "Test failed early - @_" },
-);
-
-undef $result;
-wait_for { defined $result };
-
-is( $result, 15, '$result of code over flat' );
-
-dies_ok( sub { $code->call( 
-                  args => [ \'a' ], 
-                  on_return => sub {},
-                  on_error  => sub {},
-               );
-            },
-         'call with reference arguments using flat marshaller dies' );
-
-dies_ok( sub { IO::Async::DetachedCode->new(
-                  loop => $loop,
-                  code => sub { return $_[0] },
-                  marshaller => "grapefruit",
-               ); },
-         'Unrecognised marshaller type fails' );
-
-$code = IO::Async::DetachedCode->new(
-   loop => $loop,
-   code => sub { return ref( $_[0] ), \$_[1] },
-   marshaller => "storable",
-);
-
-$code->call(
-   args => [ \'a', 'b' ],
-   on_return => sub { @result = @_ },
-   on_error  => sub { die "Test failed early - @_" },
-);
-
-undef @result;
-wait_for { scalar @result };
-
-is_deeply( \@result, [ 'SCALAR', \'b' ], '@result after call to code over storable marshaller' );
 
 my $err;
 

@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.37';
+our $VERSION = '0.38';
 
 use Carp;
 
@@ -121,9 +121,7 @@ sub _add_to_loop
    my $self = shift;
    my ( $loop ) = @_;
 
-   $self->{cb} ||= $self->{on_receipt} ?
-      $self->_capture_weakself( $self->{on_receipt} ) :
-      $self->_capture_weakself( 'on_receipt' );
+   $self->{cb} ||= $self->make_event_cb( 'on_receipt' );
 
    $self->{id} = $loop->attach_signal( $self->{name}, $self->{cb} );
 }
