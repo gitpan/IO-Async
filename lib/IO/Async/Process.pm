@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.38';
+our $VERSION = '0.39';
 
 use Carp;
 
@@ -292,7 +292,12 @@ sub configure_fd
 
    require IO::Async::Stream;
 
-   my $handle = $self->{fd_handle}{$fd} ||= IO::Async::Stream->new;
+   my $handle = $self->{fd_handle}{$fd} ||= IO::Async::Stream->new(
+      notifier_name => $fd eq "0"  ? "stdin" :
+                       $fd eq "1"  ? "stdout" :
+                       $fd eq "2"  ? "stderr" :
+                       $fd eq "io" ? "stdio" : "fd$fd",
+   );
    my $via = $self->{fd_via}{$fd};
 
    my ( $wants_read, $wants_write );
@@ -436,7 +441,9 @@ sub _add_to_loop
 
    push @setup, $self->_prepare_fds( $loop );
 
-   my $mergepoint = $self->{mergepoint};
+   # Once we start the Process we'll close the MergePoint. Its on_finished
+   # coderef will strongly reference $self. So we need to break this cycle.
+   my $mergepoint = delete $self->{mergepoint};
    
    $mergepoint->needs( "exit" );
 
@@ -462,8 +469,7 @@ sub _add_to_loop
    my $is_code = defined $self->{code};
 
    $mergepoint->close(
-      on_finished => $self->_capture_weakself( sub {
-         my $self = shift;
+      on_finished => sub {
          my %items = @_;
 
          $self->{exitcode} = $exitcode;
@@ -482,8 +488,20 @@ sub _add_to_loop
          }
 
          $self->_remove_from_outer;
-      } ),
+      },
    );
+}
+
+sub notifier_name
+{
+   my $self = shift;
+   if( length( my $name = $self->SUPER::notifier_name ) ) {
+      return $name;
+   }
+
+   return "nopid" unless my $pid = $self->pid;
+   return "[$pid]" unless $self->is_running;
+   return "$pid";
 }
 
 =head1 METHODS

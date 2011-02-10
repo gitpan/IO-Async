@@ -24,7 +24,7 @@ use Fcntl qw( SEEK_SET );
 use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.38';
+our $VERSION = '0.39';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -249,7 +249,7 @@ sub run_tests_io
    }
 
    SKIP: {
-      $loop->can( "_CAN_ON_HANGUP" ) or skip "Loop cannot watch_io for on_hangup", 3;
+      $loop->_CAN_ON_HANGUP or skip "Loop cannot watch_io for on_hangup", 3;
 
       my ( $S1, $S2 ) = $loop->socketpair() or die "Cannot socketpair - $!";
       $_->blocking( 0 ) for $S1, $S2;

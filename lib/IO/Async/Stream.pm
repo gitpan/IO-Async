@@ -8,11 +8,11 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.38';
+our $VERSION = '0.39';
 
 use base qw( IO::Async::Handle );
 
-use POSIX qw( EAGAIN EWOULDBLOCK EINTR );
+use POSIX qw( EAGAIN EWOULDBLOCK EINTR EPIPE );
 
 use Carp;
 
@@ -138,6 +138,13 @@ Optional. Invoked when the read handle indicates an end-of-file (EOF)
 condition. If there is any data in the buffer still to be processed, the
 C<on_read> event will be invoked first, before this one.
 
+=head2 on_write_eof
+
+Optional. Invoked when the write handle indicates an end-of-file (EOF)
+condition. Note that this condition can only be detected after a C<write>
+syscall returns the C<EPIPE> error. If there is no data pending to be written
+then it will not be detected yet.
+
 =head2 on_read_error $errno
 
 Optional. Invoked when the C<sysread()> method on the read handle fails.
@@ -261,7 +268,7 @@ sub configure
    my $self = shift;
    my %params = @_;
 
-   for (qw( on_read on_outgoing_empty on_read_eof on_read_error
+   for (qw( on_read on_outgoing_empty on_read_eof on_write_eof on_read_error
             on_write_error autoflush read_len read_all write_len write_all )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
    }
@@ -335,14 +342,11 @@ sub _flush_one
 
       return 0 if _nonfatal_error( $errno );
 
+      $self->maybe_invoke_event( on_write_eof => ) if $errno == EPIPE;
+
       $self->maybe_invoke_event( on_write_error => $errno )
          or $self->close_now;
 
-      return 0;
-   }
-
-   if( $len == 0 ) {
-      $self->close_now;
       return 0;
    }
 
@@ -496,8 +500,10 @@ sub write
          $elem->[WQ_DATA] = $data;
       }
 
-      $elem->[WQ_ON_FLUSH] = $params{on_flush};
+      $elem->[WQ_ON_FLUSH] = delete $params{on_flush};
    }
+
+   keys %params and croak "Unrecognised keys for ->write - " . join( ", ", keys %params );
 
    return unless $handle;
 
@@ -539,10 +545,13 @@ sub on_read_ready
       $self->{readbuff} .= $data if !$eof;
 
       while(1) {
-         my $on_read = $self->{current_on_read}
-                        || $self->can_event( "on_read" );
-
-         my $ret = $on_read->( $self, \$self->{readbuff}, $eof );
+         my $ret;
+         if( my $on_read = $self->{current_on_read} ) {
+            $ret = $on_read->( $self, \$self->{readbuff}, $eof );
+         }
+         else {
+            $ret = $self->invoke_event( on_read => \$self->{readbuff}, $eof );
+         }
 
          my $again;
 

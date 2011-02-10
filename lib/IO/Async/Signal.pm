@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.38';
+our $VERSION = '0.39';
 
 use Carp;
 
@@ -133,6 +133,16 @@ sub _remove_from_loop
 
    $loop->detach_signal( $self->{name}, $self->{id} );
    undef $self->{id};
+}
+
+sub notifier_name
+{
+   my $self = shift;
+   if( length( my $name = $self->SUPER::notifier_name ) ) {
+      return $name;
+   }
+
+   return $self->{name};
 }
 
 # Keep perl happy; keep Britain tidy

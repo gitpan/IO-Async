@@ -8,9 +8,8 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.38';
+our $VERSION = '0.39';
 use constant API_VERSION => '0.33';
-use constant _CAN_ON_HANGUP => 1;
 
 use base qw( IO::Async::Loop );
 
@@ -24,6 +23,12 @@ use POSIX qw( EINTR );
 # properly clean up all the references to the handles. If the version we're
 # using is in this range, we have to clean it up ourselves.
 use constant IO_POLL_REMOVE_BUG => ( $IO::Poll::VERSION == '0.05' );
+
+# Only Linux, or FreeBSD 8.0 and above, are known always to be able to report
+# EOF conditions on filehandles using POLLHUP
+use constant _CAN_ON_HANGUP =>
+   ( $^O eq "linux" ) ||
+   ( $^O eq "freebsd" and do { no warnings 'numeric'; (POSIX::uname)[2] >= 8.0 } );
 
 =head1 NAME
 
