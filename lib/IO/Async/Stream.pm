@@ -8,7 +8,7 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use base qw( IO::Async::Handle );
 
@@ -45,10 +45,8 @@ filehandle
     on_read => sub {
        my ( $self, $buffref, $eof ) = @_;
 
-       if( $$buffref =~ s/^(.*\n)// ) {
+       while( $$buffref =~ s/^(.*\n)// ) {
           print "Received a line $1";
-
-          return 1;
        }
 
        if( $eof ) {
@@ -176,6 +174,8 @@ sub _init
 
    $self->{read_len}  = $READLEN;
    $self->{write_len} = $WRITELEN;
+
+   $self->{close_on_read_eof} = 1;
 }
 
 =head1 PARAMETERS
@@ -244,6 +244,13 @@ Optional. Analogous to the C<read_all> option, but for writing. When
 C<autoflush> is enabled, this option only affects deferred writing if the
 initial attempt failed due to buffer space.
 
+=item close_on_read_eof => BOOL
+
+Optional. Usually true, but if set to a false value then the stream will not
+be C<close>d when an EOF condition occurs on read. This is normally not useful
+as at that point the underlying stream filehandle is no longer useable, but it
+may be useful for reading regular files, or interacting with TTY devices.
+
 =back
 
 If a read handle is given, it is required that either an C<on_read> callback
@@ -269,7 +276,8 @@ sub configure
    my %params = @_;
 
    for (qw( on_read on_outgoing_empty on_read_eof on_write_eof on_read_error
-            on_write_error autoflush read_len read_all write_len write_all )) {
+            on_write_error autoflush read_len read_all write_len write_all
+            close_on_read_eof )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
    }
 
@@ -572,7 +580,7 @@ sub on_read_ready
 
       if( $eof ) {
          $self->maybe_invoke_event( on_read_eof => );
-         $self->close_now;
+         $self->close_now if $self->{close_on_read_eof};
          return;
       }
 
@@ -616,11 +624,6 @@ sub new_for_stdout { shift->new( write_handle => \*STDOUT, @_ ) }
 
 sub new_for_stdio { shift->new( read_handle => \*STDIN, write_handle => \*STDOUT, @_ ) }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 EXAMPLES
 
 =head2 A line-based C<on_read()> method
@@ -633,9 +636,8 @@ prints them to the program's C<STDOUT> stream.
     my $self = shift;
     my ( $buffref, $eof ) = @_;
 
-    if( $$buffref =~ s/^(.*\n)// ) {
+    while( $$buffref =~ s/^(.*\n)// ) {
        print "Received a line: $1";
-       return 1;
     }
 
     return 0;
@@ -714,3 +716,7 @@ L<IO::Handle> - Supply object methods for I/O handles
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

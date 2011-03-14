@@ -8,7 +8,7 @@ package IO::Async::MergePoint;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use Carp;
 
@@ -70,11 +70,10 @@ contain the results of that step. The C<on_finished> callback is passed a hash
 
 =cut
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

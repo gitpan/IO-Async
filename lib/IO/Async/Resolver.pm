@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Function );
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 BEGIN {
    # We're going to implement methods called getaddrinfo and getnameinfo. We
@@ -110,6 +110,11 @@ order they were requested; a single slow lookup will hold up the queue of
 other requests behind it. To mitigate this, multiple worker processes can be
 used; see the C<workers> argument to the constructor.
 
+The C<idle_timeout> parameter for the underlying C<IO::Async::Function> object
+is set to a default of 30 seconds, and C<min_workers> is set to 0. This
+ensures that there are no spare processes sitting idle during the common case
+of no outstanding requests.
+
 =cut
 
 sub _init
@@ -135,6 +140,9 @@ sub _init
          die "Unrecognised resolver request '$type'";
       }
    };
+
+   $params->{idle_timeout} = 30;
+   $params->{min_workers}  = 0;
 
    $started = 1;
 }
@@ -579,11 +587,6 @@ register_resolver getnameinfo => sub {
    return [ $host, $service ];
 };
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 EXAMPLES
 
 The following somewhat contrieved example shows how to implement a new
@@ -624,3 +627,7 @@ Look into (system-specific) ways of accessing asynchronous resolvers directly
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

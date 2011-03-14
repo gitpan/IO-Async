@@ -8,7 +8,7 @@ package IO::Async::ChildManager;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 # Not a notifier
 
@@ -57,9 +57,8 @@ This object is used indirectly via an C<IO::Async::Loop>:
     stdout => {
        on_read => sub {
           my ( $stream, $buffref, $eof ) = @_;
-          if( $$buffref =~ s/^(.*)\n// ) {
+          while( $$buffref =~ s/^(.*)\n// ) {
              print "PING wrote: $1\n";
-             return 1;
           }
           return 0;
        },
@@ -342,7 +341,8 @@ C<IO::Async> will B<NOT> check before detaching the child process whether
 this is the case.
 
 If setting both the primary GID and the supplementary groups list, it is
-suggested to set the primary GID first.
+suggested to set the primary GID first. Moreover, some operating systems may
+require that the supplementary groups list contains the primary GID.
 
 =back
 
@@ -613,8 +613,13 @@ sub _spawn_in_child
             }
             elsif( $key eq "setgroups" ) {
                my $gid = $)+0;
-               my $groups = join( " ", @$value );
-               $) = "$gid $groups" or die "Cannot setgroups('$groups') - $!";
+               # Put the primary GID as the first group in the supplementary
+               # list, because some operating systems ignore this position,
+               # expecting it to indeed be the primary GID.
+               # See
+               #   https://rt.cpan.org/Ticket/Display.html?id=65127
+               my $groups = join( " ", grep { $_ != $gid } @$value );
+               $) = "$gid $gid $groups" or die "Cannot setgroups('$groups') - $!";
             }
          }
       }
@@ -631,11 +636,10 @@ sub _spawn_in_child
    return $exitvalue;
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

@@ -9,11 +9,9 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use Carp;
-use Scalar::Util qw( weaken );
-use Time::HiRes qw( time );
 
 =head1 NAME
 
@@ -118,12 +116,16 @@ sub start
 {
    my $self = shift;
 
-   my $now = time;
-   if( !defined $self->{next_time} ) {
-      $self->{next_time} = time + $self->{interval};
-   }
-   else {
-      $self->{next_time} += $self->{interval};
+   # Only actually define a time if we've got a loop; otherwise it'll just
+   # become start-pending. We'll calculate it properly when it gets added to
+   # the Loop
+   if( my $loop = $self->get_loop ) {
+      if( !defined $self->{next_time} ) {
+         $self->{next_time} = $loop->time + $self->{interval};
+      }
+      else {
+         $self->{next_time} += $self->{interval};
+      }
    }
 
    $self->SUPER::start;
@@ -140,22 +142,15 @@ sub stop
 sub _make_cb
 {
    my $self = shift;
-   weaken( my $weakself = $self );
 
-   if( $self->{on_tick} ) {
-      return sub {
-         undef $weakself->{id};
-         $weakself->start;
-         $weakself->{on_tick}->( $weakself );
-      };
-   }
-   else {
-      return sub {
-         undef $weakself->{id};
-         $weakself->start;
-         $weakself->on_tick;
-      };
-   }
+   return $self->_capture_weakself( sub {
+      my $self = shift;
+
+      undef $self->{id};
+      $self->start;
+
+      $self->invoke_event( on_tick => );
+   } );
 }
 
 sub _make_enqueueargs
@@ -165,11 +160,10 @@ sub _make_enqueueargs
    return time => $self->{next_time};
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

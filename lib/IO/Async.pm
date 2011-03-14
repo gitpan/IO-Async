@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 =head1 NAME
 
@@ -37,11 +37,11 @@ C<IO::Async> - Asynchronous event-driven programming
           on_read => sub {
              my ( $self, $buffref, $eof ) = @_;
 
-             return 0 unless( $buffref =~ s/^(.*\n)// );
+             while( $buffref =~ s/^(.*\n)// ) {
+                print "Received a line $1";
+             }
 
-             print "Received a line $1";
-
-             return 1;
+             return 0;
           }
        );
 
@@ -267,5 +267,4 @@ Paul Evans <leonerd@leonerd.org.uk>
 
 =cut
 
-# Keep perl happy; keep Britain tidy
-1;
+0x55AA;

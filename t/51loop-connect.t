@@ -17,8 +17,12 @@ my $loop = IO::Async::Loop::Poll->new();
 testing_loop( $loop );
 
 # Try connect()ing to a socket we've just created
-my $listensock = IO::Socket::INET->new( LocalAddr => 'localhost', Listen => 1 ) or
-   die "Cannot create listensock - $!";
+my $listensock = IO::Socket::INET->new(
+   Type      => SOCK_STREAM,
+   LocalAddr => 'localhost',
+   LocalPort => 0,
+   Listen => 1
+) or die "Cannot create listensock - $!";
 
 my $addr = $listensock->sockname;
 
@@ -63,7 +67,7 @@ undef $sock; # This too
 
 SKIP: {
    # Some OSes can't bind() locally to other addresses on 127./8
-   skip "Cannot bind to 127.0.0.2", 1 unless IO::Socket::INET->new( LocalHost => "127.0.0.2" );
+   skip "Cannot bind to 127.0.0.2", 1 unless eval { IO::Socket::INET->new( LocalHost => "127.0.0.2", LocalPort => 0 ) };
 
    $loop->connect(
       local_host => "127.0.0.2",

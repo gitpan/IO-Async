@@ -8,7 +8,7 @@ package IO::Async::Protocol::LineStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use base qw( IO::Async::Protocol::Stream );
 
@@ -108,6 +108,7 @@ sub on_read
    my $self = shift;
    my ( $buffref, $eof ) = @_;
 
+   # Easiest to run each event individually, in case it returns a CODE ref
    $$buffref =~ s/^(.*?)$self->{eol_pattern}// or return 0;
 
    return $self->invoke_event( on_read_line => $1 ) || 1;
@@ -132,11 +133,10 @@ sub write_line
    $self->write( "$line$self->{eol}", @args );
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

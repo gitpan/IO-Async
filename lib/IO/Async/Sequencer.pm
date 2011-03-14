@@ -8,7 +8,7 @@ package IO::Async::Sequencer;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use base qw( IO::Async::Stream );
 
@@ -469,11 +469,6 @@ sub respond
    $self->_flush_server_queue;
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 EXAMPLES
 
 =head2 A simple line-based server
@@ -490,8 +485,9 @@ with CRLF-delimited lines.
  sub on_read {
     my ( $self, $buffref, $eof ) = @_;
 
-    $buffref =~ s/^(.*)$CRLF// and
-       $self->incoming_request( $1 ), return 1;
+    while( $buffref =~ s/^(.*)$CRLF// ) {
+       $self->incoming_request( $1 );
+    }
 
     return 0;
  }
@@ -583,3 +579,7 @@ were sent.
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

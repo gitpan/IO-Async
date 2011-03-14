@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -72,9 +72,8 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
     on_read => sub {
        my ( $self, $buffref, $eof ) = @_;
 
-       if( $$buffref =~ s/^(.*)\n// ) {
+       while( $$buffref =~ s/^(.*)\n// ) {
           print "You typed a line $1\n";
-          return 1;
        }
 
        return 0;
@@ -986,12 +985,31 @@ Listener object directly.
 An alternative which gives more control over the listener, is to create the
 C<IO::Async::Listener> object directly and add it explicitly to the Loop.
 
+This method accepts an C<extensions> parameter; see the C<EXTENSIONS> section
+below.
+
 =cut
 
 sub listen
 {
    my $self = shift;
    my ( %params ) = @_;
+
+   my $extensions;
+   if( $extensions = delete $params{extensions} and @$extensions ) {
+      my ( $ext, @others ) = @$extensions;
+
+      my $method = "${ext}_listen";
+      # TODO: Try to 'require IO::Async::$ext'
+
+      $self->can( $method ) or croak "Extension method '$method' is not available";
+
+      $self->$method(
+         %params,
+         ( @others ? ( extensions => \@others ) : () ),
+      );
+      return;
+   }
 
    require IO::Async::Listener;
 
@@ -1029,8 +1047,19 @@ sub listen
             $on_listen->( $listener->read_handle ) if $on_listen;
             $on_notifier->( $listener ) if $on_notifier;
          },
+         on_listen_error => sub {
+            $self->remove( $listener );
+            $params{on_listen_error}->( @_ ) if $params{on_listen_error};
+         },
+         on_resolve_error => sub {
+            $self->remove( $listener );
+            $params{on_resolve_error}->( @_ ) if $params{on_resolve_error};
+         },
       );
    }
+
+   # Unit testing needs this
+   return $listener;
 }
 
 =head1 OS ABSTRACTIONS
@@ -2104,11 +2133,6 @@ sub _manage_queues
    return $count;
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 EXTENSIONS
 
 An Extension is a Perl module that provides extra methods in the
@@ -2121,6 +2145,8 @@ will immediately call a method whose name is that of the base method, prefixed
 by the first extension name in the list, separated by C<_>. If the
 C<extensions> list contains more extension names, it will be passed the
 remaining ones in another C<extensions> parameter.
+
+For example,
 
  $loop->connect(
     extensions => [qw( FOO BAR )],
@@ -2143,9 +2169,14 @@ also use it.
 The following methods take an C<extensions> parameter:
 
  $loop->connect
+ $loop->listen
 
 =cut
 
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

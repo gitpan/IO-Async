@@ -8,7 +8,7 @@ package IO::Async::Loop::Select;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 use constant API_VERSION => '0.33';
 
 use base qw( IO::Async::Loop );
@@ -229,11 +229,6 @@ sub unwatch_io
    $_ =~s/\0+\z// for $self->{rvec}, $self->{wvec};
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 SEE ALSO
 
 =over 4
@@ -247,3 +242,7 @@ L<IO::Select> - OO interface to select system call
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

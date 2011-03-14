@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use Carp;
 
@@ -513,11 +513,6 @@ sub want_writeready
    }
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 SEE ALSO
 
 =over 4
@@ -531,3 +526,7 @@ L<IO::Handle> - Supply object methods for I/O handles
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

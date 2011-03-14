@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 17;
+use Test::More tests => 19;
 
 use IO::Socket::INET;
 
@@ -124,7 +124,12 @@ is_deeply( [ unpack_sockaddr_in $newclient->peername ],
 my $badport;
 my $failure;
 foreach my $port ( 22, 80 ) {
-   IO::Socket::INET->new( Type => SOCK_STREAM, LocalPort => $port, Listen => 1, ReuseAddr => 1 ) and next;
+   IO::Socket::INET->new(
+      Type      => SOCK_STREAM,
+      LocalHost => "localhost",
+      LocalPort => $port,
+      Listen    => 1,
+   ) and next;
       
    $badport = $port;
    $failure = $!;
@@ -132,16 +137,18 @@ foreach my $port ( 22, 80 ) {
 }
 
 SKIP: {
-   skip "No bind()-failing ports found", 1 unless defined $badport;
+   skip "No bind()-failing ports found", 6 unless defined $badport;
 
    my $failop;
    my $failerr;
 
    my @error;
 
-   $loop->listen(
+   # Undocumented API, returning the Listener object
+   my $listener = $loop->listen(
       family   => "inet",
       socktype => "stream",
+      host     => "localhost",
       service  => $badport,
 
       on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
@@ -161,4 +168,7 @@ SKIP: {
 
    is( $error[0], "bind", '$error[0] is bind' );
    is( "$error[1]", $failure, "\$error[1] is '$failure'" );
+
+   ok( defined $listener, '$listener defined after bind failure' );
+   ok( !$listener->get_loop, '$listener not in loop after bind failure' );
 }

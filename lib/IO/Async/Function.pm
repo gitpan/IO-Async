@@ -8,7 +8,7 @@ package IO::Async::Function;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
@@ -421,6 +421,8 @@ sub _new_worker
 
    $self->add_child( $worker );
 
+   $worker->stdin->configure( autoflush => 1 );
+
    return $self->{workers}{$worker->pid} = $worker;
 }
 
@@ -601,11 +603,6 @@ sub call
    $worker->{busy} = 1;
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 NOTES
 
 For the record, 123454321 is 11111 * 11111, a square number, and therefore not
@@ -614,3 +611,7 @@ prime.
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

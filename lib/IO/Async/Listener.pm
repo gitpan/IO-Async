@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use IO::Async::Handle;
 
@@ -112,6 +112,11 @@ that a Stream object is required as the transport for a Protocol object.
 Similar to C<on_stream>, but constructs an instance of L<IO::Async::Socket>.
 This is most useful for C<SOCK_DGRAM> or C<SOCK_RAW> sockets.
 
+=head2 on_accept_error $socket, $errno
+
+Optional. Invoked if the C<accept> syscall indicates an error (other than
+C<EAGAIN>). If not provided, failures of C<accept> will simply be ignored.
+
 =cut
 
 =head1 PARAMETERS
@@ -185,7 +190,8 @@ sub on_read_ready
 {
    my $self = shift;
 
-   my $handle = $self->read_handle->accept;
+   my $socket = $self->read_handle;
+   my $handle = $socket->accept;
 
    if( defined $handle ) {
       $handle->blocking( 0 );
@@ -208,13 +214,8 @@ sub on_read_ready
          die "ARG! Missing on_accept,on_stream,on_socket!";
       }
    }
-   elsif( $! == EAGAIN ) {
-      # No client ready after all. Perhaps we're sharing the listen
-      # socket with other processes? Anyway; not fatal, just ignore it
-   }
-   else {
-      # TODO: make a callback
-      die "Cannot accept - $!";
+   elsif( $! != EAGAIN ) {
+      $self->maybe_invoke_event( on_accept_error => $socket, $! );
    }
 }
 
@@ -338,6 +339,13 @@ invoked in the same way as the C<on_error> continuation for the C<resolve>
 method.
 
 =back
+
+It is necessary to pass the C<socktype> hint to the resolver when resolving
+the host/service names into an address, as some OS's C<getaddrinfo> functions
+require this hint. A warning is emitted if neither C<socktype> nor C<protocol>
+hint is defined when performing a C<getaddrinfo> lookup. To avoid this warning
+while still specifying no particular C<socktype> hint (perhaps to invoke some
+OS-specific behaviour), pass C<0> as the C<socktype> value.
 
 In either case, the following keys are also taken:
 
@@ -482,6 +490,9 @@ sub listen
       my %gai_hints;
       exists $params{$_} and $gai_hints{$_} = $params{$_} for qw( family socktype protocol flags );
 
+      defined $gai_hints{socktype} or defined $gai_hints{protocol} or
+         carp "Attempting to ->listen without either 'socktype' or 'protocol' hint is not portable";
+
       $loop->resolver->getaddrinfo(
          host    => $host,
          service => $service,
@@ -503,11 +514,6 @@ sub listen
       croak "Expected either 'service' or 'addrs' or 'addr' arguments";
    }
 }
-
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
 
 =head1 EXAMPLES
 
@@ -587,3 +593,7 @@ earlier example:
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

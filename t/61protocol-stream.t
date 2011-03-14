@@ -33,10 +33,8 @@ my $streamproto = IO::Async::Protocol::Stream->new(
       my $self = shift;
       my ( $buffref, $eof ) = @_;
 
-      return 0 unless( $$buffref =~ s/^(.*\n)// );
-
-      push @lines, $1;
-      return 1;
+      push @lines, $1 while $$buffref =~ s/^(.*\n)//;
+      return 0;
    },
 );
 
@@ -64,10 +62,8 @@ $streamproto->configure(
       my $self = shift;
       my ( $buffref, $eof ) = @_;
 
-      return 0 unless( $$buffref =~ s/^(.*\n)// );
-
-      push @new_lines, $1;
-      return 1;
+      push @new_lines, $1 while $$buffref =~ s/^(.*\n)//;
+      return 0;
    },
 );
 
@@ -170,6 +166,7 @@ is( $streamproto->transport->read_handle, $S1, 'Stream object has correct handle
 my $serversock = IO::Socket::INET->new(
    Type      => SOCK_STREAM,
    LocalHost => "localhost",
+   LocalPort => 0,
    Listen    => 1,
 ) or die "Cannot create server socket - $!";
 
@@ -221,8 +218,6 @@ sub on_read
    my $self = shift;
    my ( $buffref, $eof ) = @_;
 
-   return 0 unless $$buffref =~ s/^(.*\n)//;
-
-   push @sub_lines, $1;
-   return 1;
+   push @sub_lines, $1 while $$buffref =~ s/^(.*\n)//;
+   return 0;
 }

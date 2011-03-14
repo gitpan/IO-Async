@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 
 use Carp;
 
@@ -38,9 +38,11 @@ C<IO::Async::Process> - start and manage a child process
     stdout => {
        on_read => sub {
           my ( $stream, $buffref ) = @_;
-          $$buffref =~ s/^(.*)\n// or return 0;
-
-          print "Rot13 of 'hello world' is '$1'\n";
+          while( $$buffref =~ s/^(.*)\n// ) {
+             print "Rot13 of 'hello world' is '$1'\n";
+          }
+          
+          return 0;
        },
     },
     
@@ -644,11 +646,10 @@ sub stdout { shift->fd( 1 ) }
 sub stderr { shift->fd( 2 ) }
 sub stdio  { shift->fd( 'io' ) }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;

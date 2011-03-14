@@ -8,7 +8,7 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.39';
+our $VERSION = '0.40';
 use constant API_VERSION => '0.33';
 
 use base qw( IO::Async::Loop );
@@ -257,11 +257,10 @@ sub unwatch_io
    $poll->mask( $handle, $mask ) if $mask != $curmask;
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;
