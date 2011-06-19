@@ -9,9 +9,11 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 use Carp;
+
+use IO::Handle; # give methods to bare IO handles
 
 =head1 NAME
 
@@ -167,6 +169,13 @@ sub configure
 
          unless( $self->can_event( 'on_read_ready' ) ) {
             croak 'Expected either a on_read_ready callback or an ->on_read_ready method';
+         }
+
+         my @layers = PerlIO::get_layers( $read_handle );
+         if( grep m/^encoding\(/, @layers or grep m/^utf8$/, @layers ) {
+            # Only warn for now, because if it's UTF-8 by default but only
+            # passes ASCII then all will be well
+            carp "Constructing a ".ref($self)." with an encoding-enabled handle may not read correctly";
          }
       }
 

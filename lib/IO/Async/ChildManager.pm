@@ -8,12 +8,11 @@ package IO::Async::ChildManager;
 use strict;
 use warnings;
 
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 # Not a notifier
 
 use IO::Async::Stream;
-use IO::Async::MergePoint;
 
 use Carp;
 use Scalar::Util qw( weaken );

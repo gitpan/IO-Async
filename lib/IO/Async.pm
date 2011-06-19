@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 =head1 NAME
 
@@ -134,13 +134,6 @@ exits. An L<IO::Async::Process> object can start a new child process running
 either a given block of code, or executing a given command, set up pipes on
 its filehandles, write to or read from these pipes, and invoke its event when
 the child process exits.
-
-=head2 Merge Points
-
-The L<IO::Async::MergePoint> object class allows for a program to wait on the
-completion of multiple separate subtasks. It allows for each subtask to return
-some data, which will be collected and given to the callback provided to the
-merge point, which is called when every subtask has completed.
 
 =head2 Loops
 

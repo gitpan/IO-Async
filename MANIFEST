@@ -40,6 +40,7 @@ lib/IO/Async/Timer/Periodic.pm
 LICENSE
 Makefile.PL
 MANIFEST			This list of files
+META.json
 META.yml
 README
 t/00use.t
@@ -67,6 +68,7 @@ t/20handle.t
 t/21stream-1read.t
 t/21stream-2write.t
 t/21stream-3split.t
+t/21stream-4encoding.t
 t/22timer-absolute.t
 t/22timer-countdown.t
 t/22timer-periodic.t

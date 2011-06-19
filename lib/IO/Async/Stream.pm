@@ -8,13 +8,15 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.40';
+our $VERSION = '0.41';
 
 use base qw( IO::Async::Handle );
 
 use POSIX qw( EAGAIN EWOULDBLOCK EINTR EPIPE );
 
 use Carp;
+
+use Encode 2.11 qw( find_encoding STOP_AT_PARTIAL );
 
 # Tuneable from outside
 # Not yet documented
@@ -251,6 +253,27 @@ be C<close>d when an EOF condition occurs on read. This is normally not useful
 as at that point the underlying stream filehandle is no longer useable, but it
 may be useful for reading regular files, or interacting with TTY devices.
 
+=item encoding => STRING
+
+If supplied, sets the name of encoding of the underlying stream. If an
+encoding is set, then the C<print> method will expect to receive Unicode
+strings and encodes them into bytes, and incoming bytes will be decoded into
+Unicode strings for the C<on_read> event.
+
+If an encoding is not supplied then C<print> and C<on_read> will work in byte
+strings.
+
+I<IMPORTANT NOTE:> in order to handle reads of UTF-8 content or other
+multibyte encodings, the code implementing the C<on_read> event uses a feature
+of L<Encode>; the C<STOP_AT_PARTIAL> flag. While this flag has existed for a
+while and is used by the C<:encoding> PerlIO layer itself for similar
+purposes, the flag is not officially documented by the C<Encode> module. In
+principle this undocumented feature could be subject to change, in practice I
+believe it to be reasonably stable.
+
+This note applies only to the C<on_read> event; data written using the
+C<write> method does not rely on any undocumented features of C<Encode>.
+
 =back
 
 If a read handle is given, it is required that either an C<on_read> callback
@@ -279,6 +302,13 @@ sub configure
             on_write_error autoflush read_len read_all write_len write_all
             close_on_read_eof )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
+   }
+
+   if( exists $params{encoding} ) {
+      my $encoding = delete $params{encoding};
+      my $obj = find_encoding( $encoding );
+      defined $obj or croak "Cannot handle an encoding of '$encoding'";
+      $self->{encoding} = $obj;
    }
 
    $self->SUPER::configure( %params );
@@ -331,7 +361,7 @@ sub _flush_one
 
    my $head = $self->{writequeue}[WQ_DATA];
 
-   if( !length $head->[WQ_DATA] ) {
+   if( !defined $head->[WQ_DATA] ) {
       my $gensub = $head->[WQ_GENSUB] or die "Internal consistency problem - empty writequeue item without a gensub\n";
       $head->[WQ_DATA] = $gensub->( $self );
 
@@ -360,9 +390,14 @@ sub _flush_one
 
    substr( $head->[WQ_DATA], 0, $len ) = "";
 
-   if( !length $head->[WQ_DATA] and !$head->[WQ_GENSUB] ) {
-      $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
-      shift @{ $self->{writequeue} };
+   if( !length $head->[WQ_DATA] ) {
+      if( $head->[WQ_GENSUB] ) {
+         undef $head->[WQ_DATA]; # We'll get some more next time around
+      }
+      else {
+         $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
+         shift @{ $self->{writequeue} };
+      }
    }
 
    return 1;
@@ -471,6 +506,11 @@ If the object is not yet a member of a loop and doesn't yet have a
 C<write_handle>, then calls to the C<write> method will simply queue the data
 and return. It will be flushed when the object is added to the loop.
 
+If C<$data> is a defined but empty string, the write is still queued, and the
+C<on_flush> continuation will be invoked, if supplied. This can be used to
+obtain a marker, to invoke some code once the output queue has been flushed up
+to this point.
+
 =cut
 
 sub write
@@ -485,6 +525,10 @@ sub write
    my $handle = $self->write_handle;
 
    croak "Cannot write data to a Stream with no write_handle" if !$handle and $self->get_loop;
+
+   if( my $encoding = $self->{encoding} ) {
+      $data = $encoding->encode( $data );
+   }
 
    # Combine short writes we can
    my $tail = @{ $self->{writequeue} } ? $self->{writequeue}[-1] : undef;
@@ -501,7 +545,6 @@ sub write
       push @{ $self->{writequeue} }, my $elem = [];
 
       if( ref $data eq "CODE" ) {
-         $elem->[WQ_DATA] = "";
          $elem->[WQ_GENSUB] = $data;
       }
       else {
@@ -549,6 +592,12 @@ sub on_read_ready
       }
 
       my $eof = ( $len == 0 );
+
+      if( my $encoding = $self->{encoding} ) {
+         my $bytes = defined $self->{bytes_remaining} ? $self->{bytes_remaining} . $data : $data;
+         $data = $encoding->decode( $bytes, STOP_AT_PARTIAL );
+         $self->{bytes_remaining} = $bytes;
+      }
 
       $self->{readbuff} .= $data if !$eof;
 
