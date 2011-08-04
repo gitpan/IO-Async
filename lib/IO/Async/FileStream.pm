@@ -8,7 +8,7 @@ package IO::Async::FileStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use base qw( IO::Async::Stream );
 
@@ -26,7 +26,7 @@ C<IO::Async::FileStream> - read the tail of a file
  use IO::Async::FileStream;
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  open my $logh, "<", "var/logs/daemon.log" or
     die "Cannot open logfile - $!";
@@ -217,6 +217,7 @@ sub on_tick
 
    $self->{last_size} = $size;
 
+   $self->debug_printf( "read_more" );
    $self->read_more;
 }
 
@@ -231,7 +232,7 @@ sub read_more
    $self->{last_pos} = sysseek( $self->read_handle, 0, SEEK_CUR ); # == systell
 
    if( $self->{last_pos} < $self->{last_size} ) {
-      $self->get_loop->later( sub { $self->read_more } );
+      $self->loop->later( sub { $self->read_more } );
    }
 }
 

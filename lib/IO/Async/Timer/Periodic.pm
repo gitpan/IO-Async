@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 
@@ -22,7 +22,7 @@ C<IO::Async::Timer::Periodic> - event callback at regular intervals
  use IO::Async::Timer::Periodic;
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  my $timer = IO::Async::Timer::Periodic->new(
     interval => 60,
@@ -149,7 +149,7 @@ sub start
    # Only actually define a time if we've got a loop; otherwise it'll just
    # become start-pending. We'll calculate it properly when it gets added to
    # the Loop
-   if( my $loop = $self->get_loop ) {
+   if( my $loop = $self->loop ) {
       if( !defined $self->{next_time} ) {
          $self->{next_time} = $loop->time + $self->_next_interval;
       }

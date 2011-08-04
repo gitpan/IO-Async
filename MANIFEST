@@ -49,6 +49,7 @@ t/02loop-magic.t
 t/03loop-osabstract.t
 t/04notifier.t
 t/05notifier-child.t
+t/06notifier-mixin.t
 t/10loop-poll-io.t
 t/10loop-select-io.t
 t/11loop-poll-timer.t

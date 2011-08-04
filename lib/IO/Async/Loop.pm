@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -27,6 +27,7 @@ BEGIN {
 use IO::Socket;
 use Time::HiRes qw(); # empty import
 use POSIX qw( _exit WNOHANG );
+use Scalar::Util qw( refaddr );
 
 # Try to load IO::Socket::INET6 but don't worry if we don't have it
 eval { require IO::Socket::INET6 };
@@ -61,7 +62,7 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
 
  use IO::Async::Loop;
 
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  $loop->add( IO::Async::Timer::Countdown->new(
     delay => 10,
@@ -80,7 +81,7 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
     },
  ) );
 
- $loop->loop_forever();
+ $loop->loop_forever;
 
 =head1 DESCRIPTION
 
@@ -140,7 +141,7 @@ sub __new
 
 =head1 MAGIC CONSTRUCTOR
 
-=head2 $loop = IO::Async::Loop->new()
+=head2 $loop = IO::Async::Loop->new
 
 This function attempts to find a good subclass to use, then calls its
 constructor. It works by making a list of likely candidate classes, then
@@ -279,17 +280,6 @@ The following methods manage the collection of C<IO::Async::Notifier> objects.
 
 =cut
 
-# Internal method
-sub _nkey
-{
-   my $self = shift;
-   my ( $notifier ) = @_;
-
-   # References in integer context yield their address. We'll use that as the
-   # notifier key
-   return $notifier + 0;
-}
-
 =head2 $loop->add( $notifier )
 
 This method adds another notifier object to the stored collection. The object
@@ -310,7 +300,7 @@ sub add
       croak "Cannot add a child notifier directly - add its parent";
    }
 
-   if( defined $notifier->get_loop ) {
+   if( defined $notifier->loop ) {
       croak "Cannot add a notifier that is already a member of a loop";
    }
 
@@ -322,7 +312,7 @@ sub _add_noparentcheck
    my $self = shift;
    my ( $notifier ) = @_;
 
-   my $nkey = $self->_nkey( $notifier );
+   my $nkey = refaddr $notifier;
 
    $self->{notifiers}->{$nkey} = $notifier;
 
@@ -357,7 +347,7 @@ sub _remove_noparentcheck
    my $self = shift;
    my ( $notifier ) = @_;
 
-   my $nkey = $self->_nkey( $notifier );
+   my $nkey = refaddr $notifier;
 
    exists $self->{notifiers}->{$nkey} or croak "Notifier does not exist in collection";
 
@@ -410,10 +400,10 @@ sub loop_once
    my $self = shift;
    my ( $timeout ) = @_;
 
-   croak "Expected that $self overrides ->loop_once()";
+   croak "Expected that $self overrides ->loop_once";
 }
 
-=head2 $loop->loop_forever()
+=head2 $loop->loop_forever
 
 This method repeatedly calls the C<loop_once> method with no timeout (i.e.
 allowing the underlying mechanism to block indefinitely), until the
@@ -432,7 +422,7 @@ sub loop_forever
    }
 }
 
-=head2 $loop->loop_stop()
+=head2 $loop->loop_stop
 
 This method cancels a running C<loop_forever>, and makes that method return.
 It would be called from an event callback triggered by an event that occured
@@ -483,7 +473,7 @@ signal can be attached to multiple times; its callback functions will all be
 invoked, in no particular order.
 
 The returned C<$id> value can be used to identify the signal handler in case
-it needs to be removed by the C<detach_signal()> method. Note that this value
+it needs to be removed by the C<detach_signal> method. Note that this value
 may be an object reference, so if it is stored, it should be released after it
 cancelled, so the object itself can be freed.
 
@@ -602,27 +592,17 @@ sub later
    return $self->watch_idle( when => 'later', code => $code );
 }
 
-# The following two methods are no longer needed; included just to keep legacy code happy
-sub enable_childmanager
-{
-   carp "Loop->enable_childmanager is no longer needed; do not call it.";
-}
-
-sub disable_childmanager
-{
-   carp "Loop->disable_childmanager is no longer needed; do not call it.";
-}
-
 =head2 $pid = $loop->detach_child( %params )
 
 This method creates a new child process to run a given code block. It is a
-legacy wrapper around the C<fork()> method.
+legacy wrapper around the C<fork> method.
 
 =cut
 
 sub detach_child
 {
    my $self = shift;
+   warnings::warnif( deprecated => "Loop->detach_child is deprecated; use ->fork instead" );
    $self->fork( @_ );
 }
 
@@ -643,6 +623,8 @@ sub detach_code
    my $self = shift;
    my %params = @_;
 
+   warnings::warnif( deprecated => "Loop->detach_code is deprecated; use IO::Async::Function instead" );
+
    require IO::Async::DetachedCode;
 
    return IO::Async::DetachedCode->new(
@@ -654,7 +636,7 @@ sub detach_code
 =head2 $loop->spawn_child( %params )
 
 This method creates a new child process to run a given code block or command.
-For more detail, see the C<spawn_child()> method on the
+For more detail, see the C<spawn_child> method on the
 L<IO::Async::ChildManager> class.
 
 =cut
@@ -697,12 +679,12 @@ way:
  $on_finish->( $pid, $exitcode )
 
 The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+usefully, see C<WEXITSTATUS> and others from C<POSIX>.
 
 =item on_error => CODE
 
 Optional continuation to be called when the child code block throws an
-exception, or the command could not be C<exec()>ed. It will be invoked in the
+exception, or the command could not be C<exec(2)>ed. It will be invoked in the
 following way (as per C<spawn>)
 
  $on_error->( $pid, $exitcode, $dollarbang, $dollarat )
@@ -809,7 +791,7 @@ and STDERR streams. It will be invoked in the following way:
  $on_finish->( $pid, $exitcode, $stdout, $stderr )
 
 The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+usefully, see C<WEXITSTATUS> and others from C<POSIX>.
 
 =item stdin => STRING
 
@@ -902,7 +884,7 @@ sub resolver
 
 This method performs a single name resolution operation. It uses an
 internally-stored C<IO::Async::Resolver> object. For more detail, see the
-C<resolve()> method on the L<IO::Async::Resolver> class.
+C<resolve> method on the L<IO::Async::Resolver> class.
 
 =cut
 
@@ -918,7 +900,7 @@ sub resolve
 
 This method performs a non-blocking connect operation. It uses an
 internally-stored C<IO::Async::Connector> object. For more detail, see the
-C<connect()> method on the L<IO::Async::Connector> class.
+C<connect> method on the L<IO::Async::Connector> class.
 
 This method accepts an C<extensions> parameter; see the C<EXTENSIONS> section
 below.
@@ -1077,7 +1059,7 @@ sub socket
    my $self = shift;
    my ( $family, $socktype, $proto ) = @_;
 
-   croak "Cannot create a new socket() without a family" unless $family;
+   croak "Cannot create a new socket without a family" unless $family;
 
    # SOCK_STREAM is the most likely
    defined $socktype or $socktype = SOCK_STREAM;
@@ -1094,7 +1076,7 @@ sub socket
    return $sock if $sock;
 
    # That failed. Most likely because the Domain was unrecognised. This 
-   # usually happens if getaddrinfo() returns an AF_INET6 address but we don't
+   # usually happens if getaddrinfo returns an AF_INET6 address but we don't
    # have IO::Socket::INET6 loaded. In this case we'll return a generic one.
    # It won't be in the specific subclass but that's the best we can do. And
    # it will still work as a generic socket.
@@ -1133,7 +1115,7 @@ sub _getsocktypebyname
 
 =head2 ( $S1, $S2 ) = $loop->socketpair( $family, $socktype, $proto )
 
-An abstraction of the C<socketpair()> syscall, where any argument may be
+An abstraction of the C<socketpair(2)> syscall, where any argument may be
 missing (or given as C<undef>).
 
 If C<$family> is not provided, a suitable value will be provided by the OS
@@ -1167,7 +1149,7 @@ sub socketpair
 
    return unless $family == AF_INET and ( $socktype == SOCK_STREAM or $socktype == SOCK_DGRAM );
 
-   # Now lets emulate an AF_INET socketpair() call
+   # Now lets emulate an AF_INET socketpair call
 
    my $Stmp = $self->socket( $family, $socktype ) or return;
    $Stmp->bind( pack_sockaddr_in( 0, INADDR_LOOPBACK ) ) or return;
@@ -1194,9 +1176,9 @@ sub socketpair
    return ( $S1, $S2 );
 }
 
-=head2 ( $rd, $wr ) = $loop->pipepair()
+=head2 ( $rd, $wr ) = $loop->pipepair
 
-An abstraction of the C<pipe()> syscall, which returns the two new handles.
+An abstraction of the C<pipe(2)> syscall, which returns the two new handles.
 
 =cut
 
@@ -1208,14 +1190,14 @@ sub pipepair
    return ( $rd, $wr );
 }
 
-=head2 ( $rdA, $wrA, $rdB, $wrB ) = $loop->pipequad()
+=head2 ( $rdA, $wrA, $rdB, $wrB ) = $loop->pipequad
 
 This method is intended for creating two pairs of filehandles that are linked
 together, suitable for passing as the STDIN/STDOUT pair to a child process.
 After this function returns, C<$rdA> and C<$wrA> will be a linked pair, as
 will C<$rdB> and C<$wrB>.
 
-On platforms that support C<socketpair()>, this implementation will be
+On platforms that support C<socketpair(2)>, this implementation will be
 preferred, in which case C<$rdA> and C<$wrB> will actually be the same
 filehandle, as will C<$rdB> and C<$wrA>. This saves a file descriptor in the
 parent process.
@@ -1223,7 +1205,7 @@ parent process.
 When creating a C<IO::Async::Stream> or subclass of it, the C<read_handle>
 and C<write_handle> parameters should always be used.
 
- my ( $childRd, $myWr, $myRd, $childWr ) = $loop->pipequad();
+ my ( $childRd, $myWr, $myRd, $childWr ) = $loop->pipequad;
 
  $loop->open_child(
     stdin  => $childRd,
@@ -1244,14 +1226,14 @@ sub pipequad
 {
    my $self = shift;
 
-   # Prefer socketpair()
-   if( my ( $S1, $S2 ) = $self->socketpair() ) {
+   # Prefer socketpair
+   if( my ( $S1, $S2 ) = $self->socketpair ) {
       return ( $S1, $S2, $S2, $S1 );
    }
 
    # Can't do that, fallback on pipes
-   my ( $rdA, $wrA ) = $self->pipepair() or return;
-   my ( $rdB, $wrB ) = $self->pipepair() or return;
+   my ( $rdA, $wrA ) = $self->pipepair or return;
+   my ( $rdB, $wrB ) = $self->pipepair or return;
 
    return ( $rdA, $wrA, $rdB, $wrB );
 }
@@ -1393,7 +1375,7 @@ Will pack an IP address and port number from keys called C<ip> and C<port>.
 Optionally will also include values from C<scopeid> and C<flowinfo> keys if
 provided.
 
-This will only work if a C<pack_sockaddr_in6()> function can be found, either
+This will only work if a C<pack_sockaddr_in6> function can be found, either
 in C<Socket> or C<Socket6>.
 
 =cut
@@ -1453,7 +1435,7 @@ sub unpack_addrinfo { goto &extract_addrinfo }
 =head2 $time = $loop->time
 
 Returns the current UNIX time in fractional seconds. This is currently
-equivalent to C<Time::HiRes::time()> but provided here as a utility for
+equivalent to C<Time::HiRes::time> but provided here as a utility for
 programs to obtain the time current used by C<IO::Async> for its own timing
 purposes.
 
@@ -1462,7 +1444,7 @@ purposes.
 sub time
 {
    my $self = shift;
-   return Time::HiRes::time();
+   return Time::HiRes::time;
 }
 
 =head2 $pid = $loop->fork( %params )
@@ -1476,7 +1458,7 @@ its process ID.
 
 A block of code to execute in the child process. It will be called in scalar
 context inside an C<eval> block. The return value will be used as the
-C<exit()> code from the child if it returns (or 255 if it returned C<undef> or
+C<exit(2)> code from the child if it returns (or 255 if it returned C<undef> or
 thows an exception).
 
 =item on_exit => CODE
@@ -1487,10 +1469,10 @@ be invoked in the following way:
  $on_exit->( $pid, $exitcode )
 
 The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+usefully, see C<WEXITSTATUS> and others from C<POSIX>.
 
 This key is optional; if not supplied, the calling code should install a
-handler using the C<watch_child()> method.
+handler using the C<watch_child> method.
 
 =item keep_signals => BOOL
 
@@ -1509,7 +1491,7 @@ sub fork
 
    my $code = $params{code} or croak "Expected 'code' as a CODE reference";
 
-   my $kid = fork();
+   my $kid = fork;
    defined $kid or croak "Cannot fork() - $!";
 
    if( $kid == 0 ) {
@@ -1779,7 +1761,7 @@ The time may either be specified as an absolute value (the C<time> key), or
 as a delay from the time it is installed (the C<delay> key).
 
 The returned C<$id> value can be used to identify the timer in case it needs
-to be cancelled by the C<cancel_timer()> method. Note that this value may be
+to be cancelled by the C<cancel_timer> method. Note that this value may be
 an object reference, so if it is stored, it should be released after it has
 been fired or cancelled, so the object itself can be freed.
 
@@ -1795,12 +1777,12 @@ The absolute system timestamp to run the event.
 
 The delay after now at which to run the event, if C<time> is not supplied. A
 zero or negative delayed timer should be executed as soon as possible; the
-next time the C<loop_once()> method is invoked.
+next time the C<loop_once> method is invoked.
 
 =item now => NUM
 
 The time to consider as now if calculating an absolute time based on C<delay>;
-defaults to C<time()> if not specified.
+defaults to C<time> if not specified.
 
 =item code => CODE
 
@@ -1854,7 +1836,7 @@ sub cancel_timer
 Reschedule an existing timer, moving it to a new time. The old timer is
 removed and will not be invoked.
 
-The C<%params> hash takes the same keys as C<enqueue_timer()>, except for the
+The C<%params> hash takes the same keys as C<enqueue_timer>, except for the
 C<code> argument.
 
 The requeue operation may be implemented as a cancel + enqueue, which may
@@ -1981,7 +1963,7 @@ A CODE reference to the exit handler. It will be invoked as
  $code->( $pid, $? )
 
 The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS()> and others from C<POSIX>.
+usefully, see C<WEXITSTATUS> and others from C<POSIX>.
 
 =back
 

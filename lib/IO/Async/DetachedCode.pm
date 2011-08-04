@@ -8,7 +8,7 @@ package IO::Async::DetachedCode;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 
@@ -24,7 +24,7 @@ This object is used indirectly via the C<IO::Async::Loop>'s C<detach_code>
 method.
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  my $code = $loop->detach_code(
     code => sub {
@@ -123,7 +123,7 @@ sub DESTROY
    my $self = shift;
 
    my $function = $self->{function};
-   $function->get_loop->remove( $function );
+   $function->loop->remove( $function );
 }
 
 =head1 METHODS

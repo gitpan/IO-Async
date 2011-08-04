@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 
@@ -22,7 +22,7 @@ C<IO::Async::Signal> - event callback on receipt of a POSIX signal
  use IO::Async::Signal;
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  my $signal = IO::Async::Signal->new(
     name => "HUP",
@@ -103,7 +103,7 @@ sub configure
 
       undef $self->{cb}; # Will be lazily constructed when needed
 
-      if( my $loop = $self->get_loop ) {
+      if( my $loop = $self->loop ) {
          $self->_remove_from_loop( $loop );
          $self->_add_to_loop( $loop );
       }

@@ -8,7 +8,7 @@ package IO::Async::Protocol::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use base qw( IO::Async::Protocol );
 
@@ -130,7 +130,7 @@ sub configure
 
    $self->SUPER::configure( %params );
 
-   if( $self->get_loop ) {
+   if( $self->loop ) {
       $self->can_event( "on_read" ) or
          croak 'Expected either an on_read callback or to be able to ->on_read';
    }

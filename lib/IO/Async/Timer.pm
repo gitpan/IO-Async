@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 
@@ -131,7 +131,7 @@ sub start
 {
    my $self = shift;
 
-   my $loop = $self->get_loop;
+   my $loop = $self->loop;
    if( !defined $loop ) {
       $self->{pending} = 1;
       return $self;
@@ -167,7 +167,7 @@ sub stop
       return;
    }
 
-   my $loop = $self->get_loop or croak "Cannot stop a Timer that is not in a Loop";
+   my $loop = $self->loop or croak "Cannot stop a Timer that is not in a Loop";
 
    defined $self->{id} or return; # nothing to do but no error
 

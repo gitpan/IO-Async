@@ -8,7 +8,7 @@ package IO::Async::Function;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
@@ -26,7 +26,7 @@ C<IO::Async::Function> - call a function asynchronously
  use IO::Async::Function;
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  my $function = IO::Async::Function->new(
     code => sub {
@@ -59,7 +59,7 @@ passing in arguments, and invoking a continuation in the main process when the
 function returns.
 
 The object represents the function code itself, rather than one specific
-invocation of it. It can be called multiple times, by the C<call()> method.
+invocation of it. It can be called multiple times, by the C<call> method.
 Multiple outstanding invocations can be called; they will be dispatched in
 the order they were queued. If only one worker process is used then results
 will be returned in the order they were called. If multiple are used, then
@@ -89,7 +89,7 @@ are:
 =item 1.
 
 When a large amount of computationally-intensive work needs to be performed
-(for example, the C<is_prime()> test in the example in the C<SYNOPSIS>).
+(for example, the C<is_prime> test in the example in the C<SYNOPSIS>).
 
 =item 2.
 
@@ -216,7 +216,7 @@ sub configure
 
    $self->SUPER::configure( %params );
 
-   if( $need_restart and $self->get_loop ) {
+   if( $need_restart and $self->loop ) {
       $self->stop;
       $self->start;
    }
@@ -318,7 +318,7 @@ sub call
    my %params = @_;
 
    # TODO: possibly just queue this?
-   $self->get_loop or croak "Cannot ->call on a Function not yet in a Loop";
+   $self->loop or croak "Cannot ->call on a Function not yet in a Loop";
 
    my $args = delete $params{args};
    ref $args eq "ARRAY" or croak "Expected 'args' to be an array";
@@ -327,8 +327,13 @@ sub call
 
    my $on_result;
    if( defined $params{on_result} ) {
-      $on_result = delete $params{on_result};
-      ref $on_result or croak "Expected 'on_result' to be a reference";
+      my $inner_on_result = delete $params{on_result};
+      ref $inner_on_result or croak "Expected 'on_result' to be a reference";
+      $on_result = $self->_capture_weakself( sub {
+         my $self = shift;
+         $self->debug_printf( "CONT on_$_[0]" );
+         goto &$inner_on_result;
+      } );
    }
    elsif( defined $params{on_return} and defined $params{on_error} ) {
       my $on_return = delete $params{on_return};
@@ -336,11 +341,13 @@ sub call
       my $on_error  = delete $params{on_error};
       ref $on_error or croak "Expected 'on_error' to be a reference";
 
-      $on_result = sub {
+      $on_result = $self->_capture_weakself( sub {
+         my $self = shift;
          my $result = shift;
+         $self->debug_printf( "CONT on_$result" );
          $on_return->( @_ ) if $result eq "return";
          $on_error->( @_ )  if $result eq "error";
-      };
+      } );
    }
    else {
       croak "Expected either 'on_result' or 'on_return' and 'on_error' keys";

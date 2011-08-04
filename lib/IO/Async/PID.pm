@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 
@@ -23,7 +23,7 @@ C<IO::Async::PID> - event callback on exit of a child process
  use POSIX qw( WEXITSTATUS );
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  my $kid = $loop->fork(
     code => sub {
@@ -100,7 +100,7 @@ sub configure
    my %params = @_;
 
    if( exists $params{pid} ) {
-      $self->get_loop and croak "Cannot configure 'pid' after adding to Loop";
+      $self->loop and croak "Cannot configure 'pid' after adding to Loop";
       $self->{pid} = delete $params{pid};
    }
 
@@ -109,7 +109,7 @@ sub configure
 
       undef $self->{cb};
 
-      if( my $loop = $self->get_loop ) {
+      if( my $loop = $self->loop ) {
          $self->_remove_from_loop( $loop );
          $self->_add_to_loop( $loop );
       }

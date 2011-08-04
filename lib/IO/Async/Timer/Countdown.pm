@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 
@@ -22,7 +22,7 @@ C<IO::Async::Timer::Countdown> - event callback after a fixed delay
  use IO::Async::Timer::Countdown;
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
  my $timer = IO::Async::Timer::Countdown->new(
     delay => 10,
@@ -146,7 +146,7 @@ sub reset
 {
    my $self = shift;
 
-   my $loop = $self->get_loop or croak "Cannot reset a Timer that is not in a Loop";
+   my $loop = $self->loop or croak "Cannot reset a Timer that is not in a Loop";
 
    return if !$self->is_running;
 

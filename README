@@ -5,7 +5,7 @@ SYNOPSIS
      use IO::Async::Stream;
      use IO::Async::Loop;
 
-     my $loop = IO::Async::Loop->new();
+     my $loop = IO::Async::Loop->new;
 
      $loop->connect(
         host     => "some.other.host",
@@ -36,7 +36,7 @@ SYNOPSIS
         on_connect_error => sub { die "Cannot connect - $_[0] failed $_[-1]\n"; },
      );
 
-     $loop->loop_forever();
+     $loop->loop_forever;
 
 DESCRIPTION
     This collection of modules allows programs to be written that perform
@@ -82,8 +82,8 @@ DESCRIPTION
     informs of packet receipt using a callback or method.
 
     The IO::Async::Listener class is another subclass of IO::Async::Handle
-    which facilitates the use of "listen()"-mode sockets. When a new
-    connection is available on the socket it will "accept()" it and pass the
+    which facilitates the use of listen(2)-mode sockets. When a new
+    connection is available on the socket it will accept(2) it and pass the
     new client socket to its callback function.
 
   Timers
@@ -124,7 +124,7 @@ DESCRIPTION
 
     IO::Async::Loop::Poll uses an IO::Poll object for this test.
 
-    IO::Async::Loop::Select uses the "select()" syscall.
+    IO::Async::Loop::Select uses the select(2) syscall.
 
     Other subclasses of loop may appear on CPAN under their own dists; such
     as IO::Async::Loop::Glib which acts as a proxy for the "Glib::MainLoop"
@@ -138,9 +138,9 @@ DESCRIPTION
   Child Processes
     The IO::Async::Loop object provides a number of methods to facilitate
     the running of child processes. "spawn_child" is primarily a wrapper
-    around the typical "fork()"/"exec()" style of starting child processes,
-    and "run_child" provide a method similar to perl's "readpipe()" (which
-    is used to implement backticks ``).
+    around the typical fork(2)/exec(2) style of starting child processes,
+    and "run_child" provide a method similar to perl's "readpipe" (which is
+    used to implement backticks ``).
 
   Asynchronous Functions
     The "IO::Async" framework generally provides mechanisms for multiplexing

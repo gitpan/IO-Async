@@ -8,13 +8,15 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use Carp;
 use Scalar::Util qw( weaken );
 
 # Perl 5.8.4 cannot do trampolines by modiying @_ then goto &$code
 use constant HAS_BROKEN_TRAMPOLINES => ( $] == "5.008004" );
+
+our $DEBUG = $ENV{IO_ASYNC_DEBUG} || 0;
 
 =head1 NAME
 
@@ -30,9 +32,9 @@ Usually not directly used by a program, but one valid use case may be:
  use IO::Async::Signal;
 
  use IO::Async::Loop;
- my $loop = IO::Async::Loop->new();
+ my $loop = IO::Async::Loop->new;
 
- my $notifier = IO::Async::Notifier->new();
+ my $notifier = IO::Async::Notifier->new;
 
  $notifier->add_child(
     IO::Async::Stream->new_for_stdin(
@@ -123,6 +125,46 @@ it.
 
 =cut
 
+=head1 AS A MIXIN
+
+Rather than being used as a subclass this package also supports being used as
+a non-principle superclass for an object, as a mix-in. It still provides
+methods and satisfies an C<isa> test, even though the constructor is not
+directly called. This simply requires that the object be based on a normal
+blessed hash reference and include C<IO::Async::Notifier> somewhere in its
+C<@ISA> list.
+
+The methods in this class all use only keys in the hash prefixed by
+C<"IO_Async_Notifier__"> for namespace purposes.
+
+This is intended mainly for defining a subclass of some other object that is
+also an C<IO::Async::Notifier>, suitable to be added to an C<IO::Async::Loop>.
+
+ package SomeEventSource::Async;
+ use base qw( SomeEventSource IO::Async::Notifier );
+
+ sub _add_to_loop
+ {
+    my $self = shift;
+    my ( $loop ) = @_;
+
+    # Code here to set up event handling on $loop that may be required
+ }
+
+ sub _remove_from_loop
+ {
+    my $self = shift;
+    my ( $loop ) = @_;
+
+    # Code here to undo the event handling set up above
+ }
+
+Since all the methods documented here will be available, the implementation
+may wish to use the C<configure> and C<make_event_cb> or C<invoke_event>
+methods to implement its own event callbacks.
+
+=cut
+
 =head1 PARAMETERS
 
 A specific subclass of C<IO::Async::Notifier> defines named parameters that
@@ -166,18 +208,7 @@ sub new
    my $class = shift;
    my %params = @_;
 
-   if( $class eq __PACKAGE__ and 
-      grep { exists $params{$_} } qw( handle read_handle write_handle on_read_ready on_write_ready ) ) {
-      carp "IO::Async::Notifier no longer wraps a filehandle; see instead IO::Async::Handle";
-
-      require IO::Async::Handle;
-      return IO::Async::Handle->new( %params );
-   }
-
-   my $self = bless {
-      children => [],
-      parent   => undef,
-   }, $class;
+   my $self = bless {}, $class;
 
    $self->_init( \%params );
 
@@ -204,7 +235,7 @@ sub configure
    my %params = @_;
 
    foreach (qw( notifier_name )) {
-      $self->{$_} = delete $params{$_} if exists $params{$_};
+      $self->{"IO_Async_Notifier__$_"} = delete $params{$_} if exists $params{$_};
    }
 
    # We don't recognise any configure keys at this level
@@ -214,17 +245,23 @@ sub configure
    }
 }
 
-=head2 $notifier->get_loop
+=head2 $loop = $notifier->loop
 
 Returns the C<IO::Async::Loop> that this Notifier is a member of.
 
+=head2 $loop = $notifier->get_loop
+
+Synonym for C<loop>.
+
 =cut
 
-sub get_loop
+sub loop
 {
    my $self = shift;
-   return $self->{loop}
+   return $self->{IO_Async_Notifier__loop}
 }
+
+*get_loop = \&loop;
 
 # Only called by IO::Async::Loop, not external interface
 sub __set_loop
@@ -233,15 +270,15 @@ sub __set_loop
    my ( $loop ) = @_;
 
    # early exit if no change
-   return if !$loop and !$self->{loop} or
-             $loop and $self->{loop} and $loop == $self->{loop};
+   return if !$loop and !$self->loop or
+             $loop and $self->loop and $loop == $self->loop;
 
-   $self->_remove_from_loop( $self->{loop} ) if $self->{loop};
+   $self->_remove_from_loop( $self->loop ) if $self->loop;
 
-   $self->{loop} = $loop;
-   weaken( $self->{loop} ); # To avoid a cycle
+   $self->{IO_Async_Notifier__loop} = $loop;
+   weaken( $self->{IO_Async_Notifier__loop} ); # To avoid a cycle
 
-   $self->_add_to_loop( $self->{loop} ) if $self->{loop};
+   $self->_add_to_loop( $self->loop ) if $self->loop;
 }
 
 =head2 $name = $notifier->notifier_name
@@ -255,7 +292,7 @@ return some more useful information, perhaps from configured parameters.
 sub notifier_name
 {
    my $self = shift;
-   return $self->{notifier_name} || "";
+   return $self->{IO_Async_Notifier__notifier_name} || "";
 }
 
 =head1 CHILD NOTIFIERS
@@ -268,7 +305,7 @@ from the C<IO::Async::Loop> that manages their parent.
 
 =cut
 
-=head2 $parent = $notifier->parent()
+=head2 $parent = $notifier->parent
 
 Returns the parent of the notifier, or C<undef> if does not have one.
 
@@ -277,10 +314,10 @@ Returns the parent of the notifier, or C<undef> if does not have one.
 sub parent
 {
    my $self = shift;
-   return $self->{parent};
+   return $self->{IO_Async_Notifier__parent};
 }
 
-=head2 @children = $notifier->children()
+=head2 @children = $notifier->children
 
 Returns a list of the child notifiers contained within this one.
 
@@ -289,7 +326,8 @@ Returns a list of the child notifiers contained within this one.
 sub children
 {
    my $self = shift;
-   return @{ $self->{children} };
+   return unless $self->{IO_Async_Notifier__children};
+   return @{ $self->{IO_Async_Notifier__children} };
 }
 
 =head2 $notifier->add_child( $child )
@@ -307,17 +345,17 @@ sub add_child
    my $self = shift;
    my ( $child ) = @_;
 
-   croak "Cannot add a child that already has a parent" if defined $child->{parent};
+   croak "Cannot add a child that already has a parent" if defined $child->{IO_Async_Notifier__parent};
 
-   croak "Cannot add a child that is already a member of a loop" if defined $child->{loop};
+   croak "Cannot add a child that is already a member of a loop" if defined $child->loop;
 
-   if( defined( my $loop = $self->{loop} ) ) {
+   if( defined( my $loop = $self->loop ) ) {
       $loop->add( $child );
    }
 
-   push @{ $self->{children} }, $child;
-   $child->{parent} = $self;
-   weaken( $child->{parent} );
+   push @{ $self->{IO_Async_Notifier__children} }, $child;
+   $child->{IO_Async_Notifier__parent} = $self;
+   weaken( $child->{IO_Async_Notifier__parent} );
 
    return;
 }
@@ -336,7 +374,7 @@ sub remove_child
    my ( $child ) = @_;
 
    LOOP: {
-      my $childrenref = $self->{children};
+      my $childrenref = $self->{IO_Async_Notifier__children};
       for my $i ( 0 .. $#$childrenref ) {
          next unless $childrenref->[$i] == $child;
          splice @$childrenref, $i, 1, ();
@@ -346,9 +384,9 @@ sub remove_child
       croak "Cannot remove child from a parent that doesn't contain it";
    }
 
-   undef $child->{parent};
+   undef $child->{IO_Async_Notifier__parent};
 
-   if( defined( my $loop = $self->{loop} ) ) {
+   if( defined( my $loop = $self->loop ) ) {
       $loop->remove( $child );
    }
 }
@@ -360,7 +398,7 @@ sub _remove_from_outer
    if( my $parent = $self->parent ) {
       $parent->remove_child( $self );
    }
-   elsif( my $loop = $self->get_loop ) {
+   elsif( my $loop = $self->loop ) {
       $loop->remove( $self );
    }
 }
@@ -378,7 +416,7 @@ at some point within the code.
 
 =head2 $notifier->_init( $paramsref )
 
-This method is called by the constructor just before calling C<configure()>.
+This method is called by the constructor just before calling C<configure>.
 It is passed a reference to the HASH storing the constructor arguments.
 
 This method may initialise internal details of the Notifier as required,
@@ -398,7 +436,7 @@ This method is called by the constructor to set the initial values of named
 parameters, and by users of the object to adjust the values once constructed.
 
 This method should C<delete> from the C<%params> hash any keys it has dealt
-with, then pass the remaining ones to the C<SUPER::configure()>. The base
+with, then pass the remaining ones to the C<SUPER::configure>. The base
 class implementation will throw an exception if there are any unrecognised
 keys remaining.
 
@@ -605,7 +643,15 @@ sub make_event_cb
    my $code = $self->can_event( $event_name )
       or croak "$self cannot handle $event_name event";
 
-   return $self->_capture_weakself( $code );
+   my $caller = caller;
+
+   return $self->_capture_weakself( 
+      !$DEBUG ? $code : sub {
+         my $self = $_[0];
+         $self->debug_printf_event( $caller, $event_name );
+         goto &$code;
+      }
+   );
 }
 
 =head2 $callback = $notifier->maybe_make_event_cb( $event_name )
@@ -623,7 +669,15 @@ sub maybe_make_event_cb
    my $code = $self->can_event( $event_name )
       or return undef;
 
-   return $self->_capture_weakself( $code );
+   my $caller = caller;
+
+   return $self->_capture_weakself(
+      !$DEBUG ? $code : sub {
+         my $self = $_[0];
+         $self->debug_printf_event( $caller, $event_name );
+         goto &$code;
+      }
+   );
 }
 
 =head2 @ret = $notifier->invoke_event( $event_name, @args )
@@ -643,6 +697,7 @@ sub invoke_event
    my $code = $self->can_event( $event_name )
       or croak "$self cannot handle $event_name event";
 
+   $self->debug_printf_event( scalar caller, $event_name ) if $DEBUG;
    return $code->( $self, @args );
 }
 
@@ -664,7 +719,95 @@ sub maybe_invoke_event
    my $code = $self->can_event( $event_name )
       or return undef;
 
+   $self->debug_printf_event( scalar caller, $event_name ) if $DEBUG;
    return [ $code->( $self, @args ) ];
+}
+
+=head1 DEBUGGING SUPPORT
+
+The following methods and behaviours are still experimental and may change or
+even be removed in future.
+
+Debugging support is enabled by an environment variable called
+C<IO_ASYNC_DEBUG> having a true value.
+
+When debugging is enabled, the C<make_event_cb> and C<invoke_event> methods
+(and their C<maybe_> variants) are altered such that when the event is fired,
+a debugging line is printed, using the C<debug_printf> method. This identifes
+the name of the event.
+
+=cut
+
+=head2 $notifier->debug_printf( $format, @args )
+
+Conditionally print a debugging message to C<STDERR> if debugging is enabled.
+If such a message is printed, it will be printed using C<printf> using the
+given format and arguments. The message will be prefixed with an string, in
+square brackets, to help identify the C<$notifier> instance. This string will
+be the class name of the notifier, and any parent notifiers it is contained
+by, joined by an arrow C<< <- >>. To ensure this string does not grow too
+long, certain prefixes are abbreviated:
+
+ IO::Async::Protocol::  =>  IaP:
+ IO::Async::            =>  Ia:
+ Net::Async::           =>  Na:
+
+Finally, each notifier that has a name defined using the C<notifier_name>
+parameter has that name appended in braces.
+
+For example, invoking
+
+ $stream->debug_printf( "EVENT on_read" )
+
+On an C<IO::Async::Stream> instance reading and writing a file descriptor
+whose C<fileno> is 4, which is a child of an C<IO::Async::Protocol::Stream>,
+will produce a line of output:
+
+ [Ia:Stream{rw=4}<-IaP:Stream] EVENT on_read
+
+=cut
+
+sub debug_printf
+{
+   $DEBUG or return;
+
+   my $self = shift;
+   my ( $format, @args ) = @_;
+
+   my @id;
+   while( $self ) {
+      push @id, ref $self;
+
+      my $name = $self->notifier_name;
+      $id[-1] .= "{$name}" if defined $name and length $name;
+
+      $self = $self->parent;
+   }
+
+   s/^IO::Async::Protocol::/IaP:/,
+   s/^IO::Async::/Ia:/,
+   s/^Net::Async::/Na:/ for @id;
+
+   printf STDERR "[%s] $format\n",
+      join("<-", @id), @args;
+}
+
+sub debug_printf_event
+{
+   my $self = shift;
+   my ( $caller, $event_name ) = @_;
+
+   my $class = ref $self;
+
+   if( $DEBUG > 1 or $class eq $caller ) {
+      s/^IO::Async::Protocol::/IaP:/,
+      s/^IO::Async::/Ia:/,
+      s/^Net::Async::/Na:/ for my $str_caller = $caller;
+
+      $self->debug_printf( "EVENT %s",
+         ( $class eq $caller ? $event_name : "${str_caller}::$event_name" )
+      );
+   }
 }
 
 =head1 AUTHOR

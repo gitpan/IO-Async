@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 78;
+use Test::More tests => 72;
 use Test::Fatal;
 use Test::Refcount;
 use Test::Warn;
@@ -13,13 +13,13 @@ use IO::Async::Loop;
 
 use IO::Async::Handle;
 
-my $loop = IO::Async::Loop->new();
+my $loop = IO::Async::Loop->new;
 
 testing_loop( $loop );
 
 sub mkhandles
 {
-   my ( $S1, $S2 ) = $loop->socketpair() or die "Cannot create socket pair - $!";
+   my ( $S1, $S2 ) = $loop->socketpair or die "Cannot create socket pair - $!";
 
    # Need sockets in nonblocking mode
    $S1->blocking( 0 );
@@ -72,7 +72,7 @@ ok( exception { IO::Async::Handle->new( handle => "Hello" ) }, 'Not a filehandle
    is( $readready,  1, '$readready while readable' );
    is_deeply( \@rrargs, [ $handle ], 'on_read_ready args while readable' );
 
-   $S1->getline(); # ignore return
+   $S1->getline; # ignore return
 
    $readready = 0;
    my $new_readready = 0;
@@ -91,7 +91,7 @@ ok( exception { IO::Async::Handle->new( handle => "Hello" ) }, 'Not a filehandle
    is( $readready,     0, '$readready while readable after on_read_ready replace' );
    is( $new_readready, 1, '$new_readready while readable after on_read_ready replace' );
 
-   $S1->getline(); # ignore return
+   $S1->getline; # ignore return
 
    ok( exception { $handle->want_writeready( 1 ); },
        'setting want_writeready with write_handle == undef dies' );
@@ -214,7 +214,7 @@ my $sub_writeready = 0;
    is( $sub_readready,  1, '$sub_readready while readable' );
    is( $sub_writeready, 0, '$sub_writeready while readable' );
 
-   $S1->getline(); # ignore return
+   $S1->getline; # ignore return
    $sub_readready = 0;
 
    $handle->want_writeready( 1 );
@@ -280,7 +280,7 @@ my $sub_writeready = 0;
 
    is( $closed, 0, 'not $closed after ->close_read' );
 
-   is( $handle->get_loop, $loop, 'Handle still member of Loop after ->close_read' );
+   is( $handle->loop, $loop, 'Handle still member of Loop after ->close_read' );
 
    ( $Srd1, $Srd2 ) = mkhandles;
 
@@ -296,7 +296,7 @@ my $sub_writeready = 0;
    is( $handle->read_handle->getline, "Also works\n", 'read handle still works' );
    is( $Swr2->getline, undef, 'sysread from EOF write handle' );
 
-   is( $handle->get_loop, $loop, 'Handle still member of Loop after ->close_write' );
+   is( $handle->loop, $loop, 'Handle still member of Loop after ->close_write' );
 
    is( $closed, 0, 'not $closed after ->close_read' );
 
@@ -304,7 +304,7 @@ my $sub_writeready = 0;
 
    is( $closed, 1, '$closed after ->close_read + ->close_write' );
 
-   is( $handle->get_loop, undef, '$handle no longer member of Loop' );
+   is( $handle->loop, undef, '$handle no longer member of Loop' );
 }
 
 # Late-binding of handle
@@ -338,32 +338,6 @@ my $sub_writeready = 0;
    is_oneref( $handle, '$handle latebount has refcount 1 after set_handle' );
 
    is( $handle->notifier_name, "rw=$fd1", '$handle->notifier_name for late bind after handles' );
-}
-
-# Legacy upgrade from IO::Async::Notifier
-{
-   my ( $S1, $S2 ) = mkhandles;
-
-   my $notifier;
-
-   warning_is {
-         $notifier = IO::Async::Notifier->new(
-            read_handle => $S1,
-            on_read_ready => sub {},
-         );
-      }
-      { carped => "IO::Async::Notifier no longer wraps a filehandle; see instead IO::Async::Handle" },
-      'Legacy IO::Async::Notifier to ::Handle upgrade produces warning';
-
-
-   ok( defined $notifier, '$notifier defined' );
-   isa_ok( $notifier, "IO::Async::Handle", '$notifier isa IO::Async::Handle' );
-
-   is( $notifier->read_handle, $S1, '->read_handle returns S1' );
-
-   is( $notifier->read_fileno, $S1->fileno, '->read_fileno returns fileno(S1)' );
-
-   is_oneref( $notifier, '$notifier has refcount 1' );
 }
 
 package TestHandle;

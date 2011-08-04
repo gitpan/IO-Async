@@ -12,7 +12,7 @@ use Socket qw( unpack_sockaddr_in );
 
 use IO::Async::Loop::Poll;
 
-my $loop = IO::Async::Loop::Poll->new();
+my $loop = IO::Async::Loop::Poll->new;
 
 testing_loop( $loop );
 
@@ -170,5 +170,5 @@ SKIP: {
    is( "$error[1]", $failure, "\$error[1] is '$failure'" );
 
    ok( defined $listener, '$listener defined after bind failure' );
-   ok( !$listener->get_loop, '$listener not in loop after bind failure' );
+   ok( !$listener->loop, '$listener not in loop after bind failure' );
 }

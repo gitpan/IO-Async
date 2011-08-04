@@ -8,7 +8,7 @@ package IO::Async::Protocol;
 use strict;
 use warnings;
 
-our $VERSION = '0.42';
+our $VERSION = '0.43';
 
 use base qw( IO::Async::Notifier );
 
@@ -175,7 +175,7 @@ sub connect
       $socktype eq "stream" || $socktype == Socket::SOCK_STREAM()
    } ? "on_stream" : "on_socket";
 
-   my $loop = $self->get_loop or croak "Cannot ->connect a ".ref($self)." that is not in a Loop";
+   my $loop = $self->loop or croak "Cannot ->connect a ".ref($self)." that is not in a Loop";
 
    $loop->connect(
       %args,
