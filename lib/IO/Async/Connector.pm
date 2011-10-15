@@ -8,7 +8,7 @@ package IO::Async::Connector;
 use strict;
 use warnings;
 
-our $VERSION = '0.43';
+our $VERSION = '0.44';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
@@ -16,6 +16,8 @@ use Socket qw( SOL_SOCKET SO_ERROR );
 use CPS qw( kpar kforeach );
 
 use Carp;
+
+use constant HAVE_MSWIN32 => ( $^O eq "MSWin32" );
 
 =head1 NAME
 
@@ -169,28 +171,30 @@ sub _connect_addresses
             # localhost, or UNIX sockets, or something like that.
             goto &$klast;
          }
-         elsif( $! != EINPROGRESS ) {
+         # On MSWin32 this is reported as EWOULDBLOCK
+         elsif( $! == EINPROGRESS or HAVE_MSWIN32 && $! == POSIX::EWOULDBLOCK ) {
+            $loop->watch_io(
+               handle => $sock,
+               on_write_ready => sub {
+                  $loop->unwatch_io( handle => $sock, on_write_ready => 1 );
+
+                  my $err = _get_sock_err( $sock );
+
+                  goto &$klast if !defined $err;
+
+                  $connecterr = $!;
+                  $on_fail->( "connect", $sock, $peeraddr, $err ) if $on_fail;
+                  undef $sock;
+                  goto &$knext;
+               },
+            );
+         }
+         else {
             $connecterr = $!;
             $on_fail->( "connect", $sock, $peeraddr, $! ) if $on_fail;
             undef $sock;
             goto &$knext;
          }
-
-         $loop->watch_io(
-            handle => $sock,
-            on_write_ready => sub {
-               $loop->unwatch_io( handle => $sock, on_write_ready => 1 );
-
-               my $err = _get_sock_err( $sock );
-
-               goto &$klast if !defined $err;
-
-               $connecterr = $!;
-               $on_fail->( "connect", $sock, $peeraddr, $err ) if $on_fail;
-               undef $sock;
-               goto &$knext;
-            },
-         );
       },
       sub {
          if( $sock ) {

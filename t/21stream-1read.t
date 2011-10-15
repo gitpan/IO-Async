@@ -8,6 +8,7 @@ use Test::More tests => 54;
 use Test::Fatal;
 use Test::Refcount;
 
+use IO::File;
 use POSIX qw( ECONNRESET );
 
 use IO::Async::Loop;
@@ -379,6 +380,7 @@ my @sub_lines;
 }
 
 {
+   STDIN->binmode; # Avoid harmless warning in case -CS is in effect
    my $stream = IO::Async::Stream->new_for_stdin;
    is( $stream->read_handle, \*STDIN, 'Stream->new_for_stdin->read_handle is STDIN' );
 }

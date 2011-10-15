@@ -8,6 +8,7 @@ use Test::More tests => 21;
 use Test::Fatal;
 use Test::Refcount;
 
+use IO::File;
 use POSIX qw( EAGAIN );
 
 use IO::Async::Loop;
@@ -175,6 +176,7 @@ ok( !exception { $loop->loop_once }, 'read+write-ready closed Stream doesn\'t di
 
 undef $stream;
 
+STDIN->binmode; # Avoid harmless warning in case -CS is in effect
 $stream = IO::Async::Stream->new_for_stdio;
 is( $stream->read_handle,  \*STDIN,  'Stream->new_for_stdio->read_handle is STDIN' );
 is( $stream->write_handle, \*STDOUT, 'Stream->new_for_stdio->write_handle is STDOUT' );

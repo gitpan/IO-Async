@@ -4,11 +4,13 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 50;
+use Test::More tests => 65;
 
 use IO::Async::Process;
 
 use IO::Async::Loop::Poll;
+
+use Socket qw( PF_UNIX PF_INET sockaddr_family );
 
 my $loop = IO::Async::Loop::Poll->new;
 
@@ -275,4 +277,105 @@ testing_loop( $loop );
    is( $process->exitstatus, 0, '$process->exitstatus after perl STDIN->STDOUT using stdio' );
 
    is( $output, "SOME DATA\n", '$stdout after perl STDIN->STDOUT using stdio' );
+}
+
+{
+   my $process = IO::Async::Process->new(
+      code => sub {
+         defined( recv STDIN, my $pkt, 8192, 0 ) or die "Cannot recv - $!";
+         send STDOUT, $pkt, 0 or die "Cannot send - $!";
+         return 0;
+      },
+      stdio => { via => "socketpair" },
+      on_finish => sub { },
+   );
+
+   isa_ok( $process->stdio, "IO::Async::Stream", '$process->stdio isa Stream' );
+
+   $process->stdio->write( "A packet to be echoed" );
+
+   my $output_packet = "";
+   $process->stdio->configure(
+      on_read => sub {
+         my ( undef, $buffref ) = @_;
+         $output_packet .= $$buffref;
+         $$buffref = "";
+         return 0;
+      },
+   );
+
+   $loop->add( $process );
+
+   isa_ok( $process->stdio->read_handle, "IO::Socket", '$process->stdio handle isa IO::Socket' );
+   is( sockaddr_family( $process->stdio->read_handle->sockname ), PF_UNIX, '$process->stdio handle sockdomain is PF_UNIX' );
+
+   wait_for { defined $output_packet and !$process->is_running };
+
+   ok( $process->is_exited,     '$process->is_exited after perl STDIO via socketpair' );
+   is( $process->exitstatus, 0, '$process->exitstatus after perl STDIO via socketpair' );
+
+   is_deeply( $output_packet, "A packet to be echoed", '$output_packet after perl STDIO via socketpair' );
+}
+
+{
+   my $process = IO::Async::Process->new(
+      code => sub { return 0 },
+      stdio => { via => "socketpair", family => "inet" },
+      on_finish => sub { },
+   );
+
+   isa_ok( $process->stdio, "IO::Async::Stream", '$process->stdio isa Stream' );
+
+   $process->stdio->configure( on_read => sub { } );
+
+   $loop->add( $process );
+
+   isa_ok( $process->stdio->read_handle, "IO::Socket", '$process->stdio handle isa IO::Socket' );
+   is( sockaddr_family( $process->stdio->read_handle->sockname ), PF_INET, '$process->stdio handle sockdomain is PF_INET' );
+
+   wait_for { !$process->is_running };
+}
+
+{
+   my $process = IO::Async::Process->new(
+      code => sub {
+         for( 1, 2 ) {
+            defined( recv STDIN, my $pkt, 8192, 0 ) or die "Cannot recv - $!";
+            send STDOUT, $pkt, 0 or die "Cannot send - $!";
+         }
+         return 0;
+      },
+      stdio => { via => "socketpair", socktype => "dgram" },
+      on_finish => sub { },
+   );
+
+   isa_ok( $process->stdio, "IO::Async::Socket", '$process->stdio isa Socket' );
+
+   my @output_packets;
+   $process->stdio->configure(
+      on_recv => sub {
+         my ( $self, $packet ) = @_;
+         push @output_packets, $packet;
+
+         $self->close if @output_packets == 2;
+
+         return 0;
+      },
+   );
+
+   $loop->add( $process );
+
+   isa_ok( $process->stdio->read_handle, "IO::Socket", '$process->stdio handle isa IO::Socket' );
+   is( sockaddr_family( $process->stdio->read_handle->sockname ), PF_UNIX, '$process->stdio handle sockdomain is PF_UNIX' );
+
+   $process->stdio->send( $_ ) for "First packet", "Second packet";
+
+   wait_for { @output_packets == 2 and !$process->is_running };
+
+   ok( $process->is_exited,     '$process->is_exited after perl STDIO via dgram socketpair' );
+   is( $process->exitstatus, 0, '$process->exitstatus after perl STDIO via dgram socketpair' );
+
+   is_deeply( \@output_packets,
+              [ "First packet", "Second packet" ],
+              '@output_packets after perl STDIO via dgram socketpair' );
 }

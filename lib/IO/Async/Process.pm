@@ -9,13 +9,15 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.43';
+our $VERSION = '0.44';
 
 use Carp;
 
 use POSIX qw(
    WIFEXITED WEXITSTATUS
 );
+
+use Socket qw( SOCK_STREAM );
 
 use Async::MergePoint 0.03;
 
@@ -179,11 +181,21 @@ Only valid on the C<stdio> filehandle. The child will be given the reading end
 of one C<pipe(2)> on STDIN and the writing end of another on STDOUT. A single
 Stream object will be created in the parent configured for both filehandles.
 
+=item socketpair
+
+The child will be given one end of a C<socketpair(2)>; the parent will be
+given the other. The family of this socket may be given by the extra key
+called C<family>; defaulting to C<unix>. The socktype of this socket may be
+given by the extra key called C<socktype>; defaulting to C<stream>. If the
+type is not C<SOCK_STREAM> then a L<IO::Async::Socket> object will be
+constructed for the parent side of the handle, rather than
+C<IO::Async::Stream>.
+
 =back
 
 Once the filehandle is set up, the C<fd> method (or its shortcuts of C<stdin>,
-C<stdout> or C<stderr>) may be used to access the C<IO::Async::Stream> object
-wrapped around it.
+C<stdout> or C<stderr>) may be used to access the
+C<IO::Async::Handle>-subclassed object wrapped around it.
 
 The value of this argument is implied by any of the following alternatives.
 
@@ -271,11 +283,13 @@ sub configure
 use constant FD_VIA_PIPEREAD  => 1;
 use constant FD_VIA_PIPEWRITE => 2;
 use constant FD_VIA_PIPERDWR  => 3; # Only valid for stdio pseudo-fd
+use constant FD_VIA_SOCKETPAIR => 4;
 
 my %via_names = (
    pipe_read  => FD_VIA_PIPEREAD,
    pipe_write => FD_VIA_PIPEWRITE,
    pipe_rdwr  => FD_VIA_PIPERDWR,
+   socketpair => FD_VIA_SOCKETPAIR,
 );
 
 sub configure_fd
@@ -286,21 +300,14 @@ sub configure_fd
    $self->is_running and croak "Cannot configure fd $fd in a running Process";
 
    if( $fd eq "io" ) {
-      exists $self->{fd_handle}{$_} and croak "Cannot configure stdio since fd$_ is already defined" for 0 .. 1;
+      exists $self->{fd_opts}{$_} and croak "Cannot configure stdio since fd$_ is already defined" for 0 .. 1;
    }
    elsif( $fd == 0 or $fd == 1 ) {
-      exists $self->{fd_handle}{io} and croak "Cannot configure fd$fd since stdio is already defined";
+      exists $self->{fd_opts}{io} and croak "Cannot configure fd$fd since stdio is already defined";
    }
 
-   require IO::Async::Stream;
-
-   my $handle = $self->{fd_handle}{$fd} ||= IO::Async::Stream->new(
-      notifier_name => $fd eq "0"  ? "stdin" :
-                       $fd eq "1"  ? "stdout" :
-                       $fd eq "2"  ? "stderr" :
-                       $fd eq "io" ? "stdio" : "fd$fd",
-   );
-   my $via = $self->{fd_via}{$fd};
+   my $opts = $self->{fd_opts}{$fd} ||= {};
+   my $via = $opts->{via};
 
    my ( $wants_read, $wants_write );
 
@@ -313,31 +320,28 @@ sub configure_fd
    }
 
    if( my $on_read = delete $args{on_read} ) {
-      $handle->configure( on_read => $on_read );
+      $opts->{handle}{on_read} = $on_read;
 
       $wants_read++;
    }
    elsif( my $into = delete $args{into} ) {
-      $handle->configure(
-         on_read => sub {
-            my ( undef, $buffref, $eof ) = @_;
-            $$into .= $$buffref if $eof;
-            return 0;
-         },
-      );
+      $opts->{handle}{on_read} = sub {
+         my ( undef, $buffref, $eof ) = @_;
+         $$into .= $$buffref if $eof;
+         return 0;
+      };
 
       $wants_read++;
    }
 
    if( my $from = delete $args{from} ) {
-      $handle->write( $from,
-         on_flush => sub {
-            my ( $handle ) = @_;
-            $handle->close_write;
-         },
-      );
+      $opts->{from} = $from;
 
       $wants_write++;
+   }
+
+   if( defined $via and $via == FD_VIA_SOCKETPAIR ) {
+      $self->{fd_opts}{$fd}{$_} = delete $args{$_} for qw( family socktype );
    }
 
    keys %args and croak "Unexpected extra keys for fd $fd - " . join ", ", keys %args;
@@ -353,7 +357,7 @@ sub configure_fd
    elsif( $via == FD_VIA_PIPEWRITE ) {
       $wants_read and $via = FD_VIA_PIPERDWR;
    }
-   elsif( $via == FD_VIA_PIPERDWR ) {
+   elsif( $via == FD_VIA_PIPERDWR or $via == FD_VIA_SOCKETPAIR ) {
       # Fine
    }
    else {
@@ -363,7 +367,7 @@ sub configure_fd
    $via == FD_VIA_PIPERDWR and $fd ne "io" and
       croak "Cannot both read and write simultaneously on fd$fd";
 
-   defined $via and $self->{fd_via}{$fd} = $via;
+   defined $via and $opts->{via} = $via;
 }
 
 sub _prepare_fds
@@ -372,15 +376,17 @@ sub _prepare_fds
    my ( $loop ) = @_;
 
    my $fd_handle = $self->{fd_handle};
-   my $fd_via    = $self->{fd_via};
+   my $fd_opts   = $self->{fd_opts};
 
    my $mergepoint = $self->{mergepoint};
 
    my @setup;
 
-   foreach my $fd ( keys %$fd_via ) {
-      my $handle = $fd_handle->{$fd};
-      my $via    = $fd_via->{$fd};
+   foreach my $fd ( keys %$fd_opts ) {
+      my $opts   = $fd_opts->{$fd};
+      my $via    = $opts->{via};
+
+      my $handle = $self->fd( $fd );
 
       my $key = $fd eq "io" ? "stdio" : "fd$fd";
 
@@ -412,6 +418,19 @@ sub _prepare_fds
          push @setup, stdin => [ dup => $childread ], stdout => [ dup => $childwrite ];
          $self->{to_close}{$childread->fileno}  = $childread;
          $self->{to_close}{$childwrite->fileno} = $childwrite;
+      }
+      elsif( $via == FD_VIA_SOCKETPAIR ) {
+         my ( $myfd, $childfd ) = $loop->socketpair( $opts->{family}, $opts->{socktype} ) or croak "Unable to socketpair() - $!";
+
+         $handle->configure( handle => $myfd );
+
+         if( $key eq "stdio" ) {
+            push @setup, stdin => [ dup => $childfd ], stdout => [ dup => $childfd ];
+         }
+         else {
+            push @setup, $key => [ dup => $childfd ];
+         }
+         $self->{to_close}{$childfd->fileno} = $childfd;
       }
       else {
          croak "Unsure what to do with fd_via==$via";
@@ -603,12 +622,12 @@ sub errstr
 
 =head2 $stream = $process->fd( $fd )
 
-Returns the L<IO::Async::Stream> associated with the given FD number. This
-must have been set up by a C<configure> argument prior to adding the
-C<Process> object to the C<Loop>.
+Returns the L<IO::Async::Stream> or L<IO::Async::Socket> associated with the
+given FD number. This must have been set up by a C<configure> argument prior
+to adding the C<Process> object to the C<Loop>.
 
-The returned C<Stream> object have its read or write handle set to the other
-end of a pipe connected to that FD number in the child process. Typically,
+The returned object have its read or write handle set to the other end of a
+pipe or socket connected to that FD number in the child process. Typically,
 this will be used to call the C<write> method on, to write more data into the
 child, or to set an C<on_read> handler to read data out of the child.
 
@@ -623,8 +642,40 @@ sub fd
    my $self = shift;
    my ( $fd ) = @_;
 
-   return $self->{fd_handle}{$fd} or
-      croak "$self does not have an fd Stream for $fd";
+   return $self->{fd_handle}{$fd} ||= do {
+      my $opts = $self->{fd_opts}{$fd} or
+         croak "$self does not have an fd Stream for $fd";
+
+      my $handle_class;
+      # CHEATING
+      if( defined $opts->{socktype} && IO::Async::Loop::_getsocktypebyname( $opts->{socktype} ) != SOCK_STREAM ) {
+         require IO::Async::Socket;
+         $handle_class = "IO::Async::Socket";
+      }
+      else {
+         require IO::Async::Stream;
+         $handle_class = "IO::Async::Stream";
+      }
+
+      my $handle = $handle_class->new(
+         notifier_name => $fd eq "0"  ? "stdin" :
+                          $fd eq "1"  ? "stdout" :
+                          $fd eq "2"  ? "stderr" :
+                          $fd eq "io" ? "stdio" : "fd$fd",
+         %{ $opts->{handle} },
+      );
+
+      if( defined $opts->{from} ) {
+         $handle->write( $opts->{from},
+            on_flush => sub {
+               my ( $handle ) = @_;
+               $handle->close_write;
+            },
+         );
+      }
+
+      $handle
+   };
 }
 
 =head2 $stream = $process->stdin
