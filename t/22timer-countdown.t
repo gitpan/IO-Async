@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 42;
+use Test::More tests => 53;
 use Test::Fatal;
 use Test::Refcount;
 
@@ -40,171 +40,228 @@ my $loop = IO::Async::Loop::Poll->new;
 
 testing_loop( $loop );
 
-my $expired;
+{
+   my $expired;
+   my @eargs;
 
-my @eargs;
+   my $timer = IO::Async::Timer::Countdown->new(
+      delay => 2 * AUT,
 
-my $timer = IO::Async::Timer::Countdown->new(
-   delay => 2 * AUT,
+      on_expire => sub { @eargs = @_; $expired = 1 },
+   );
 
-   on_expire => sub { @eargs = @_; $expired = 1 },
-);
+   ok( defined $timer, '$timer defined' );
+   isa_ok( $timer, "IO::Async::Timer", '$timer isa IO::Async::Timer' );
 
-ok( defined $timer, '$timer defined' );
-isa_ok( $timer, "IO::Async::Timer", '$timer isa IO::Async::Timer' );
+   is_oneref( $timer, '$timer has refcount 1 initially' );
 
-is_oneref( $timer, '$timer has refcount 1 initially' );
+   $loop->add( $timer );
 
-$loop->add( $timer );
+   is_refcount( $timer, 2, '$timer has refcount 2 after adding to Loop' );
 
-is_refcount( $timer, 2, '$timer has refcount 2 after adding to Loop' );
+   ok( !$timer->is_running, 'New Timer is no yet running' );
+   ok( !$timer->is_expired, 'New Timer is no yet expired' );
 
-is( $timer->start, $timer, '$timer->start returns $timer' );
+   is( $timer->start, $timer, '$timer->start returns $timer' );
 
-is_refcount( $timer, 2, '$timer has refcount 2 after starting' );
+   is_refcount( $timer, 2, '$timer has refcount 2 after starting' );
 
-ok( $timer->is_running, 'Started Timer is running' );
+   ok(  $timer->is_running, 'Started Timer is running' );
+   ok( !$timer->is_expired, 'Started Timer not yet expired' );
 
-time_about( sub { wait_for { $expired } }, 2, 'Timer works' );
-is_deeply( \@eargs, [ $timer ], 'on_expire args' );
+   time_about( sub { wait_for { $expired } }, 2, 'Timer works' );
+   is_deeply( \@eargs, [ $timer ], 'on_expire args' );
 
-ok( !$timer->is_running, 'Expired Timer is no longer running' );
+   ok( !$timer->is_running, 'Expired Timer is no longer running' );
+   ok(  $timer->is_expired, 'Expired Timer now expired' );
 
-undef @eargs;
+   undef @eargs;
 
-is_refcount( $timer, 2, '$timer has refcount 2 before removing from Loop' );
+   is_refcount( $timer, 2, '$timer has refcount 2 before removing from Loop' );
 
-$loop->remove( $timer );
+   $loop->remove( $timer );
 
-is_oneref( $timer, '$timer has refcount 1 after removing from Loop' );
+   is_oneref( $timer, '$timer has refcount 1 after removing from Loop' );
 
-undef $expired;
+   undef $expired;
 
-is( $timer->start, $timer, '$timer->start out of a Loop returns $timer' );
+   is( $timer->start, $timer, '$timer->start out of a Loop returns $timer' );
 
-$loop->add( $timer );
+   $loop->add( $timer );
 
-time_about( sub { wait_for { $expired } }, 2, 'Timer works a second time' );
+   ok(  $timer->is_running, 'Re-started Timer is running' );
+   ok( !$timer->is_expired, 'Re-started Timer not yet expired' );
 
-undef $expired;
-$timer->start;
+   time_about( sub { wait_for { $expired } }, 2, 'Timer works a second time' );
 
-$loop->loop_once( 1 * AUT );
+   ok( !$timer->is_running, '2nd-time expired Timer is no longer running' );
+   ok(  $timer->is_expired, '2nd-time expired Timer now expired' );
 
-$timer->stop;
+   undef $expired;
+   $timer->start;
 
-$loop->loop_once( 2 * AUT );
+   $loop->loop_once( 1 * AUT );
 
-ok( !$expired, "Stopped timer doesn't expire" );
+   $timer->stop;
 
-undef $expired;
-$timer->start;
+   $loop->loop_once( 2 * AUT );
 
-$loop->loop_once( 1 * AUT );
+   ok( !$expired, "Stopped timer doesn't expire" );
 
-my $now = time;
-$timer->reset;
+   undef $expired;
+   $timer->start;
 
-$loop->loop_once( 1.5 * AUT );
+   $loop->loop_once( 1 * AUT );
 
-ok( !$expired, "Reset Timer hasn't expired yet" );
+   my $now = time;
+   $timer->reset;
 
-wait_for { $expired };
-my $took = (time - $now) / AUT;
+   $loop->loop_once( 1.5 * AUT );
 
-cmp_ok( $took, '>', 1.5, "Timer has now expired took at least 1.5" );
-cmp_ok( $took, '<', 2.5, "Timer has now expired took no more than 2.5" );
+   ok( !$expired, "Reset Timer hasn't expired yet" );
 
-undef $expired;
-$timer->start;
+   wait_for { $expired };
+   my $took = (time - $now) / AUT;
 
-$loop->remove( $timer );
+   cmp_ok( $took, '>', 1.5, "Timer has now expired took at least 1.5" );
+   cmp_ok( $took, '<', 2.5, "Timer has now expired took no more than 2.5" );
 
-$loop->loop_once( 3 * AUT );
+   $loop->remove( $timer );
 
-ok( !$expired, "Removed Timer does not expire" );
+   undef @eargs;
 
-$timer->start;
+   is_oneref( $timer, 'Timer has refcount 1 finally' );
+}
 
-$loop->add( $timer );
+{
+   my $timer = IO::Async::Timer::Countdown->new(
+      delay => 2 * AUT,
+      on_expire => sub { },
+   );
 
-ok( $timer->is_running, 'Pre-started Timer is running after adding' );
+   $loop->add( $timer );
 
-time_about( sub { wait_for { $expired } }, 2, 'Pre-started Timer works' );
+   $timer->start;
 
-$loop->remove( $timer );
+   $loop->remove( $timer );
 
-undef $expired;
+   $loop->loop_once( 3 * AUT );
 
-$timer->start;
-$timer->stop;
+   ok( !$timer->is_expired, "Removed Timer does not expire" );
+}
 
-$loop->add( $timer );
+{
+   my $timer = IO::Async::Timer::Countdown->new(
+      delay => 2 * AUT,
+      on_expire => sub { },
+   );
 
-$loop->loop_once( 3 * AUT );
+   $timer->start;
 
-is( $expired, undef, "start/stopped Timer doesn't expire" );
+   $loop->add( $timer );
 
-$timer->configure( delay => 1 * AUT );
+   ok( $timer->is_running, 'Pre-started Timer is running after adding' );
 
-undef $expired;
-$timer->start;
+   time_about( sub { wait_for { $timer->is_expired } }, 2, 'Pre-started Timer works' );
 
-time_about( sub { wait_for { $expired } }, 1, 'Reconfigured timer delay works' );
+   $loop->remove( $timer );
+}
 
-my $new_expired;
-$timer->configure( on_expire => sub { $new_expired = 1 } );
+{
+   my $timer = IO::Async::Timer::Countdown->new(
+      delay => 2 * AUT,
+      on_expire => sub { },
+   );
 
-$timer->start;
+   $timer->start;
+   $timer->stop;
 
-time_about( sub { wait_for { $new_expired } }, 1, 'Reconfigured timer on_expire works' );
+   $loop->add( $timer );
 
-$timer->start;
-ok( exception { $timer->configure( delay => 5 ); },
-    'Configure a running timer fails' );
+   $loop->loop_once( 3 * AUT );
 
-$loop->remove( $timer );
+   ok( !$timer->is_expired, "start/stopped Timer doesn't expire" );
 
-undef @eargs;
+   $loop->remove( $timer );
+}
 
-is_oneref( $timer, 'Timer has refcount 1 finally' );
+{
+   my $timer = IO::Async::Timer::Countdown->new(
+      delay => 2 * AUT,
+      on_expire => sub { },
+   );
 
-undef $timer;
+   $loop->add( $timer );
+
+   $timer->configure( delay => 1 * AUT );
+
+   $timer->start;
+
+   time_about( sub { wait_for { $timer->is_expired } }, 1, 'Reconfigured timer delay works' );
+
+   my $expired;
+   $timer->configure( on_expire => sub { $expired = 1 } );
+
+   $timer->start;
+
+   time_about( sub { wait_for { $expired } }, 1, 'Reconfigured timer on_expire works' );
+
+   $timer->start;
+   ok( exception { $timer->configure( delay => 5 ); },
+       'Configure a running timer fails' );
+
+   $loop->remove( $timer );
+}
+
+{
+   my $timer = IO::Async::Timer::Countdown->new(
+      delay => 1 * AUT,
+      remove_on_expire => 1,
+
+      on_expire => sub { },
+   );
+
+   $loop->add( $timer );
+   $timer->start;
+
+   time_about( sub { wait_for { $timer->is_expired } }, 1, 'remove_on_expire Timer' );
+
+   is( $timer->get_loop, undef, 'remove_on_expire Timer removed from Loop after expire' );
+}
 
 ## Subclass
 
 my $sub_expired;
+{
+   my $timer = TestTimer->new(
+      delay => 2 * AUT,
+   );
 
-$timer = TestTimer->new(
-   delay => 2 * AUT,
-);
+   ok( defined $timer, 'subclass $timer defined' );
+   isa_ok( $timer, "IO::Async::Timer", 'subclass $timer isa IO::Async::Timer' );
 
-ok( defined $timer, 'subclass $timer defined' );
-isa_ok( $timer, "IO::Async::Timer", 'subclass $timer isa IO::Async::Timer' );
+   is_oneref( $timer, 'subclass $timer has refcount 1 initially' );
 
-is_oneref( $timer, 'subclass $timer has refcount 1 initially' );
+   $loop->add( $timer );
 
-$loop->add( $timer );
+   is_refcount( $timer, 2, 'subclass $timer has refcount 2 after adding to Loop' );
 
-is_refcount( $timer, 2, 'subclass $timer has refcount 2 after adding to Loop' );
+   $timer->start;
 
-$timer->start;
+   is_refcount( $timer, 2, 'subclass $timer has refcount 2 after starting' );
 
-is_refcount( $timer, 2, 'subclass $timer has refcount 2 after starting' );
+   ok( $timer->is_running, 'Started subclass Timer is running' );
 
-ok( $timer->is_running, 'Started subclass Timer is running' );
+   time_about( sub { wait_for { $sub_expired } }, 2, 'subclass Timer works' );
 
-time_about( sub { wait_for { $sub_expired } }, 2, 'subclass Timer works' );
+   ok( !$timer->is_running, 'Expired subclass Timer is no longer running' );
 
-ok( !$timer->is_running, 'Expired subclass Timer is no longer running' );
+   is_refcount( $timer, 2, 'subclass $timer has refcount 2 before removing from Loop' );
 
-is_refcount( $timer, 2, 'subclass $timer has refcount 2 before removing from Loop' );
+   $loop->remove( $timer );
 
-$loop->remove( $timer );
-
-is_oneref( $timer, 'subclass $timer has refcount 1 after removing from Loop' );
-
-undef $timer;
+   is_oneref( $timer, 'subclass $timer has refcount 1 after removing from Loop' );
+}
 
 package TestTimer;
 use base qw( IO::Async::Timer::Countdown );

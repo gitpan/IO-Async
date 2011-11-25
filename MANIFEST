@@ -7,6 +7,7 @@ examples/tail-logfile.pl
 examples/tcp-proxy.pl
 examples/whoami-server.pl
 lib/IO/Async.pm
+lib/IO/Async/Channel.pm
 lib/IO/Async/ChildManager.pm
 lib/IO/Async/Connector.pm
 lib/IO/Async/DetachedCode.pm
@@ -86,6 +87,7 @@ t/34process-handles.t
 t/35loop-openchild.t
 t/36loop-runchild.t
 t/37loop-child-root.t
+t/40channel.t
 t/41detachedcode-call.t
 t/41function.t
 t/50resolver.t

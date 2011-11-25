@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.44';
+our $VERSION = '0.45';
 
 use Carp;
 
@@ -508,7 +508,7 @@ sub _add_to_loop
                $self->invoke_event( on_finish => $exitcode );
          }
 
-         $self->_remove_from_outer;
+         $self->remove_from_parent;
       },
    );
 }

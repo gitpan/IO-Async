@@ -8,14 +8,14 @@ package IO::Async::Function;
 use strict;
 use warnings;
 
-our $VERSION = '0.44';
+our $VERSION = '0.45';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
 
 use Carp;
 
-use Storable qw( freeze thaw );
+use Storable qw( freeze );
 
 =head1 NAME
 
@@ -323,8 +323,6 @@ sub call
    my $args = delete $params{args};
    ref $args eq "ARRAY" or croak "Expected 'args' to be an array";
 
-   my $request = freeze( $args );
-
    my $on_result;
    if( defined $params{on_result} ) {
       my $inner_on_result = delete $params{on_result};
@@ -356,11 +354,12 @@ sub call
    my $worker = $self->_get_worker;
 
    if( !$worker ) {
+      my $request = freeze( $args );
       push @{ $self->{pending_queue} }, [ $request, $on_result ];
       return;
    }
 
-   $self->_call_worker( $worker, $request, $on_result );
+   $self->_call_worker( $worker, args => $args, $on_result );
 }
 
 sub _worker_objects
@@ -428,8 +427,6 @@ sub _new_worker
 
    $self->add_child( $worker );
 
-   $worker->stdin->configure( autoflush => 1 );
-
    return $self->{workers}{$worker->pid} = $worker;
 }
 
@@ -451,9 +448,9 @@ sub _get_worker
 sub _call_worker
 {
    my $self = shift;
-   my ( $worker, $request, $on_result ) = @_;
+   my ( $worker, $type, $args, $on_result ) = @_;
 
-   $worker->call( $request, $on_result );
+   $worker->call( $type, $args, $on_result );
 
    if( $self->workers_idle == 0 ) {
       $self->{idle_timer}->stop if $self->{idle_timer};
@@ -466,7 +463,7 @@ sub _dispatch_pending
 
    if( my $next = shift @{ $self->{pending_queue} } ) {
       my $worker = $self->_get_worker or return;
-      $self->_call_worker( $worker, @$next );
+      $self->_call_worker( $worker, frozen => @$next );
    }
    elsif( $self->workers_idle > $self->{min_workers} ) {
       $self->{idle_timer}->start if $self->{idle_timer} and !$self->{idle_timer}->is_running;
@@ -478,85 +475,64 @@ package # hide from indexer
 
 use base qw( IO::Async::Process );
 
-use Storable qw( freeze thaw );
+use IO::Async::Channel;
 
-sub _read_exactly
+sub new
 {
-   $_[1] = "";
+   my $class = shift;
+   my %params = @_;
 
-   while( length $_[1] < $_[2] ) {
-      my $n = read( $_[0], $_[1], $_[2]-length $_[1], length $_[1] );
-      defined $n or return undef;
-      $n or die "EXIT";
-   }
-}
+   # Use fd3/fd4 for channels, so as to leave STDIN/STDOUT untouched
 
-sub _init
-{
-   my $worker = shift;
-   my ( $params ) = @_;
+   my $arg_channel = IO::Async::Channel->new;
+   my $ret_channel = IO::Async::Channel->new;
 
-   $worker->{on_result_queue} = \my @on_result_queue;
+   my $code = delete $params{code};
+   $params{code} = sub {
+      $arg_channel->setup_sync_mode( IO::Handle->new_from_fd( 3, "<" ) );
+      $ret_channel->setup_sync_mode( IO::Handle->new_from_fd( 4, ">" ) );
 
-   my $code = $params->{code};
-   $params->{code} = sub {
-      # If -CS is in effect STDIN and STDOUT will be set to UTF-8 mode. Since
-      # we're communicating binary structures and not Unicode text we need to
-      # enable binmode
-      STDIN->binmode;
-      STDOUT->binmode;
-
-      while(1) {
-         my $n = _read_exactly( \*STDIN, my $lenbuffer, 4 );
-         defined $n or die "Cannot read - $!";
-
-         my $len = unpack( "I", $lenbuffer );
-
-         $n = _read_exactly( \*STDIN, my $record, $len );
-         defined $n or die "Cannot read - $!";
-
-         my $args = thaw( $record );
-
+      while( my $args = $arg_channel->recv ) {
          my @ret;
          my $ok = eval { @ret = $code->( @$args ); 1 };
 
          if( $ok ) {
-            unshift @ret, "r";
+            $ret_channel->send( [ r => @ret ] );
          }
          else {
-            @ret = ( "e", "$@" );
+            $ret_channel->send( [ e => "$@" ] );
          }
-
-         my $result = freeze( \@ret );
-         print STDOUT pack("I", length $result) . $result;
       }
    };
 
-   $params->{stdin}  = { via => "pipe_write" };
-   $params->{stdout} = {
-      on_read => sub {
-         my ( $stream, $buffref, $eof ) = @_;
+   my $worker = $class->SUPER::new(
+      %params,
+      fd3 => { via => "pipe_write" },
+      fd4 => { via => "pipe_read" },
+   );
 
-         if( $eof ) {
-            my $on_result = shift @on_result_queue;
-            $on_result->( "eof" ) if $on_result;
-            return;
-         }
+   $worker->{on_result_queue} = \my @on_result_queue;
+   $worker->{arg_channel} = $arg_channel;
+   $worker->{ret_channel} = $ret_channel;
 
-         return 0 unless length( $$buffref ) >= 4;
-         my $len = unpack( "I", $$buffref );
-         return 0 unless length( $$buffref ) >= 4 + $len;
+   $arg_channel->setup_async_mode(
+      stream => $worker->fd(3),
+   );
 
-         my $record = thaw( substr( $$buffref, 4, $len ) );
-         substr( $$buffref, 0, 4 + $len ) = "";
+   $ret_channel->setup_async_mode(
+      stream => $worker->fd(4),
+      on_recv => sub {
+         my ( undef, $result ) = @_;
 
-         (shift @on_result_queue)->( @$record );
-
-         return 1;
+         (shift @on_result_queue)->( @$result );
       },
-   };
+      on_eof => sub {
+         my $on_result = shift @on_result_queue;
+         $on_result->( "eof" ) if $on_result;
+      }
+   );
 
-   $worker->SUPER::_init( $params );
+   return $worker;
 }
 
 sub configure
@@ -574,7 +550,7 @@ sub configure
 sub stop
 {
    my $worker = shift;
-   $worker->stdin->close;
+   $worker->{arg_channel}->close;
 
    if( my $function = $worker->parent ) {
       delete $function->{workers}{$worker->pid};
@@ -584,7 +560,7 @@ sub stop
 sub call
 {
    my $worker = shift;
-   my ( $request, $on_result ) = @_;
+   my ( $type, $args, $on_result ) = @_;
 
    push @{ $worker->{on_result_queue} }, $worker->_capture_weakself( sub {
       my $worker = shift;
@@ -612,7 +588,16 @@ sub call
       $function->_dispatch_pending if $function;
    } );
 
-   $worker->stdin->write( pack("I", length $request) . $request );
+   if( $type eq "args" ) {
+      $worker->{arg_channel}->send( $args );
+   }
+   elsif( $type eq "frozen" ) {
+      $worker->{arg_channel}->send_frozen( $args );
+   }
+   else {
+      die "TODO: unsure $type\n";
+   }
+
    $worker->{busy} = 1;
 }
 

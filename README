@@ -1,5 +1,5 @@
 NAME
-    "IO::Async" - Asynchronous event-driven programming
+    `IO::Async' - Asynchronous event-driven programming
 
 SYNOPSIS
      use IO::Async::Stream;
@@ -64,7 +64,7 @@ DESCRIPTION
     handle being managed. While in most cases it will represent a single
     filehandle, such as a socket (for example, an IO::Socket::INET
     connection), it is possible to have separate reading and writing handles
-    (most likely for a program's "STDIN" and "STDOUT" streams, or a pair of
+    (most likely for a program's `STDIN' and `STDOUT' streams, or a pair of
     pipes connected to a child process).
 
     The IO::Async::Stream class is a subclass of IO::Async::Handle which
@@ -76,15 +76,15 @@ DESCRIPTION
     when the outgoing buffer is empty.
 
     While stream-based sockets can be handled using using
-    "IO::Async::Stream", datagram or raw sockets do not provide a
+    `IO::Async::Stream', datagram or raw sockets do not provide a
     bytestream. For these, the IO::Async::Socket class is another subclass
     of IO::Async::Handle which maintains an outgoing packet queue, and
     informs of packet receipt using a callback or method.
 
     The IO::Async::Listener class is another subclass of IO::Async::Handle
-    which facilitates the use of listen(2)-mode sockets. When a new
-    connection is available on the socket it will accept(2) it and pass the
-    new client socket to its callback function.
+    which facilitates the use of `listen(2)'-mode sockets. When a new
+    connection is available on the socket it will `accept(2)' it and pass
+    the new client socket to its callback function.
 
   Timers
     An IO::Async::Timer::Absolute object represents a timer that expires at
@@ -124,10 +124,10 @@ DESCRIPTION
 
     IO::Async::Loop::Poll uses an IO::Poll object for this test.
 
-    IO::Async::Loop::Select uses the select(2) syscall.
+    IO::Async::Loop::Select uses the `select(2)' syscall.
 
     Other subclasses of loop may appear on CPAN under their own dists; such
-    as IO::Async::Loop::Glib which acts as a proxy for the "Glib::MainLoop"
+    as IO::Async::Loop::Glib which acts as a proxy for the `Glib::MainLoop'
     of a Glib-based program, or IO::Async::Loop::Ppoll which uses the
     IO::Ppoll object to handle signals safely on Linux.
 
@@ -137,13 +137,13 @@ DESCRIPTION
 
   Child Processes
     The IO::Async::Loop object provides a number of methods to facilitate
-    the running of child processes. "spawn_child" is primarily a wrapper
-    around the typical fork(2)/exec(2) style of starting child processes,
-    and "run_child" provide a method similar to perl's "readpipe" (which is
-    used to implement backticks ``).
+    the running of child processes. `spawn_child' is primarily a wrapper
+    around the typical `fork(2)'/`exec(2)' style of starting child
+    processes, and `run_child' provide a method similar to perl's `readpipe'
+    (which is used to implement backticks ```').
 
   Asynchronous Functions
-    The "IO::Async" framework generally provides mechanisms for multiplexing
+    The `IO::Async' framework generally provides mechanisms for multiplexing
     IO tasks between different handles, so there aren't many occasions when
     it is necessary to run code in another thread or process. Two cases
     where this does become useful are when:
@@ -161,9 +161,9 @@ DESCRIPTION
 
   Networking
     The IO::Async::Loop provides several methods for performing
-    network-based tasks. Primarily, the "connect" and "listen" methods allow
+    network-based tasks. Primarily, the `connect' and `listen' methods allow
     the creation of client or server network sockets. Additionally, the
-    "resolve" method allows the use of the system's name resolvers in an
+    `resolve' method allows the use of the system's name resolvers in an
     asynchronous way, to resolve names into addresses, or vice versa. These
     methods are fully IPv6-capable if the underlying operating system is.
 
@@ -186,9 +186,9 @@ TODO
 
     *   A consideration on how to provide per-OS versions of the utility
         classes. For example, Win32 would probably need an
-        extensively-different "ChildManager", or OSes may have specific ways
+        extensively-different `ChildManager', or OSes may have specific ways
         to perform asynchronous name resolution operations better than the
-        generic "IO::Async::Function" approach. This should be easier to
+        generic `IO::Async::Function' approach. This should be easier to
         implement now that the IO::Async::Loop magic constructor looks for
         OS-specific subclasses first.
 
