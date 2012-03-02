@@ -19,7 +19,7 @@ SYNOPSIS
               on_read => sub {
                  my ( $self, $buffref, $eof ) = @_;
 
-                 while( $buffref =~ s/^(.*\n)// ) {
+                 while( $$buffref =~ s/^(.*\n)// ) {
                     print "Received a line $1";
                  }
 
@@ -44,7 +44,7 @@ DESCRIPTION
     would consist of a single subclass of IO::Async::Loop to act as a
     container of other objects, which perform the actual IO work required by
     the program. As well as IO handles, the loop also supports timers and
-    signal handlers, and includes more higher-level functionallity built on
+    signal handlers, and includes more higher-level functionality built on
     top of these basic parts.
 
     Because there are a lot of classes in this collection, the following
@@ -53,7 +53,7 @@ DESCRIPTION
   Notifiers
     The base class of all the event handling subclasses is
     IO::Async::Notifier. It does not perform any IO operations itself, but
-    instead acts as a base class to build the specific IO functionallity
+    instead acts as a base class to build the specific IO functionality
     upon. It can also coordinate a collection of other Notifiers contained
     within it, forming a tree structure.
 
@@ -118,7 +118,7 @@ DESCRIPTION
   Loops
     The IO::Async::Loop object class represents an abstract collection of
     IO::Async::Notifier objects, and manages the actual filehandle IO
-    watchers, timers, signal handlers, and other functionallity. It performs
+    watchers, timers, signal handlers, and other functionality. It performs
     all of the abstract collection management tasks, and leaves the actual
     OS interactions to a particular subclass for the purpose.
 
@@ -142,7 +142,7 @@ DESCRIPTION
     processes, and `run_child' provide a method similar to perl's `readpipe'
     (which is used to implement backticks ```').
 
-  Asynchronous Functions
+  Asynchronous Co-routines and Functions
     The `IO::Async' framework generally provides mechanisms for multiplexing
     IO tasks between different handles, so there aren't many occasions when
     it is necessary to run code in another thread or process. Two cases
@@ -157,7 +157,14 @@ DESCRIPTION
     For these cases, an instance of IO::Async::Function can be used around a
     code block, to execute it in a worker child process or set of processes.
     The code in the sub-process runs isolated from the main program,
-    communicating only by function call arguments and return values.
+    communicating only by function call arguments and return values. This
+    can be used to solve problems involving state-less library functions.
+
+    An IO::Async::Routine object wraps a code block running in a separate
+    process to form a kind of co-routine. Communication with it happens via
+    IO::Async::Channel objects. It can be used to solve any sort of problem
+    involving keeping a possibly-stateful co-routine running alongside the
+    rest of an asynchronous program.
 
   Networking
     The IO::Async::Loop provides several methods for performing
@@ -192,11 +199,18 @@ TODO
         implement now that the IO::Async::Loop magic constructor looks for
         OS-specific subclasses first.
 
-    *   A consideration of whether it is useful and possible to provide
-        integration with AnyEvent.
+    *   Consider some form of persistent object wrapper in the form of an
+        `IO::Async::Object', based on `IO::Async::Routine'.
 
-SEE ALSO
-    *   Event - Event loop processing
+    *   Build some sort of future-like system, possibly called
+        `IO::Async::Task' to represent one-shot events like name resolver
+        lookups, socket connects, etc.. Replace uses of `Async::MergePoint'
+        with it, removing a dependency. Use `CPS::Future'.
+
+    *   `IO::Async::Protocol::Datagram'
+
+    *   Support for watching filesystem entries for change. Extract logic
+        from `IO::Async::FileStream'. Define Loop watch/unwatch method pair.
 
 SUPPORT
     Bugs may be reported via RT at

@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.45';
+our $VERSION = '0.46';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -28,9 +28,6 @@ use IO::Socket;
 use Time::HiRes qw(); # empty import
 use POSIX qw( _exit WNOHANG );
 use Scalar::Util qw( refaddr );
-
-# Try to load IO::Socket::INET6 but don't worry if we don't have it
-# eval { require IO::Socket::INET6 };
 
 # Never sleep for more than 1 second if a signal proxy is registered, to avoid
 # a borderline race condition.
@@ -90,7 +87,7 @@ C<IO::Async> framework. Its primary purpose is to store a set of
 L<IO::Async::Notifier> objects or subclasses of them. It handles all of the
 lower-level set manipulation actions, and leaves the actual IO readiness 
 testing/notification to the concrete class that implements it. It also
-provides other functionallity such as signal handling, child process managing,
+provides other functionality such as signal handling, child process managing,
 and timers.
 
 See also the two bundled Loop subclasses:
@@ -444,7 +441,7 @@ sub loop_stop
 =head1 FEATURES
 
 Most of the following methods are higher-level wrappers around base
-functionallity provided by the low-level API documented below. They may be
+functionality provided by the low-level API documented below. They may be
 used by C<IO::Async::Notifier> subclasses or called directly by the program.
 
 =cut
@@ -592,13 +589,7 @@ sub later
    return $self->watch_idle( when => 'later', code => $code );
 }
 
-=head2 $pid = $loop->detach_child( %params )
-
-This method creates a new child process to run a given code block. It is a
-legacy wrapper around the C<fork> method.
-
-=cut
-
+# undocumented, to be removed soon
 sub detach_child
 {
    my $self = shift;
@@ -606,18 +597,7 @@ sub detach_child
    $self->fork( @_ );
 }
 
-=head2 $code = $loop->detach_code( %params )
-
-This method creates a new detached code object. It is equivalent to calling
-the C<IO::Async::DetachedCode> constructor, passing in the given loop. See the
-documentation on this class for more information.
-
-Note that this behaviour is now deprecated, in favour of constructing a
-L<IO::Async::Function> object instead, and adding it to the loop. This object
-is more flexible and more powerful than the legacy C<DetachedCode>.
-
-=cut
-
+# undocumented, to be removed soon
 sub detach_code
 {
    my $self = shift;
@@ -1077,7 +1057,7 @@ sub socket
 
    # That failed. Most likely because the Domain was unrecognised. This 
    # usually happens if getaddrinfo returns an AF_INET6 address but we don't
-   # have IO::Socket::INET6 loaded. In this case we'll return a generic one.
+   # have a suitable class loaded. In this case we'll return a generic one.
    # It won't be in the specific subclass but that's the best we can do. And
    # it will still work as a generic socket.
    return IO::Socket->new->socket( $family, $socktype, $proto );
@@ -1521,7 +1501,7 @@ sub fork
 
 As C<IO::Async::Loop> is an abstract base class, specific subclasses of it are
 required to implement certain methods that form the base level of
-functionallity. They are not recommended for applications to use; see instead
+functionality. They are not recommended for applications to use; see instead
 the various event objects or higher level methods listed above.
 
 These methods should be considered as part of the interface contract required
@@ -1792,7 +1772,7 @@ CODE reference to the continuation to run at the allotted time.
 
 Either one of C<time> or C<delay> is required.
 
-For more powerful timer functionallity as a C<IO::Async::Notifier> (so it can
+For more powerful timer functionality as a C<IO::Async::Notifier> (so it can
 be used as a child within another Notifier), see instead the
 L<IO::Async::Timer> object and its subclasses.
 
@@ -2045,7 +2025,7 @@ sub unwatch_child
 =head1 METHODS FOR SUBCLASSES
 
 The following methods are provided to access internal features which are
-required by specific subclasses to implement the loop functionallity. The use
+required by specific subclasses to implement the loop functionality. The use
 cases of each will be documented in the above section.
 
 =cut
@@ -2119,7 +2099,7 @@ sub _manage_queues
 
 An Extension is a Perl module that provides extra methods in the
 C<IO::Async::Loop> or other packages. They are intended to provide extra
-functionallity that easily integrates with the rest of the code.
+functionality that easily integrates with the rest of the code.
 
 Certain base methods take an C<extensions> parameter; an ARRAY reference
 containing a list of extension names. If such a list is passed to a method, it
@@ -2145,7 +2125,7 @@ will become
 This is provided so that extension modules, such as L<IO::Async::SSL> can
 easily be invoked indirectly, by passing extra arguments to C<connect> methods
 or similar, without needing every module to be aware of the C<SSL> extension.
-This functionallity is generic and not limited to C<SSL>; other extensions may
+This functionality is generic and not limited to C<SSL>; other extensions may
 also use it.
 
 The following methods take an C<extensions> parameter:

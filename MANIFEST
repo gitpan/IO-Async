@@ -29,6 +29,7 @@ lib/IO/Async/Protocol.pm
 lib/IO/Async/Protocol/LineStream.pm
 lib/IO/Async/Protocol/Stream.pm
 lib/IO/Async/Resolver.pm
+lib/IO/Async/Routine.pm
 lib/IO/Async/Sequencer.pm
 lib/IO/Async/Signal.pm
 lib/IO/Async/Socket.pm
@@ -88,8 +89,9 @@ t/35loop-openchild.t
 t/36loop-runchild.t
 t/37loop-child-root.t
 t/40channel.t
-t/41detachedcode-call.t
-t/41function.t
+t/41routine.t
+t/42function.t
+t/43detachedcode.t
 t/50resolver.t
 t/51loop-connect.t
 t/52loop-listen.t

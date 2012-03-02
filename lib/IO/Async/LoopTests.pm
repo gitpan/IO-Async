@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2009-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2009-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::LoopTests;
 
@@ -24,7 +24,7 @@ use Fcntl qw( SEEK_SET );
 use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.45';
+our $VERSION = '0.46';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -152,7 +152,7 @@ Tests the Loop's ability to watch filehandles for IO readiness
 
 =cut
 
-use constant count_tests_io => 17;
+use constant count_tests_io => 16;
 sub run_tests_io
 {
    {
@@ -249,7 +249,7 @@ sub run_tests_io
    }
 
    SKIP: {
-      $loop->_CAN_ON_HANGUP or skip "Loop cannot watch_io for on_hangup", 3;
+      $loop->_CAN_ON_HANGUP or skip "Loop cannot watch_io for on_hangup", 2;
 
       my ( $S1, $S2 ) = $loop->socketpair or die "Cannot socketpair - $!";
       $_->blocking( 0 ) for $S1, $S2;
@@ -267,21 +267,6 @@ sub run_tests_io
       is( $hangup, 1, '$hangup after socket close' );
 
       my ( $Prd, $Pwr ) = $loop->pipepair or die "Cannot pipepair - $!";
-      $_->blocking( 0 ) for $Prd, $Pwr;
-
-      $hangup = 0;
-      $loop->watch_io(
-         handle => $Prd,
-         on_hangup => sub { $hangup = 1 },
-      );
-
-      $Pwr->close;
-
-      $loop->loop_once( 0.1 );
-
-      is( $hangup, 1, '$hangup after pipe close for reading' );
-
-      ( $Prd, $Pwr ) = $loop->pipepair or die "Cannot pipepair - $!";
       $_->blocking( 0 ) for $Prd, $Pwr;
 
       $hangup = 0;

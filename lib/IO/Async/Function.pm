@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2011-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::Function;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.45';
+our $VERSION = '0.46';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
@@ -73,11 +73,8 @@ modifications to the state of the parent program. Therefore, all the data
 required to perform its task must be represented in the call arguments, and
 all of the result must be represented in the return values.
 
-The arguments and return values are passed to it over a file handle, using
-L<Storable>. This can cope with most kinds of Perl data, including plain
-numbers and strings, references to hashes or arrays, and self-referential or
-even cyclic data structures. Note however that passing C<CODE> references or
-IO handles is not supported.
+The Function object is implemented using an L<IO::Async::Routine> with two
+L<IO::Async::Channel> objects to pass calls into and results out from it.
 
 The C<IO::Async> framework generally provides mechanisms for multiplexing IO
 tasks between different handles, so there aren't many occasions when such an
@@ -98,6 +95,11 @@ no nonblocking or asynchronous version is supplied. This is used by
 C<IO::Async::Resolver>.
 
 =back
+
+This object is ideal for representing "pure" functions; that is, blocks of
+code which have no stateful effect on the process, and whose result depends
+only on the arguments passed in. For a more general co-routine ability, see
+also L<IO::Async::Routine>.
 
 =cut
 
@@ -415,10 +417,6 @@ sub _new_worker
          my $self = shift or return;
          my ( $worker ) = @_;
 
-         if( @{ $worker->{on_result_queue} } ) {
-            print STDERR "TODO: on_result_queue to be flushed\n";
-         }
-
          $self->_new_worker if $self->workers < $self->{min_workers};
 
          $self->_dispatch_pending;
@@ -473,7 +471,7 @@ sub _dispatch_pending
 package # hide from indexer
    IO::Async::Function::Worker;
 
-use base qw( IO::Async::Process );
+use base qw( IO::Async::Routine );
 
 use IO::Async::Channel;
 
@@ -482,16 +480,13 @@ sub new
    my $class = shift;
    my %params = @_;
 
-   # Use fd3/fd4 for channels, so as to leave STDIN/STDOUT untouched
-
    my $arg_channel = IO::Async::Channel->new;
    my $ret_channel = IO::Async::Channel->new;
 
+   my $exit_on_die = delete $params{exit_on_die};
+
    my $code = delete $params{code};
    $params{code} = sub {
-      $arg_channel->setup_sync_mode( IO::Handle->new_from_fd( 3, "<" ) );
-      $ret_channel->setup_sync_mode( IO::Handle->new_from_fd( 4, ">" ) );
-
       while( my $args = $arg_channel->recv ) {
          my @ret;
          my $ok = eval { @ret = $code->( @$args ); 1 };
@@ -507,44 +502,15 @@ sub new
 
    my $worker = $class->SUPER::new(
       %params,
-      fd3 => { via => "pipe_write" },
-      fd4 => { via => "pipe_read" },
+      channels_in  => [ $arg_channel ],
+      channels_out => [ $ret_channel ],
    );
 
-   $worker->{on_result_queue} = \my @on_result_queue;
    $worker->{arg_channel} = $arg_channel;
    $worker->{ret_channel} = $ret_channel;
-
-   $arg_channel->setup_async_mode(
-      stream => $worker->fd(3),
-   );
-
-   $ret_channel->setup_async_mode(
-      stream => $worker->fd(4),
-      on_recv => sub {
-         my ( undef, $result ) = @_;
-
-         (shift @on_result_queue)->( @$result );
-      },
-      on_eof => sub {
-         my $on_result = shift @on_result_queue;
-         $on_result->( "eof" ) if $on_result;
-      }
-   );
+   $worker->{exit_on_die} = $exit_on_die;
 
    return $worker;
-}
-
-sub configure
-{
-   my $worker = shift;
-   my %params = @_;
-
-   foreach (qw( exit_on_die )) {
-      $worker->{$_} = delete $params{$_} if exists $params{$_};
-   }
-
-   $worker->SUPER::configure( %params );
 }
 
 sub stop
@@ -562,32 +528,6 @@ sub call
    my $worker = shift;
    my ( $type, $args, $on_result ) = @_;
 
-   push @{ $worker->{on_result_queue} }, $worker->_capture_weakself( sub {
-      my $worker = shift;
-      my $type = shift;
-
-      $worker->{busy} = 0;
-
-      my $function = $worker->parent;
-
-      if( $type eq "eof" ) {
-         $on_result->( error => "closed" );
-         $worker->stop;
-      }
-      elsif( $type eq "r" ) {
-         $on_result->( return => @_ );
-      }
-      elsif( $type eq "e" ) {
-         $on_result->( error => @_ );
-         $worker->stop if $worker->{exit_on_die};
-      }
-      else {
-         die "Unrecognised type from worker - $type\n";
-      }
-
-      $function->_dispatch_pending if $function;
-   } );
-
    if( $type eq "args" ) {
       $worker->{arg_channel}->send( $args );
    }
@@ -597,6 +537,42 @@ sub call
    else {
       die "TODO: unsure $type\n";
    }
+
+   $worker->{ret_channel}->recv(
+      on_recv => $worker->_capture_weakself( sub {
+         my ( $worker, $channel, $result ) = @_;
+         my ( $type, @values ) = @$result;
+
+         $worker->{busy} = 0;
+
+         my $function = $worker->parent;
+
+         if( $type eq "r" ) {
+            $on_result->( return => @values );
+         }
+         elsif( $type eq "e" ) {
+            $on_result->( error => @values );
+            $worker->stop if $worker->{exit_on_die};
+         }
+         else {
+            die "Unrecognised type from worker - $type\n";
+         }
+
+         $function->_dispatch_pending if $function;
+      } ),
+      on_eof => $worker->_capture_weakself( sub {
+         my ( $worker, $channel ) = @_;
+
+         $worker->{busy} = 0;
+
+         my $function = $worker->parent;
+
+         $on_result->( error => "closed" );
+         $worker->stop;
+
+         $function->_dispatch_pending if $function;
+      } ),
+   );
 
    $worker->{busy} = 1;
 }

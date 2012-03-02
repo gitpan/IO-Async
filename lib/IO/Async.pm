@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async;
 
@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.45';
+our $VERSION = '0.46';
 
 =head1 NAME
 
@@ -37,7 +37,7 @@ C<IO::Async> - Asynchronous event-driven programming
           on_read => sub {
              my ( $self, $buffref, $eof ) = @_;
 
-             while( $buffref =~ s/^(.*\n)// ) {
+             while( $$buffref =~ s/^(.*\n)// ) {
                 print "Received a line $1";
              }
 
@@ -63,7 +63,7 @@ asynchronous filehandle IO operations. A typical program using them would
 consist of a single subclass of L<IO::Async::Loop> to act as a container of
 other objects, which perform the actual IO work required by the program. As
 well as IO handles, the loop also supports timers and signal handlers, and
-includes more higher-level functionallity built on top of these basic parts.
+includes more higher-level functionality built on top of these basic parts.
 
 Because there are a lot of classes in this collection, the following overview
 gives a brief description of each.
@@ -72,7 +72,7 @@ gives a brief description of each.
 
 The base class of all the event handling subclasses is L<IO::Async::Notifier>.
 It does not perform any IO operations itself, but instead acts as a base class
-to build the specific IO functionallity upon. It can also coordinate a
+to build the specific IO functionality upon. It can also coordinate a
 collection of other Notifiers contained within it, forming a tree structure.
 
 The following sections describe particular types of Notifier.
@@ -139,7 +139,7 @@ the child process exits.
 
 The L<IO::Async::Loop> object class represents an abstract collection of
 L<IO::Async::Notifier> objects, and manages the actual filehandle IO
-watchers, timers, signal handlers, and other functionallity. It performs all
+watchers, timers, signal handlers, and other functionality. It performs all
 of the abstract collection management tasks, and leaves the actual OS
 interactions to a particular subclass for the purpose.
 
@@ -164,7 +164,7 @@ typical C<fork(2)>/C<exec(2)> style of starting child processes, and
 C<run_child> provide a method similar to perl's C<readpipe> (which is used
 to implement backticks C<``>).
 
-=head2 Asynchronous Functions
+=head2 Asynchronous Co-routines and Functions
 
 The C<IO::Async> framework generally provides mechanisms for multiplexing IO
 tasks between different handles, so there aren't many occasions when it is
@@ -187,7 +187,14 @@ no asynchronous version is supplied.
 For these cases, an instance of L<IO::Async::Function> can be used around
 a code block, to execute it in a worker child process or set of processes.
 The code in the sub-process runs isolated from the main program, communicating
-only by function call arguments and return values.
+only by function call arguments and return values. This can be used to solve
+problems involving state-less library functions.
+
+An L<IO::Async::Routine> object wraps a code block running in a separate
+process to form a kind of co-routine. Communication with it happens via
+L<IO::Async::Channel> objects. It can be used to solve any sort of problem
+involving keeping a possibly-stateful co-routine running alongside the rest of
+an asynchronous program.
 
 =head2 Networking
 
@@ -230,18 +237,24 @@ constructor looks for OS-specific subclasses first.
 
 =item *
 
-A consideration of whether it is useful and possible to provide integration
-with L<AnyEvent>.
-
-=back
-
-=head1 SEE ALSO
-
-=over 4
+Consider some form of persistent object wrapper in the form of an
+C<IO::Async::Object>, based on C<IO::Async::Routine>.
 
 =item *
 
-L<Event> - Event loop processing
+Build some sort of future-like system, possibly called C<IO::Async::Task> to
+represent one-shot events like name resolver lookups, socket connects, etc..
+Replace uses of C<Async::MergePoint> with it, removing a dependency.
+Use C<CPS::Future>.
+
+=item *
+
+C<IO::Async::Protocol::Datagram>
+
+=item *
+
+Support for watching filesystem entries for change. Extract logic from
+C<IO::Async::FileStream>. Define Loop watch/unwatch method pair.
 
 =back
 

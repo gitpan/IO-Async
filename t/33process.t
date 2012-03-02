@@ -4,10 +4,10 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 48;
+use Test::More tests => 50;
 use Test::Refcount;
 
-use POSIX qw( WIFEXITED WEXITSTATUS ENOENT );
+use POSIX qw( WIFEXITED WEXITSTATUS ENOENT SIGTERM SIGUSR1 );
 use constant ENOENT_MESSAGE => do { local $! = ENOENT; "$!" };
 
 use IO::Async::Process;
@@ -35,8 +35,7 @@ testing_loop( $loop );
 
    $loop->add( $process );
 
-   # One extra ref exists in the Process's MergePoint
-   is_refcount( $process, 3, '$process has refcount 3 after $loop->add' );
+   is_refcount( $process, 2, '$process has refcount 2 after $loop->add' );
 
    my $pid = $process->pid;
 
@@ -93,7 +92,7 @@ testing_loop( $loop );
 
    $loop->add( $process );
 
-   is_refcount( $process, 3, '$process has refcount 3 after $loop->add' );
+   is_refcount( $process, 2, '$process has refcount 2 after $loop->add' );
 
    wait_for { defined $exitcode };
 
@@ -203,4 +202,34 @@ testing_loop( $loop );
 
    ok( $process->is_exited,     '$process->is_exited after %ENV test' );
    is( $process->exitstatus, 0, '$process->exitstatus after %ENV test' );
+}
+
+{
+   my $child_ready;
+   $loop->watch_signal( USR1 => sub { $child_ready++ } );
+
+   my $parentpid = $$;
+   my $process = IO::Async::Process->new(
+      code => sub {
+         my $exitcode = 10;
+         $SIG{TERM} = sub { $exitcode = 20; die };
+         kill SIGUSR1 => $parentpid;
+         eval { <STDIN> }; # block
+         return $exitcode;
+      },
+      on_finish => sub { },
+   );
+
+   $loop->add( $process );
+
+   wait_for { $child_ready };
+
+   $process->kill( SIGTERM );
+
+   wait_for { !$process->is_running };
+
+   ok( $process->is_exited,      '$process->is_exited after ->kill' );
+   is( $process->exitstatus, 20, '$process->exitstatus after ->kill' );
+
+   $loop->unwatch_signal( USR1 => );
 }

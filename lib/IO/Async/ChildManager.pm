@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::ChildManager;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.45';
+our $VERSION = '0.46';
 
 # Not a notifier
 
@@ -104,7 +104,7 @@ This object is used indirectly via an C<IO::Async::Loop>:
 
 =head1 DESCRIPTION
 
-This module extends the functionallity of the containing C<IO::Async::Loop> to
+This module extends the functionality of the containing C<IO::Async::Loop> to
 manage the execution of child processes. It acts as a central point to store
 PID values of currently-running children, and to call the appropriate
 continuation handler code when the process terminates. It provides useful
