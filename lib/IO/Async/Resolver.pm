@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Function );
 
-our $VERSION = '0.46';
+our $VERSION = '0.46_001';
 
 use Socket 1.93 qw(
    AI_NUMERICHOST AI_PASSIVE
@@ -287,7 +287,7 @@ sub getaddrinfo
 
    # These address tests don't have to be perfect as if it fails we'll get
    # EAI_NONAME and just try it asynchronously anyway
-   if( ( $host =~ m/^[\d.]+$/ or $host =~ m/^[[:xdigit:]:]$/ ) and
+   if( ( $host =~ m/^[\d.]+$/ or $host =~ m/^[[:xdigit:]:]$/ or $host eq "" ) and
        $service =~ m/^\d+$/ ) {
 
        my ( $err, @results ) = _getaddrinfo( $host, $service,
@@ -309,8 +309,12 @@ sub getaddrinfo
 
    $self->resolve(
       type    => "getaddrinfo_hash",
-      # I really want hash slices
-      data    => [ map { exists $args{$_} ? ( $_ => $args{$_} ) : () } qw( host service family socktype protocol flags ) ],
+      data    => [
+         host    => $host,
+         service => $service,
+         flags   => $flags,
+         map { exists $args{$_} ? ( $_ => $args{$_} ) : () } qw( family socktype protocol ),
+      ],
       timeout => $args{timeout},
       on_resolved => $args{on_resolved},
       on_error    => $args{on_error},

@@ -32,7 +32,7 @@ my $addr = $listensock->sockname;
    $loop->connect(
       addr => { family => "inet", socktype => "stream", addr => $addr },
       on_connected => sub { $sock = shift; },
-      on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
    );
 
    wait_for { $sock };
@@ -53,8 +53,8 @@ my $addr = $listensock->sockname;
       service  => $listensock->sockport,
       socktype => $listensock->socktype,
       on_connected => sub { $sock = shift; },
-      on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
-      on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+      on_resolve_error => sub { die "Test died early - resolve error - $_[-1]\n"; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
    );
 
    wait_for { $sock };
@@ -70,7 +70,15 @@ my $addr = $listensock->sockname;
 
 SKIP: {
    # Some OSes can't bind(2) locally to other addresses on 127./8
-   skip "Cannot bind to 127.0.0.2", 1 unless eval { IO::Socket::INET->new( LocalHost => "127.0.0.2", LocalPort => 0 ) };
+   skip "Cannot bind to 127.0.0.2", 1 unless eval { IO::Socket::INET->new(
+      LocalHost => "127.0.0.2", LocalPort => 0
+   ) };
+
+   # Some can bind(2) but then cannot connect() to 127.0.0.1 from it
+   skip "Cannot connect to 127.0.0.1 from 127.0.0.2", 1 unless eval { IO::Socket::INET->new(
+      LocalHost => "127.0.0.2", LocalPort => 0,
+      PeerHost  => $listensock->sockhost, PeerPort => $listensock->sockport,
+   ) };
 
    my $sock;
 
@@ -80,8 +88,8 @@ SKIP: {
       service  => $listensock->sockport,
       socktype => $listensock->socktype,
       on_connected => sub { $sock = shift; },
-      on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
-      on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+      on_resolve_error => sub { die "Test died early - resolve error - $_[-1]\n"; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
    );
 
    wait_for { $sock };
@@ -101,8 +109,8 @@ SKIP: {
       service  => $listensock->sockport,
       socktype => $listensock->socktype,
       on_stream => sub { $stream = shift; },
-      on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
-      on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+      on_resolve_error => sub { die "Test died early - resolve error - $_[-1]\n"; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
    );
 
    wait_for { $stream };
@@ -124,7 +132,7 @@ my $udpsock = IO::Socket::INET->new( LocalAddr => 'localhost', Protocol => 'udp'
    $loop->connect(
       addr => { family => "inet", socktype => "dgram", addr => $udpsock->sockname },
       on_socket => sub { $sock = shift; },
-      on_connect_error => sub { die "Test died early - connect error $_[0]\n"; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
    );
 
    wait_for { $sock };
