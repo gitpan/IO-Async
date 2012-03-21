@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 =head1 NAME
 
@@ -54,7 +54,7 @@ C<IO::Async> - Asynchronous event-driven programming
     on_connect_error => sub { die "Cannot connect - $_[0] failed $_[-1]\n"; },
  );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 

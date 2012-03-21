@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2009-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2009-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::Timer::Countdown;
 
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 use Carp;
 
@@ -29,7 +29,7 @@ C<IO::Async::Timer::Countdown> - event callback after a fixed delay
 
     on_expire => sub {
        print "Sorry, your time's up\n";
-       $loop->loop_stop;
+       $loop->stop;
     },
  );
 
@@ -37,7 +37,7 @@ C<IO::Async::Timer::Countdown> - event callback after a fixed delay
 
  $loop->add( $timer );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 
@@ -77,7 +77,8 @@ CODE reference for the C<on_expire> event.
 =item delay => NUM
 
 The delay in seconds after starting the timer until it expires. Cannot be
-changed if the timer is running.
+changed if the timer is running. A timer with a zero delay expires
+"immediately".
 
 =item remove_on_expire => BOOL
 
@@ -112,7 +113,7 @@ sub configure
       $self->is_running and croak "Cannot configure 'delay' of a running timer\n";
 
       my $delay = delete $params{delay};
-      $delay > 0 or croak "Expected a 'delay' as a positive number";
+      $delay >= 0 or croak "Expected a 'delay' as a non-negative number";
 
       $self->{delay} = $delay;
    }

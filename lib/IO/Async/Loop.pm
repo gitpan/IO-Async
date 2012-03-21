@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -78,7 +78,7 @@ C<IO::Async::Loop> - core loop of the C<IO::Async> framework
     },
  ) );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 
@@ -400,38 +400,75 @@ sub loop_once
    croak "Expected that $self overrides ->loop_once";
 }
 
+=head2 @result = $loop->run
+
+=head2 $result = $loop->run
+
+Runs the actual IO event loop. This method blocks until the C<stop> method is
+called, and returns the result that was passed to C<stop>. In scalar context
+only the first result is returned; the others will be discarded if more than
+one value was provided. This method may be called recursively.
+
+This method is a recent addition and may not be supported by all the
+C<IO::Async::Loop> subclasses currently available on CPAN.
+
+=cut
+
+sub run
+{
+   my $self = shift;
+
+   local $self->{running} = 1;
+   local $self->{result} = [];
+
+   while( $self->{running} ) {
+      $self->loop_once( undef );
+   }
+
+   return wantarray ? @{ $self->{result} } : $self->{result}[0];
+}
+
+=head2 $loop->stop( @result )
+
+Stops the inner-most C<run> method currently in progress, causing it to return
+the given C<@result>.
+
+This method is a recent addition and may not be supported by all the
+C<IO::Async::Loop> subclasses currently available on CPAN.
+
+=cut
+
+sub stop
+{
+   my $self = shift;
+
+   @{ $self->{result} } = @_;
+   undef $self->{running};
+}
+
 =head2 $loop->loop_forever
 
-This method repeatedly calls the C<loop_once> method with no timeout (i.e.
-allowing the underlying mechanism to block indefinitely), until the
-C<loop_stop> method is called from an event callback.
+A synonym for C<run>, though this method does not return a result.
 
 =cut
 
 sub loop_forever
 {
    my $self = shift;
-
-   $self->{still_looping} = 1;
-
-   while( $self->{still_looping} ) {
-      $self->loop_once( undef );
-   }
+   $self->run;
+   return;
 }
 
 =head2 $loop->loop_stop
 
-This method cancels a running C<loop_forever>, and makes that method return.
-It would be called from an event callback triggered by an event that occured
-within the loop.
+A synonym for C<stop>, though this method does not pass any results.
 
 =cut
 
 sub loop_stop
 {
    my $self = shift;
-   
-   $self->{still_looping} = 0;
+   $self->stop;
 }
 
 ############
@@ -1404,9 +1441,6 @@ sub _extract_addrinfo_unix
 =pod
 
 =back
-
-This method used to be called C<unpack_addrinfo>. A backward compatibility
-wrapper is provided temporarily, but will be removed in a later version.
 
 =cut
 

@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 use Carp;
 
@@ -34,7 +34,7 @@ C<IO::Async::Signal> - event callback on receipt of a POSIX signal
 
  $loop->add( $signal );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 

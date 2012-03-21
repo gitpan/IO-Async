@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 use Carp;
 
@@ -49,13 +49,13 @@ C<IO::Async::Process> - start and manage a child process
     },
     
     on_finish => sub {
-       $loop->loop_stop;
+       $loop->stop;
     },
  );
 
  $loop->add( $process );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 

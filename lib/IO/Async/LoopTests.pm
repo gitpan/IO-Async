@@ -24,7 +24,7 @@ use Fcntl qw( SEEK_SET );
 use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -84,7 +84,7 @@ sub run_tests
    my ( $testclass, @tests ) = @_;
 
    my $count = 0;
-   $count += __PACKAGE__->can( "count_tests_$_" )->() + 3 for @tests;
+   $count += __PACKAGE__->can( "count_tests_$_" )->() + 4 for @tests;
 
    plan tests => $count;
 
@@ -97,6 +97,8 @@ sub run_tests
 
    foreach my $test ( @tests ) {
       $loop = $testclass->new;
+
+      isa_ok( $loop, $testclass, '$loop' );
 
       is( IO::Async::Loop->new, $loop, 'magic constructor yields $loop' );
 
@@ -637,16 +639,44 @@ sub run_tests_child
 
 =head2 control
 
-Tests that the C<loop_once> and C<loop_forever> methods behave correctly
+Tests that the C<run>, C<stop>, C<loop_once> and C<loop_forever> methods
+behave correctly
 
 =cut
 
-use constant count_tests_control => 5;
+use constant count_tests_control => 8;
 sub run_tests_control
 {
    time_between { $loop->loop_once( 0 ) } 0, 0.1, 'loop_once(0) when idle';
 
    time_between { $loop->loop_once( 2 * AUT ) } 1.5, 2.5, 'loop_once(2) when idle';
+
+   $loop->enqueue_timer( delay => 0.1, code => sub { $loop->stop( result => "here" ) } );
+
+   local $SIG{ALRM} = sub { die "Test timed out before ->stop" };
+   alarm( 1 );
+
+   my @result = $loop->run;
+
+   alarm( 0 );
+
+   is_deeply( \@result, [ result => "here" ], '->stop arguments returned by ->run' );
+
+   $loop->enqueue_timer( delay => 0.1, code => sub { $loop->stop( result => "here" ) } );
+
+   my $result = $loop->run;
+
+   is( $result, "result", 'First ->stop argument returned by ->run in scalar context' );
+
+   $loop->enqueue_timer( delay => 0.1, code => sub {
+      $loop->enqueue_timer( delay => 0.1, code => sub { $loop->stop( "inner" ) } );
+      my @result = $loop->run;
+      $loop->stop( @result, "outer" );
+   } );
+
+   @result = $loop->run;
+
+   is_deeply( \@result, [ "inner", "outer" ], '->run can be nested properly' );
 
    $loop->enqueue_timer( delay => 0.1, code => sub { $loop->loop_stop } );
 

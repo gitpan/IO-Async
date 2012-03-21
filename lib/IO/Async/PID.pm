@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 use Carp;
 
@@ -48,7 +48,7 @@ C<IO::Async::PID> - event callback on exit of a child process
 
  $loop->add( $pid );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 

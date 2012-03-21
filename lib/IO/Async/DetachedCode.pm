@@ -8,7 +8,7 @@ package IO::Async::DetachedCode;
 use strict;
 use warnings;
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 use Carp;
 
@@ -44,7 +44,7 @@ method.
     },
  );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 

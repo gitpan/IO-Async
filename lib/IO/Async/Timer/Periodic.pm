@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.46_001';
+our $VERSION = '0.46_002';
 
 use Carp;
 
@@ -36,7 +36,7 @@ C<IO::Async::Timer::Periodic> - event callback at regular intervals
 
  $loop->add( $timer );
 
- $loop->loop_forever;
+ $loop->run;
 
 =head1 DESCRIPTION
 
