@@ -8,11 +8,11 @@ package IO::Async::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.46_002';
+our $VERSION = '0.47';
 
 use base qw( IO::Async::Handle );
 
-use POSIX qw( EAGAIN EWOULDBLOCK EINTR EPIPE );
+use Errno qw( EAGAIN EWOULDBLOCK EINTR EPIPE );
 
 use Carp;
 

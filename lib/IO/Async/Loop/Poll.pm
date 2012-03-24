@@ -8,7 +8,7 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.46_002';
+our $VERSION = '0.47';
 use constant API_VERSION => '0.33';
 
 use base qw( IO::Async::Loop );
@@ -151,7 +151,7 @@ sub post_poll
          $count++, $watch->[2]->() if defined $watch->[2];
       }
 
-      if( $events & POLLHUP ) {
+      if( $events & (POLLHUP|POLLERR) ) {
          $count++, $watch->[3]->() if defined $watch->[3];
       }
    }
