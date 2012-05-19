@@ -8,7 +8,7 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 use constant API_VERSION => '0.33';
 
 use base qw( IO::Async::Loop );
@@ -115,7 +115,7 @@ This method checks the returned event list from a C<IO::Poll::poll> call,
 and calls any of the notification methods or callbacks that are appropriate.
 It returns the total number of callbacks that were invoked; that is, the
 total number of C<on_read_ready> and C<on_write_ready> callbacks for 
-C<watch_io>, and C<enqueue_timer> event callbacks.
+C<watch_io>, and C<watch_time> event callbacks.
 
 =over 8
 

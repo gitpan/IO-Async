@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -134,6 +134,14 @@ sub __new
    # magic IO::Async::Loop->new constructor to yield this if it's the first
    # one
    our $ONE_TRUE_LOOP ||= $self;
+
+   # Legacy support - temporary until all CPAN classes are updated; bump NEEDAPI version at that point
+   my $old_timer = $self->can( "enqueue_timer" ) != \&enqueue_timer;
+   if( $old_timer != ( $self->can( "cancel_timer" ) != \&cancel_timer ) ) {
+      die "$class should overload both ->enqueue_timer and ->cancel_timer, or neither";
+   }
+
+   $self->{old_timer} = $old_timer;
 
    return $self;
 }
@@ -1807,7 +1815,107 @@ sub unwatch_signal
    }
 }
 
-# For subclasses to call
+=head2 $id = $loop->watch_time( %args )
+
+This method installs a callback which will be called at the specified time.
+The time may either be specified as an absolute value (the C<at> key), or
+as a delay from the time it is installed (the C<after> key).
+
+The returned C<$id> value can be used to identify the timer in case it needs
+to be cancelled by the C<unwatch_time> method. Note that this value may be
+an object reference, so if it is stored, it should be released after it has
+been fired or cancelled, so the object itself can be freed.
+
+The C<%params> hash takes the following keys:
+
+=over 8
+
+=item at => NUM
+
+The absolute system timestamp to run the event.
+
+=item after => NUM
+
+The delay after now at which to run the event, if C<at> is not supplied. A
+zero or negative delayed timer should be executed as soon as possible; the
+next time the C<loop_once> method is invoked.
+
+=item now => NUM
+
+The time to consider as now if calculating an absolute time based on C<after>;
+defaults to C<time()> if not specified.
+
+=item code => CODE
+
+CODE reference to the continuation to run at the allotted time.
+
+=back
+
+Either one of C<at> or C<after> is required.
+
+For more powerful timer functionality as a C<IO::Async::Notifier> (so it can
+be used as a child within another Notifier), see instead the
+L<IO::Async::Timer> object and its subclasses.
+
+These C<*_time> methods are optional; a subclass may implement neither or both
+of them. If it implements neither, then the base class will manage a queue of
+timer events. This queue should be handled by the C<loop_once> method
+implemented by the subclass, using the C<_adjust_timeout> and
+C<_manage_queues> methods.
+
+This is the newer version of the API, replacing C<enqueue_timer>. It is
+unspecified how this method pair interacts with the older
+C<enqueue/requeue/cancel_timer> triplet.
+
+=cut
+
+sub watch_time
+{
+   my $self = shift;
+   my %args = @_;
+
+   # Renamed args
+   $args{delay} = delete $args{after} if exists $args{after};
+   $args{time}  = delete $args{at}    if exists $args{at};
+
+   if( $self->{old_timer} ) {
+      $self->enqueue_timer( %args );
+   }
+   else {
+      my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
+
+      my $time = $self->_build_time( %args );
+      my $code = $args{code};
+
+      $timequeue->enqueue( time => $time, code => $code );
+   }
+}
+
+=head2 $loop->unwatch_time( $id )
+
+Removes a timer callback previously created by C<watch_time>.
+
+This is the newer version of the API, replacing C<cancel_timer>. It is
+unspecified how this method pair interacts with the older
+C<enqueue/requeue/cancel_timer> triplet.
+
+=cut
+
+sub unwatch_time
+{
+   my $self = shift;
+   my ( $id ) = @_;
+
+   if( $self->{old_timer} ) {
+      $self->cancel_timer( $id );
+   }
+   else {
+      my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
+
+      $timequeue->cancel( $id );
+   }
+}
+
 sub _build_time
 {
    my $self = shift;
@@ -1831,50 +1939,11 @@ sub _build_time
 
 =head2 $id = $loop->enqueue_timer( %params )
 
-This method installs a callback which will be called at the specified time.
-The time may either be specified as an absolute value (the C<time> key), or
-as a delay from the time it is installed (the C<delay> key).
-
-The returned C<$id> value can be used to identify the timer in case it needs
-to be cancelled by the C<cancel_timer> method. Note that this value may be
-an object reference, so if it is stored, it should be released after it has
-been fired or cancelled, so the object itself can be freed.
-
-The C<%params> hash takes the following keys:
-
-=over 8
-
-=item time => NUM
-
-The absolute system timestamp to run the event.
-
-=item delay => NUM
-
-The delay after now at which to run the event, if C<time> is not supplied. A
-zero or negative delayed timer should be executed as soon as possible; the
-next time the C<loop_once> method is invoked.
-
-=item now => NUM
-
-The time to consider as now if calculating an absolute time based on C<delay>;
-defaults to C<time> if not specified.
-
-=item code => CODE
-
-CODE reference to the continuation to run at the allotted time.
-
-=back
-
-Either one of C<time> or C<delay> is required.
-
-For more powerful timer functionality as a C<IO::Async::Notifier> (so it can
-be used as a child within another Notifier), see instead the
-L<IO::Async::Timer> object and its subclasses.
-
-These C<*_timer> methods are optional; a subclass may implement none or all of
-them. If it implements none, then the base class will manage a queue of timer
-events. This queue should be handled by the C<loop_once> method implemented by
-the subclass, using the C<_adjust_timeout> and C<_manage_queues> methods.
+An older version of C<watch_time>. This method should not be used in new code
+but is retained for legacy purposes. For simple watch/unwatch behaviour use
+instead the new C<watch_time> method; though note it has differently-named
+arguments. For requeueable timers, consider using an
+L<IO::Async::Timer::Countdown> or L<IO::Async::Timer::Absolute> instead.
 
 =cut
 
@@ -1883,16 +1952,14 @@ sub enqueue_timer
    my $self = shift;
    my ( %params ) = @_;
 
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
-
-   $params{time} = $self->_build_time( %params );
-
-   $timequeue->enqueue( %params );
+   my $code = $params{code};
+   return [ $self->watch_time( %params ), $code ];
 }
 
 =head2 $loop->cancel_timer( $id )
 
-Cancels a previously-enqueued timer event by removing it from the queue.
+An older version of C<unwatch_time>. This method should not be used in new
+code but is retained for legacy purposes.
 
 =cut
 
@@ -1900,10 +1967,7 @@ sub cancel_timer
 {
    my $self = shift;
    my ( $id ) = @_;
-
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
-
-   $timequeue->cancel( $id );
+   $self->unwatch_time( $id->[0] );
 }
 
 =head2 $newid = $loop->requeue_timer( $id, %params )
@@ -1918,6 +1982,10 @@ The requeue operation may be implemented as a cancel + enqueue, which may
 mean the ID changes. Be sure to store the returned C<$newid> value if it is
 required.
 
+This method should not be used in new code but is retained for legacy
+purposes. For requeueable, consider using an L<IO::Async::Timer::Countdown> or
+L<IO::Async::Timer::Absolute> instead.
+
 =cut
 
 sub requeue_timer
@@ -1925,11 +1993,8 @@ sub requeue_timer
    my $self = shift;
    my ( $id, %params ) = @_;
 
-   my $timequeue = $self->{timequeue} ||= $self->__new_feature( "IO::Async::Internals::TimeQueue" );
-
-   $params{time} = $self->_build_time( %params );
-
-   $timequeue->requeue( $id, %params );
+   $self->unwatch_time( $id->[0] );
+   return $self->enqueue_timer( %params, code => $id->[1] );
 }
 
 =head2 $id = $loop->watch_idle( %params )

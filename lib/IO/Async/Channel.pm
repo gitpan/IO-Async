@@ -9,10 +9,12 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier ); # just to get _capture_weakself
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 
 use Carp;
 use Storable qw( freeze thaw );
+
+use IO::Async::Stream;
 
 =head1 NAME
 
@@ -31,7 +33,9 @@ asynchronous mode, and in the Routine process it will be used in synchronous
 mode. In asynchronous mode all methods return immediately and use
 C<IO::Async>-style callback functions. In synchronous within the Routine
 process the methods block until they are ready and may be used for
-flow-control within the routine.
+flow-control within the routine. Alternatively, a Channel may be shared
+between two different Routine objects, and not used directly by the
+controlling program.
 
 The channel itself represents a FIFO of Perl reference values. New values may
 be put into the channel by the C<send> method in either mode. Values may be
@@ -59,8 +63,8 @@ either end.
 
 While this object does in fact inherit from L<IO::Async::Notifier> for
 implementation reasons it is not intended that this object be used as a
-Notifier. The C<configure> method should not be called, and it should not be
-added to a Loop object.
+Notifier. It should not be added to a Loop object directly; event management
+will be handled by its containing C<IO::Async::Routine> object.
 
 =cut
 
@@ -68,13 +72,55 @@ sub new
 {
    my $class = shift;
    return bless {
-      mode => undef,
+      mode => "",
    }, $class;
 }
 
 =head1 METHODS
 
 =cut
+
+=head2 $channel->configure( %params )
+
+Similar to the standard C<configure> method on C<IO::Async::Notifier>, this is
+used to change details of the Channel's operation.
+
+=over 4
+
+=item on_recv => CODE
+
+May only be set on an async mode channel. If present, will be invoked whenever
+a new value is received, rather than using the C<recv> method.
+
+ $on_recv->( $channel, $data )
+
+=item on_eof => CODE
+
+May only be set on an async mode channel. If present, will be invoked when the
+channel gets closed by the peer.
+
+ $on_eof->( $channel )
+
+=back
+
+=cut
+
+sub configure
+{
+   my $self = shift;
+   my %params = @_;
+
+   foreach (qw( on_recv on_eof )) {
+      next unless exists $params{$_};
+      $self->{mode} and $self->{mode} eq "async" or
+         croak "Can only configure $_ in async mode";
+
+      $self->{$_} = delete $params{$_};
+      $self->_build_stream;
+   }
+
+   $self->SUPER::configure( %params );
+}
 
 =head2 $channel->send( $data )
 
@@ -239,42 +285,37 @@ sub setup_async_mode
    my $self = shift;
    my %args = @_;
 
-   my $stream = delete $args{stream} or croak "Expected 'stream'";
-
-   if( my $on_recv = delete $args{on_recv} ) {
-      $self->{on_recv} = $on_recv;
-      $self->{on_eof} = delete $args{on_eof};
-   }
-   else {
-      $self->{on_result_queue} = \my @on_result_queue;
-      $self->{on_recv} = sub {
-         my ( $self, $result ) = @_;
-         (shift @on_result_queue)->( $self, recv => $result );
-      };
-      $self->{on_eof} = sub {
-         my ( $self ) = @_;
-         while( @on_result_queue ) {
-            (shift @on_result_queue)->( $self, eof => );
-         }
-      };
-   }
+   exists $args{$_} and $self->{$_} = delete $args{$_} for qw( read_handle write_handle );
 
    keys %args and croak "Unrecognised keys for setup_async_mode: " . join( ", ", keys %args );
 
-   $self->{stream} = $stream;
    $self->{mode} = "async";
+}
 
-   $stream->configure(
-      autoflush => 1,
-      on_read   => $self->_capture_weakself( '_on_stream_read' )
-   );
+sub _build_stream
+{
+   my $self = shift;
+   return $self->{stream} ||= do {
+      $self->{on_result_queue} = [];
+
+      my $stream = IO::Async::Stream->new(
+         read_handle  => $self->{read_handle},
+         write_handle => $self->{write_handle},
+         autoflush    => 1,
+         on_read      => $self->_capture_weakself( '_on_stream_read' )
+      );
+
+      $self->add_child( $stream );
+
+      $stream;
+   };
 }
 
 sub _send_async
 {
    my $self = shift;
    my ( $bytes ) = @_;
-   $self->{stream}->write( $bytes );
+   $self->_build_stream->write( $bytes );
 }
 
 sub _recv_async
@@ -283,6 +324,8 @@ sub _recv_async
    my %args = @_;
    my $on_recv = $args{on_recv};
    my $on_eof  = $args{on_eof};
+
+   $self->_build_stream;
 
    push @{ $self->{on_result_queue} }, sub {
       my ( $self, $type, $result ) = @_;
@@ -298,7 +341,7 @@ sub _recv_async
 sub _close_async
 {
    my $self = shift;
-   $self->{stream}->close_when_empty;
+   $self->{stream}->close_when_empty if $self->{stream};
 }
 
 sub _on_stream_read
@@ -307,7 +350,10 @@ sub _on_stream_read
    my ( $stream, $buffref, $eof ) = @_;
 
    if( $eof ) {
-      $self->{on_eof}->( $self );
+      while( my $on_result = shift @{ $self->{on_result_queue} } ) {
+         $on_result->( $self, eof => );
+      }
+      $self->{on_eof}->( $self ) if $self->{on_eof};
       return;
    }
 
@@ -318,9 +364,38 @@ sub _on_stream_read
    my $record = thaw( substr( $$buffref, 4, $len ) );
    substr( $$buffref, 0, 4 + $len ) = "";
 
-   $self->{on_recv}->( $self, $record );
+   if( my $on_result = shift @{ $self->{on_result_queue} } ) {
+      $on_result->( $self, recv => $record );
+   }
+   else {
+      $self->{on_recv}->( $self, $record );
+   }
 
    return 1;
+}
+
+sub _extract_read_handle
+{
+   my $self = shift;
+
+   return undef if !$self->{mode};
+
+   croak "Cannot extract filehandle" if $self->{mode} ne "async";
+   $self->{mode} = "dead";
+
+   return $self->{read_handle};
+}
+
+sub _extract_write_handle
+{
+   my $self = shift;
+
+   return undef if !$self->{mode};
+
+   croak "Cannot extract filehandle" if $self->{mode} ne "async";
+   $self->{mode} = "dead";
+
+   return $self->{write_handle};
 }
 
 =head1 AUTHOR

@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 34;
+use Test::More tests => 40;
 use Test::Fatal;
 use Test::Refcount;
 
@@ -144,6 +144,7 @@ testing_loop( $loop );
    $loop->remove( $function );
 }
 
+# max_workers
 {
    my $count = 0;
 
@@ -175,6 +176,7 @@ testing_loop( $loop );
    $loop->remove( $function );
 }
 
+# exit_on_die
 {
    my $count = 0;
 
@@ -206,6 +208,7 @@ testing_loop( $loop );
    $loop->remove( $function );
 }
 
+# restart after exit
 {
    my $function = IO::Async::Function->new(
       min_workers => 0,
@@ -350,7 +353,7 @@ testing_loop( $loop );
    is( $function->workers, 1, '$function has 1 worker after call' );
 
    my $waited;
-   $loop->enqueue_timer( delay => 1 * AUT, code => sub { $waited++ } );
+   $loop->watch_time( after => 1 * AUT, code => sub { $waited++ } );
 
    wait_for { $waited };
 
@@ -365,7 +368,7 @@ testing_loop( $loop );
    wait_for { defined $result };
 
    undef $waited;
-   $loop->enqueue_timer( delay => 3 * AUT, code => sub { $waited++ } );
+   $loop->watch_time( after => 3 * AUT, code => sub { $waited++ } );
 
    wait_for { $waited };
 
@@ -419,4 +422,96 @@ testing_loop( $loop );
 
    is( $result, "return", 'Write-to-STD{OUT+ERR} function returned' );
    is( $buffer, "A line to STDOUT\nA line to STDERR\n", 'Write-to-STD{OUT+ERR} wrote to pipe' );
+}
+
+# Restart
+{
+   my $value = 1;
+
+   my $function = IO::Async::Function->new(
+      code => sub { return $value },
+   );
+
+   $loop->add( $function );
+
+   my $result;
+   $function->call(
+      args => [],
+      on_return => sub { $result = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+
+   wait_for { defined $result };
+
+   is( $result, 1, '$result before restart' );
+
+   $value = 2;
+   $function->restart;
+
+   undef $result;
+   $function->call(
+      args => [],
+      on_return => sub { $result = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+
+   wait_for { defined $result };
+
+   is( $result, 2, '$result after restart' );
+
+   undef $result;
+   $function->call(
+      args => [],
+      on_return => sub { $result = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+
+   $function->restart;
+
+   wait_for { defined $result };
+
+   is( $result, 2, 'call before restart still returns result' );
+
+   $loop->remove( $function );
+}
+
+# max_worker_calls
+{
+   my $counter;
+   my $function = IO::Async::Function->new(
+      max_workers      => 1,
+      max_worker_calls => 2,
+      code => sub { return ++$counter; }
+   );
+
+   $loop->add( $function );
+
+   my $result;
+   $function->call(
+      args => [],
+      on_return => sub { $result = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+   wait_for { defined $result };
+   is( $result, 1, '$result from first call' );
+
+   undef $result;
+   $function->call(
+      args => [],
+      on_return => sub { $result = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+   wait_for { defined $result };
+   is( $result, 2, '$result from second call' );
+
+   undef $result;
+   $function->call(
+      args => [],
+      on_return => sub { $result = shift },
+      on_error  => sub { die "Test failed early - @_" },
+   );
+   wait_for { defined $result };
+   is( $result, 1, '$result from third call' );
+
+   $loop->remove( $function );
 }

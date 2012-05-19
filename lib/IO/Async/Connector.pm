@@ -8,7 +8,7 @@ package IO::Async::Connector;
 use strict;
 use warnings;
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
@@ -426,7 +426,7 @@ sub connect
       },
       sub {
          my ( $k ) = @_;
-         if( exists $params{local_host} or exists $params{local_service} ) {
+         if( defined $params{local_host} or defined $params{local_service} ) {
             my $on_resolve_error = $params{on_resolve_error} or croak "Expected 'on_resolve_error' callback";
 
             # Empty is fine on either of these

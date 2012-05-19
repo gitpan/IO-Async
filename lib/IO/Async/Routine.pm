@@ -8,11 +8,9 @@ package IO::Async::Routine;
 use strict;
 use warnings;
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 
 use base qw( IO::Async::Process );
-
-use IO::Async::Stream;
 
 =head1 NAME
 
@@ -40,6 +38,11 @@ C<IO::Async::Routine> - execute code in an independent sub-process
        # Can only send references
        $ret_ch->send( \$ret );
     },
+
+    on_finish => sub {
+       say "The routine aborted early - $_[-1]";
+       $loop->stop;
+    },
  );
 
  $loop->add( $routine );
@@ -47,7 +50,7 @@ C<IO::Async::Routine> - execute code in an independent sub-process
  $nums_ch->send( [ 10, 20, 30 ] );
  $ret_ch->recv(
     on_recv => sub {
-       my ( $totalref ) = @_;
+       my ( $ch, $totalref ) = @_;
        say "The total of 10, 20, 30 is: $$totalref";
        $loop->stop;
     }
@@ -125,13 +128,19 @@ sub _add_to_loop
    my @channels_out;
 
    foreach my $ch ( @{ $self->{channels_in} || [] } ) {
-      my ( $rd, $wr ) = $loop->pipepair;
+      my ( $rd, $wr );
+      unless( $rd = $ch->_extract_read_handle ) {
+         ( $rd, $wr ) = $loop->pipepair;
+      }
       push @setup, $rd => "keep";
       push @channels_in, [ $ch, $wr, $rd ];
    }
 
    foreach my $ch ( @{ $self->{channels_out} || [] } ) {
-      my ( $rd, $wr ) = $loop->pipepair;
+      my ( $rd, $wr );
+      unless( $wr = $ch->_extract_write_handle ) {
+         ( $rd, $wr ) = $loop->pipepair;
+      }
       push @setup, $wr => "keep";
       push @channels_out, [ $ch, $rd, $wr ];
    }
@@ -168,19 +177,17 @@ sub _add_to_loop
    foreach ( @channels_in ) {
       my ( $ch, $wr ) = @$_;
 
-      my $stream = IO::Async::Stream->new( write_handle => $wr );
-      $ch->setup_async_mode( stream => $stream );
+      $ch->setup_async_mode( write_handle => $wr );
 
-      $self->add_child( $stream );
+      $self->add_child( $ch ) unless $ch->parent;
    }
 
    foreach ( @channels_out ) {
       my ( $ch, $rd ) = @$_;
 
-      my $stream = IO::Async::Stream->new( read_handle => $rd );
-      $ch->setup_async_mode( stream => $stream );
+      $ch->setup_async_mode( read_handle => $rd );
 
-      $self->add_child( $stream );
+      $self->add_child( $ch ) unless $ch->parent;
    }
 
    $self->SUPER::_add_to_loop( $loop );

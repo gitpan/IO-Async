@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.47';
+our $VERSION = '0.48';
 
 use Carp;
 
@@ -180,10 +180,8 @@ sub reset
 
    return if !$self->is_running;
 
-   $self->{id} = $loop->requeue_timer(
-      $self->{id},
-      delay => $self->{delay},
-   );
+   $self->stop;
+   $self->start;
 }
 
 =head1 EXAMPLES
