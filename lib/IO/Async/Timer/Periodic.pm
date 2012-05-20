@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.48';
+our $VERSION = '0.49';
 
 use Carp;
 
@@ -237,7 +237,7 @@ sub _make_enqueueargs
 {
    my $self = shift;
 
-   return time => $self->{next_time};
+   return at => $self->{next_time};
 }
 
 =head1 AUTHOR

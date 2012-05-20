@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.48';
+our $VERSION = '0.49';
 
 use Carp;
 
@@ -162,7 +162,7 @@ sub _make_enqueueargs
    my $self = shift;
 
    undef $self->{expired};
-   return delay => $self->{delay};
+   return after => $self->{delay};
 }
 
 =head2 $timer->reset
