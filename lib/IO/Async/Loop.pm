@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.49';
+our $VERSION = '0.50';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -20,13 +20,16 @@ use constant HAVE_MSWIN32 => ( $^O eq "MSWin32" );
 
 use Carp;
 
-use Socket qw( AF_INET AF_UNIX SOCK_STREAM SOCK_DGRAM SOCK_RAW );
+use Socket qw(
+   AF_INET AF_UNIX INADDR_LOOPBACK SOCK_STREAM SOCK_DGRAM SOCK_RAW
+   pack_sockaddr_in
+);
 BEGIN {
    # Not quite sure where we'll find AF_INET6
    eval { Socket->import( 'AF_INET6' ); 1 } or
       eval { require Socket6; Socket6->import( 'AF_INET6' ) }
 }
-use IO::Socket;
+use IO::Socket (); # empty import
 use Time::HiRes qw(); # empty import
 use POSIX qw( _exit WNOHANG );
 use Scalar::Util qw( refaddr );
@@ -1620,11 +1623,11 @@ required API. This method should return the API version that the loop
 implementation supports. The magic constructor will use that class, provided
 it declares a version at least as new as the version documented here.
 
-The current API version is C<0.33>.
+The current API version is C<0.49>.
 
 This method may be implemented using C<constant>; e.g
 
- use constant API_VERSION => '0.33';
+ use constant API_VERSION => '0.49';
 
 =cut
 

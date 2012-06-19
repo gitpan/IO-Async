@@ -11,6 +11,7 @@ lib/IO/Async/Channel.pm
 lib/IO/Async/ChildManager.pm
 lib/IO/Async/Connector.pm
 lib/IO/Async/DetachedCode.pm
+lib/IO/Async/File.pm
 lib/IO/Async/FileStream.pm
 lib/IO/Async/Function.pm
 lib/IO/Async/Handle.pm
@@ -79,7 +80,8 @@ t/23signal.t
 t/24listener.t
 t/25socket.t
 t/26pid.t
-t/27filestream.t
+t/27file.t
+t/28filestream.t
 t/30loop-fork.t
 t/31loop-spawnchild.t
 t/32loop-spawnchild-setup.t

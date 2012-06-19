@@ -1,19 +1,27 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Select;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.49';
-use constant API_VERSION => '0.33';
+our $VERSION = '0.50';
+use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
 
 use Carp;
+
+use POSIX qw( S_ISREG );
+
+use constant HAVE_MSWIN32 => $^O eq "MSWin32";
+
+# select() on most platforms claims that ISREG files are always read- and
+# write-ready, but not on MSWin32. We need to fake this
+use constant FAKE_ISREG_READY => HAVE_MSWIN32;
 
 =head1 NAME
 
@@ -74,6 +82,9 @@ sub new
 
    $self->{rvec} = '';
    $self->{wvec} = '';
+   $self->{evec} = '';
+
+   $self->{avec} = ''; # Bitvector of handles always to claim are ready
 
    return $self;
 }
@@ -113,10 +124,18 @@ sub pre_select
    my ( $readref, $writeref, $exceptref, $timeref ) = @_;
 
    # BITWISE operations
-   $$readref  |= $self->{rvec};
-   $$writeref |= $self->{wvec};
+   $$readref   |= $self->{rvec};
+   $$writeref  |= $self->{wvec};
+   $$exceptref |= $self->{evec};
 
    $self->_adjust_timeout( $timeref );
+
+   # Round up to nearest millisecond
+   if( $$timeref ) {
+      my $mils = $$timeref * 1000;
+      my $fraction = $mils - int $mils;
+      $$timeref += ( 1 - $fraction ) / 1000 if $fraction;
+   }
 
    return;
 }
@@ -154,11 +173,14 @@ sub post_select
 
       my $fileno = $watch->[0]->fileno;
 
-      if( vec( $readvec, $fileno, 1 ) ) {
+      if( vec( $readvec, $fileno, 1 ) or 
+          FAKE_ISREG_READY and vec( $self->{avec}, $fileno, 1 ) and vec( $self->{rvec}, $fileno, 1 ) ) {
          $count++, $watch->[1]->() if defined $watch->[1];
       }
 
-      if( vec( $writevec, $fileno, 1 ) ) {
+      if( vec( $writevec, $fileno, 1 ) or
+          HAVE_MSWIN32 and vec( $exceptvec, $fileno, 1 ) or
+          FAKE_ISREG_READY and vec( $self->{avec}, $fileno, 1 ) and vec( $self->{wvec}, $fileno, 1 ) ) {
          $count++, $watch->[2]->() if defined $watch->[2];
       }
    }
@@ -179,7 +201,6 @@ returned an error.
 
 =cut
 
-# override
 sub loop_once
 {
    my $self = shift;
@@ -210,6 +231,12 @@ sub watch_io
 
    vec( $self->{rvec}, $fileno, 1 ) = 1 if $params{on_read_ready};
    vec( $self->{wvec}, $fileno, 1 ) = 1 if $params{on_write_ready};
+
+   # MSWin32 does not indicate writeready for connect() errors, HUPs, etc
+   # but it does indicate exceptional
+   vec( $self->{evec}, $fileno, 1 ) = 1 if HAVE_MSWIN32 and $params{on_write_ready};
+
+   vec( $self->{avec}, $fileno, 1 ) = 1 if FAKE_ISREG_READY and S_ISREG(stat $params{handle});
 }
 
 sub unwatch_io
@@ -224,9 +251,13 @@ sub unwatch_io
    vec( $self->{rvec}, $fileno, 1 ) = 0 if $params{on_read_ready};
    vec( $self->{wvec}, $fileno, 1 ) = 0 if $params{on_write_ready};
 
+   vec( $self->{evec}, $fileno, 1 ) = 0 if HAVE_MSWIN32 and $params{on_write_ready};
+
+   vec( $self->{avec}, $fileno, 1 ) = 0 if FAKE_ISREG_READY and S_ISREG(stat $params{handle});
+
    # vec will grow a bit vector as needed, but never shrink it. We'll trim
    # trailing null bytes
-   $_ =~s/\0+\z// for $self->{rvec}, $self->{wvec};
+   $_ =~s/\0+\z// for $self->{rvec}, $self->{wvec}, $self->{evec}, $self->{avec};
 }
 
 =head1 SEE ALSO

@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.49';
+our $VERSION = '0.50';
 
 =head1 NAME
 
@@ -161,6 +161,14 @@ running of child processes. C<spawn_child> is primarily a wrapper around the
 typical C<fork(2)>/C<exec(2)> style of starting child processes, and
 C<run_child> provide a method similar to perl's C<readpipe> (which is used
 to implement backticks C<``>).
+
+=head2 File Change Watches
+
+The L<IO::Async::File> object observes changes to C<stat(2)> properties of a
+file, directory, or other filesystem object. It invokes callbacks when
+properties change. This is used by L<IO::Async::FileStream> which presents
+the same events as a C<IO::Async::Stream> but operates on a regular file on
+the filesystem, observing it for updates.
 
 =head2 Asynchronous Co-routines and Functions
 

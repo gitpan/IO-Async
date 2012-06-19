@@ -1,18 +1,18 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2011-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::FileStream;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.49';
+our $VERSION = '0.50';
 
 use base qw( IO::Async::Stream );
 
-use IO::Async::Timer::Periodic;
+use IO::Async::File;
 
 use Carp;
 use Fcntl qw( SEEK_SET SEEK_CUR );
@@ -67,6 +67,9 @@ used as the C<transport> for an C<IO::Async::Protocol::Stream> object.
 
 It will not support writing.
 
+To watch a file, directory, or other filesystem entity for updates of other
+properties, such as C<mtime>, see also L<IO::Async::File>.
+
 =cut
 
 =head1 EVENTS
@@ -113,14 +116,14 @@ sub _init
 
    $self->SUPER::_init( $params );
 
-   $self->add_child( $self->{timer} = IO::Async::Timer::Periodic->new(
-      interval => 2,
-      on_tick => $self->_capture_weakself( 'on_tick' ),
-   ) );
-
    $params->{close_on_read_eof} = 0;
 
    $self->{last_size} = undef;
+
+   $self->add_child( $self->{file} = IO::Async::File->new(
+      on_devino_changed => $self->_replace_weakself( 'on_devino_changed' ),
+      on_size_changed   => $self->_replace_weakself( 'on_size_changed' ),
+   ) );
 }
 
 =head1 PARAMETERS
@@ -130,6 +133,13 @@ addition to the parameters relating to reading supported by
 C<IO::Async::Stream>.
 
 =over 8
+
+=item filename => STRING
+
+Optional. If supplied, watches the named file rather than the filehandle given
+in C<read_handle>. The file will be opened by the constructor, and then
+watched for renames. If the file is renamed, the new filename is opened and
+tracked similarly after closing the previous file.
 
 =item interval => NUM
 
@@ -151,7 +161,15 @@ sub configure
    }
 
    foreach (qw( interval )) {
-      $self->{timer}->configure( $_ => delete $params{$_} ) if exists $params{$_};
+      $self->{file}->configure( $_ => delete $params{$_} ) if exists $params{$_};
+   }
+   if( exists $params{filename} ) {
+      $self->{file}->configure( filename => delete $params{filename} );
+      $params{read_handle} = $self->{file}->handle;
+   }
+   elsif( exists $params{read_handle} ) {
+      $self->{file}->configure( handle => delete $params{read_handle} );
+      $params{read_handle} = $self->{file}->handle;
    }
 
    croak "Cannot have a write_handle in a ".ref($self) if defined $params{write_handle};
@@ -159,7 +177,12 @@ sub configure
    $self->SUPER::configure( %params );
 
    if( $self->read_handle and !defined $self->{last_size} ) {
-      $self->_do_initial;
+      my $size = (stat $self->read_handle)[7];
+
+      $self->{last_size} = $size;
+
+      local $self->{running_initial} = 1;
+      $self->maybe_invoke_event( on_initial => $size );
    }
 }
 
@@ -174,10 +197,10 @@ sub _watch_read
    my ( $want ) = @_;
 
    if( $want ) {
-      $self->{timer}->start if !$self->{timer}->is_running;
+      $self->{file}->start if !$self->{file}->is_running;
    }
    else {
-      $self->{timer}->stop;
+      $self->{file}->stop;
    }
 }
 
@@ -189,30 +212,23 @@ sub _watch_write
    croak "Cannot _watch_write in " . ref($self) if $want;
 }
 
-sub _do_initial
+sub on_devino_changed
 {
    my $self = shift;
 
-   my $size = (stat $self->read_handle)[7];
-
-   $self->{last_size} = $size;
-
-   local $self->{running_initial} = 1;
-   $self->maybe_invoke_event( on_initial => $size );
+   $self->{renamed} = 1;
+   $self->debug_printf( "read tail of old file" );
+   $self->read_more;
 }
 
-sub on_tick
+sub on_size_changed
 {
    my $self = shift;
-
-   my $size = (stat $self->read_handle)[7];
+   my ( $size ) = @_;
 
    if( $size < $self->{last_size} ) {
       $self->maybe_invoke_event( on_truncated => );
       $self->{last_pos} = 0;
-   }
-   elsif( $size == $self->{last_size} ) {
-      return;
    }
 
    $self->{last_size} = $size;
@@ -233,6 +249,20 @@ sub read_more
 
    if( $self->{last_pos} < $self->{last_size} ) {
       $self->loop->later( sub { $self->read_more } );
+   }
+   elsif( $self->{renamed} ) {
+      $self->debug_printf( "reopening for rename" );
+
+      $self->{last_size} = 0;
+
+      if( $self->{last_pos} ) {
+         $self->maybe_invoke_event( on_truncated => );
+         $self->{last_pos} = 0;
+         $self->loop->later( sub { $self->read_more } );
+      }
+
+      $self->configure( read_handle => $self->{file}->handle );
+      undef $self->{renamed};
    }
 }
 
@@ -361,11 +391,6 @@ sub seek_to_last
 =head1 TODO
 
 =over 4
-
-=item *
-
-Support opening a file by name instead of taking an already-open filehandle.
-With that comes the option to track it for renames too.
 
 =item *
 

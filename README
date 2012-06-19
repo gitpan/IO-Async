@@ -140,6 +140,13 @@ DESCRIPTION
     processes, and `run_child' provide a method similar to perl's `readpipe'
     (which is used to implement backticks ```').
 
+  File Change Watches
+    The IO::Async::File object observes changes to `stat(2)' properties of a
+    file, directory, or other filesystem object. It invokes callbacks when
+    properties change. This is used by IO::Async::FileStream which presents
+    the same events as a `IO::Async::Stream' but operates on a regular file
+    on the filesystem, observing it for updates.
+
   Asynchronous Co-routines and Functions
     The `IO::Async' framework generally provides mechanisms for multiplexing
     IO tasks between different handles, so there aren't many occasions when

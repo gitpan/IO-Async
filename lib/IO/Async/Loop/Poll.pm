@@ -1,15 +1,15 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Poll;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.49';
-use constant API_VERSION => '0.33';
+our $VERSION = '0.50';
+use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
 
@@ -179,6 +179,13 @@ sub loop_once
    my ( $timeout ) = @_;
 
    $self->_adjust_timeout( \$timeout );
+
+   # Round up to nearest millisecond
+   if( $timeout ) {
+      my $mils = $timeout * 1000;
+      my $fraction = $mils - int $mils;
+      $timeout += ( 1 - $fraction ) / 1000 if $fraction;
+   }
 
    my $poll = $self->{poll};
 
