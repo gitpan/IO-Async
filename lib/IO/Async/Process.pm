@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 use Carp;
 
@@ -20,6 +20,8 @@ use POSIX qw(
 use Socket qw( SOCK_STREAM );
 
 use Async::MergePoint 0.03;
+
+use IO::Async::OS;
 
 =head1 NAME
 
@@ -393,7 +395,7 @@ sub _prepare_fds
       my $write_only;
 
       if( $via == FD_VIA_PIPEREAD ) {
-         my ( $myfd, $childfd ) = $loop->pipepair or croak "Unable to pipe() - $!";
+         my ( $myfd, $childfd ) = IO::Async::OS->pipepair or croak "Unable to pipe() - $!";
 
          $handle->configure( read_handle => $myfd );
 
@@ -401,7 +403,7 @@ sub _prepare_fds
          $self->{to_close}{$childfd->fileno} = $childfd;
       }
       elsif( $via == FD_VIA_PIPEWRITE ) {
-         my ( $childfd, $myfd ) = $loop->pipepair or croak "Unable to pipe() - $!";
+         my ( $childfd, $myfd ) = IO::Async::OS->pipepair or croak "Unable to pipe() - $!";
          $write_only++;
 
          $handle->configure( write_handle => $myfd );
@@ -413,8 +415,8 @@ sub _prepare_fds
          $key eq "stdio" or croak "Oops - should only be FD_VIA_PIPERDWR on stdio";
          # Can't use pipequad here for now because we need separate FDs so we
          # can ->close them properly
-         my ( $myread, $childwrite ) = $loop->pipepair or croak "Unable to pipe() - $!";
-         my ( $childread, $mywrite ) = $loop->pipepair or croak "Unable to pipe() - $!";
+         my ( $myread, $childwrite ) = IO::Async::OS->pipepair or croak "Unable to pipe() - $!";
+         my ( $childread, $mywrite ) = IO::Async::OS->pipepair or croak "Unable to pipe() - $!";
 
          $handle->configure( read_handle => $myread, write_handle => $mywrite );
 
@@ -423,7 +425,7 @@ sub _prepare_fds
          $self->{to_close}{$childwrite->fileno} = $childwrite;
       }
       elsif( $via == FD_VIA_SOCKETPAIR ) {
-         my ( $myfd, $childfd ) = $loop->socketpair( $opts->{family}, $opts->{socktype} ) or croak "Unable to socketpair() - $!";
+         my ( $myfd, $childfd ) = IO::Async::OS->socketpair( $opts->{family}, $opts->{socktype} ) or croak "Unable to socketpair() - $!";
 
          $handle->configure( handle => $myfd );
 
@@ -670,8 +672,7 @@ sub fd
          croak "$self does not have an fd Stream for $fd";
 
       my $handle_class;
-      # CHEATING
-      if( defined $opts->{socktype} && IO::Async::Loop::_getsocktypebyname( $opts->{socktype} ) != SOCK_STREAM ) {
+      if( defined $opts->{socktype} && IO::Async::OS->getsocktypebyname( $opts->{socktype} ) != SOCK_STREAM ) {
          require IO::Async::Socket;
          $handle_class = "IO::Async::Socket";
       }

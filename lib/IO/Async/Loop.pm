@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -16,23 +16,14 @@ use constant NEED_API_VERSION => '0.33';
 # Base value but some classes might override
 use constant _CAN_ON_HANGUP => 0;
 
-use constant HAVE_MSWIN32 => ( $^O eq "MSWin32" );
-
 use Carp;
 
-use Socket qw(
-   AF_INET AF_UNIX INADDR_LOOPBACK SOCK_STREAM SOCK_DGRAM SOCK_RAW
-   pack_sockaddr_in
-);
-BEGIN {
-   # Not quite sure where we'll find AF_INET6
-   eval { Socket->import( 'AF_INET6' ); 1 } or
-      eval { require Socket6; Socket6->import( 'AF_INET6' ) }
-}
 use IO::Socket (); # empty import
 use Time::HiRes qw(); # empty import
 use POSIX qw( _exit WNOHANG );
 use Scalar::Util qw( refaddr );
+
+use IO::Async::OS;
 
 # Never sleep for more than 1 second if a signal proxy is registered, to avoid
 # a borderline race condition.
@@ -126,11 +117,11 @@ sub __new
       notifiers    => {}, # {nkey} = notifier
       iowatches    => {}, # {fd} = [ $on_read_ready, $on_write_ready, $on_hangup ]
       sigattaches  => {}, # {sig} => \@callbacks
-      sigproxy     => undef,
       childmanager => undef,
       childwatches => {}, # {pid} => $code
       timequeue    => undef,
       deferrals    => [],
+      os           => {}, # A generic scratchpad for IO::Async::OS to store whatever it wants
    }, $class;
 
    # It's possible this is a specific subclass constructor. We still want the
@@ -1082,441 +1073,25 @@ to give different implementations on that OS.
 
 =cut
 
-# This one isn't documented because it's not really overridable. It's largely
-# here just for completeness
-sub socket
-{
-   my $self = shift;
-   my ( $family, $socktype, $proto ) = @_;
-
-   croak "Cannot create a new socket without a family" unless $family;
-
-   # SOCK_STREAM is the most likely
-   defined $socktype or $socktype = SOCK_STREAM;
-
-   defined $proto or $proto = 0;
-
-   my $sock = eval {
-      IO::Socket->new(
-         Domain => $family, 
-         Type   => $socktype,
-         Proto  => $proto,
-      );
-   };
-   return $sock if $sock;
-
-   # That failed. Most likely because the Domain was unrecognised. This 
-   # usually happens if getaddrinfo returns an AF_INET6 address but we don't
-   # have a suitable class loaded. In this case we'll return a generic one.
-   # It won't be in the specific subclass but that's the best we can do. And
-   # it will still work as a generic socket.
-   return IO::Socket->new->socket( $family, $socktype, $proto );
-}
-
-sub _getfamilybyname
-{
-   my ( $name ) = @_;
-
-   return undef unless defined $name;
-
-   return $name if $name =~ m/^\d+$/;
-
-   return AF_INET    if $name eq "inet";
-   return AF_INET6() if $name eq "inet6" and defined &AF_INET6;
-   return AF_UNIX    if $name eq "unix";
-
-   croak "Unrecognised socktype name '$name'";
-}
-
-sub _getsocktypebyname
-{
-   my ( $name ) = @_;
-
-   return undef unless defined $name;
-
-   return $name if $name =~ m/^\d+$/;
-
-   return SOCK_STREAM if $name eq "stream";
-   return SOCK_DGRAM  if $name eq "dgram";
-   return SOCK_RAW    if $name eq "raw";
-
-   croak "Unrecognised socktype name '$name'";
-}
-
 =head2 ( $S1, $S2 ) = $loop->socketpair( $family, $socktype, $proto )
-
-An abstraction of the C<socketpair(2)> syscall, where any argument may be
-missing (or given as C<undef>).
-
-If C<$family> is not provided, a suitable value will be provided by the OS
-(likely C<AF_UNIX> on POSIX-based platforms). If C<$socktype> is not provided,
-then C<SOCK_STREAM> will be used.
-
-Additionally, this method supports building connected C<SOCK_STREAM> or
-C<SOCK_DGRAM> pairs in the C<AF_INET> family even if the underlying platform's
-C<socketpair(2)> does not, by connecting two normal sockets together.
-
-C<$family> and C<$socktype> may also be given symbolically similar to the
-behaviour of C<extract_addrinfo>.
-
-=cut
-
-sub socketpair
-{
-   my $self = shift;
-   my ( $family, $socktype, $proto ) = @_;
-
-   # PF_UNSPEC and undef are both false
-   $family = _getfamilybyname( $family ) || AF_UNIX;
-
-   # SOCK_STREAM is the most likely
-   $socktype = _getsocktypebyname( $socktype ) || SOCK_STREAM;
-
-   $proto ||= 0;
-
-   my ( $S1, $S2 ) = IO::Socket->new->socketpair( $family, $socktype, $proto );
-   return ( $S1, $S2 ) if defined $S1;
-
-   return unless $family == AF_INET and ( $socktype == SOCK_STREAM or $socktype == SOCK_DGRAM );
-
-   # Now lets emulate an AF_INET socketpair call
-
-   my $Stmp = $self->socket( $family, $socktype ) or return;
-   $Stmp->bind( pack_sockaddr_in( 0, INADDR_LOOPBACK ) ) or return;
-
-   $S1 = $self->socket( $family, $socktype ) or return;
-
-   if( $socktype == SOCK_STREAM ) {
-      $Stmp->listen( 1 ) or return;
-      $S1->connect( getsockname $Stmp ) or return;
-      $S2 = $Stmp->accept or return;
-
-      # There's a bug in IO::Socket here, in that $S2 's ->socktype won't
-      # yet be set. We can apply a horribly hacky fix here
-      #   defined $S2->socktype and $S2->socktype == $socktype or
-      #     ${*$S2}{io_socket_type} = $socktype;
-      # But for now we'll skip the test for it instead
-   }
-   else {
-      $S2 = $Stmp;
-      $S1->connect( getsockname $S2 ) or return;
-      $S2->connect( getsockname $S1 ) or return;
-   }
-
-   return ( $S1, $S2 );
-}
-
-# TODO: Move this into its own file, have it loaded dynamically via $^O
-if( HAVE_MSWIN32 ) {
-   # Win32 doesn't have a socketpair(). We'll fake one up
-
-   undef *socketpair;
-   *socketpair = sub {
-      my $self = shift;
-      my ( $family, $socktype, $proto ) = @_;
-
-      $family = _getfamilybyname( $family ) || AF_INET;
-
-      # SOCK_STREAM is the most likely
-      $socktype = _getsocktypebyname( $socktype ) || SOCK_STREAM;
-
-      $proto ||= 0;
-
-      if( $socktype == SOCK_STREAM ) {
-         my $listener = IO::Socket::INET->new(
-            LocalAddr => "127.0.0.1",
-            LocalPort => 0,
-            Listen    => 1,
-            Blocking  => 0,
-         ) or croak "Cannot socket() - $!";
-
-         my $S1 = IO::Socket::INET->new(
-            PeerAddr => $listener->sockhost,
-            PeerPort => $listener->sockport
-         ) or croak "Cannot socket() again - $!";
-
-         my $S2 = $listener->accept or croak "Cannot accept() - $!";
-
-         $listener->close;
-
-         return ( $S1, $S2 );
-      }
-      elsif( $socktype == SOCK_DGRAM ) {
-         my $S1 = IO::Socket::INET->new(
-            LocalAddr => "127.0.0.1",
-            Type      => SOCK_DGRAM,
-            Proto     => "udp",
-         ) or croak "Cannot socket() - $!";
-         
-         my $S2 = IO::Socket::INET->new(
-            LocalAddr => "127.0.0.1",
-            Type      => SOCK_DGRAM,
-            Proto     => "udp",
-         ) or croak "Cannot socket() again - $!";
-
-         $S1->connect( $S2->sockname );
-         $S2->connect( $S1->sockname );
-
-         return ( $S1, $S2 );
-      }
-      else {
-         croak "Unrecognised socktype $socktype";
-      }
-   };
-}
 
 =head2 ( $rd, $wr ) = $loop->pipepair
 
-An abstraction of the C<pipe(2)> syscall, which returns the two new handles.
-
-=cut
-
-sub pipepair
-{
-   my $self = shift;
-
-   pipe( my ( $rd, $wr ) ) or return;
-   return ( $rd, $wr );
-}
-
 =head2 ( $rdA, $wrA, $rdB, $wrB ) = $loop->pipequad
-
-This method is intended for creating two pairs of filehandles that are linked
-together, suitable for passing as the STDIN/STDOUT pair to a child process.
-After this function returns, C<$rdA> and C<$wrA> will be a linked pair, as
-will C<$rdB> and C<$wrB>.
-
-On platforms that support C<socketpair(2)>, this implementation will be
-preferred, in which case C<$rdA> and C<$wrB> will actually be the same
-filehandle, as will C<$rdB> and C<$wrA>. This saves a file descriptor in the
-parent process.
-
-When creating a C<IO::Async::Stream> or subclass of it, the C<read_handle>
-and C<write_handle> parameters should always be used.
-
- my ( $childRd, $myWr, $myRd, $childWr ) = $loop->pipequad;
-
- $loop->open_child(
-    stdin  => $childRd,
-    stdout => $childWr,
-    ...
- );
-
- my $str = IO::Async::Stream->new(
-    read_handle  => $myRd,
-    write_handle => $myWr,
-    ...
- );
- $loop->add( $str );
-
-=cut
-
-sub pipequad
-{
-   my $self = shift;
-
-   # Prefer socketpair
-   if( my ( $S1, $S2 ) = $self->socketpair ) {
-      return ( $S1, $S2, $S2, $S1 );
-   }
-
-   # Can't do that, fallback on pipes
-   my ( $rdA, $wrA ) = $self->pipepair or return;
-   my ( $rdB, $wrB ) = $self->pipepair or return;
-
-   return ( $rdA, $wrA, $rdB, $wrB );
-}
 
 =head2 $signum = $loop->signame2num( $signame )
 
-This utility method converts a signal name (such as "TERM") into its system-
-specific signal number. This may be useful to pass to C<POSIX::SigSet> or use
-in other places which use numbers instead of symbolic names.
+Legacy wrappers around L<IO::Async::OS> functions.
 
 =cut
 
-my %sig_num;
-sub _init_signum
-{
-   my $self = shift;
-   # Copypasta from Config.pm's documentation
+sub socketpair  { shift; IO::Async::OS->socketpair( @_ ) }
+sub pipepair    { shift; IO::Async::OS->pipepair( @_ ) }
+sub pipequad    { shift; IO::Async::OS->pipequad( @_ ) }
+sub signame2num { shift; IO::Async::OS->signame2num( @_ ) }
 
-   our %Config;
-   require Config;
-   Config->import;
-
-   unless($Config{sig_name} && $Config{sig_num}) {
-      die "No signals found";
-   }
-   else {
-      my @names = split ' ', $Config{sig_name};
-      @sig_num{@names} = split ' ', $Config{sig_num};
-   }
-}
-
-sub signame2num
-{
-   my $self = shift;
-   my ( $signame ) = @_;
-
-   %sig_num or $self->_init_signum;
-
-   return $sig_num{$signame};
-}
-
-=head2 ( $family, $socktype, $protocol, $addr ) = $loop->extract_addrinfo( $ai )
-
-Given an ARRAY or HASH reference value containing an addrinfo, returns a
-family, socktype and protocol argument suitable for a C<socket> call and an
-address suitable for C<connect> or C<bind>.
-
-If given an ARRAY it should be in the following form:
-
- [ $family, $socktype, $protocol, $addr ]
-
-If given a HASH it should contain the following keys:
-
- family socktype protocol addr
-
-Each field in the result will be initialised to 0 (or empty string for the
-address) if not defined in the C<$ai> value.
-
-The family type may also be given as a symbolic string; C<inet> or possibly
-C<inet6> if the host system supports it, or C<unix>; this will be converted to
-the appropriate C<AF_*> constant.
-
-The socktype may also be given as a symbolic string; C<stream>, C<dgram> or
-C<raw>; this will be converted to the appropriate C<SOCK_*> constant.
-
-Note that the C<addr> field, if provided, must be a packed socket address,
-such as returned by C<pack_sockaddr_in> or C<pack_sockaddr_un>.
-
-If the HASH form is used, rather than passing a packed socket address in the
-C<addr> field, certain other hash keys may be used instead for convenience on
-certain named families.
-
-=over 4
-
-=cut
-
-use constant ADDRINFO_FAMILY   => 0;
-use constant ADDRINFO_SOCKTYPE => 1;
-use constant ADDRINFO_PROTOCOL => 2;
-use constant ADDRINFO_ADDR     => 3;
-
-sub extract_addrinfo
-{
-   my $self = shift;
-   my ( $ai, $argname ) = @_;
-
-   $argname ||= "addr";
-
-   my @ai;
-
-   if( ref $ai eq "ARRAY" ) {
-      @ai = @$ai;
-   }
-   elsif( ref $ai eq "HASH" ) {
-      @ai = @{$ai}{qw( family socktype protocol addr )};
-   }
-   else {
-      croak "Expected '$argname' to be an ARRAY or HASH reference";
-   }
-
-   if( defined $ai[ADDRINFO_FAMILY] and !defined $ai[ADDRINFO_ADDR] and ref $ai eq "HASH" ) {
-      my $family = $ai[ADDRINFO_FAMILY];
-      my $method = "_extract_addrinfo_$family";
-      my $code = $self->can( $method ) or croak "Cannot determine addr for extract_addrinfo on family='$family'";
-
-      $ai[ADDRINFO_ADDR] = $code->( $self, $ai );
-   }
-
-   $ai[ADDRINFO_FAMILY]   = _getfamilybyname( $ai[ADDRINFO_FAMILY] );
-   $ai[ADDRINFO_SOCKTYPE] = _getsocktypebyname( $ai[ADDRINFO_SOCKTYPE] );
-
-   # Make sure all fields are defined
-   $ai[$_] ||= 0 for ADDRINFO_FAMILY, ADDRINFO_SOCKTYPE, ADDRINFO_PROTOCOL;
-   $ai[ADDRINFO_ADDR]  = "" if !defined $ai[ADDRINFO_ADDR];
-
-   return @ai;
-}
-
-=item family => 'inet'
-
-Will pack an IP address and port number from keys called C<ip> and C<port>.
-
-=cut
-
-sub _extract_addrinfo_inet
-{
-   my $self = shift;
-   my ( $ai ) = @_;
-
-   defined( my $port = $ai->{port} ) or croak "Expected 'port' for extract_addrinfo on family='inet'";
-   defined( my $ip   = $ai->{ip}   ) or croak "Expected 'ip' for extract_addrinfo on family='inet'";
-
-   return Socket::pack_sockaddr_in( $port, Socket::inet_aton( $ip ) );
-}
-
-=item family => 'inet6'
-
-Will pack an IP address and port number from keys called C<ip> and C<port>.
-Optionally will also include values from C<scopeid> and C<flowinfo> keys if
-provided.
-
-This will only work if a C<pack_sockaddr_in6> function can be found, either
-in C<Socket> or C<Socket6>.
-
-=cut
-
-sub _extract_addrinfo_inet6
-{
-   my $self = shift;
-   my ( $ai ) = @_;
-
-   defined( my $port = $ai->{port} ) or croak "Expected 'port' for extract_addrinfo on family='inet6'";
-   defined( my $ip   = $ai->{ip}   ) or croak "Expected 'ip' for extract_addrinfo on family='inet6'";
-
-   my $scopeid  = $ai->{scopeid}  || 0;
-   my $flowinfo = $ai->{flowinfo} || 0;
-
-   # We're not quite sure where pack_sockaddr_in6 might come from. Perl's
-   # Socket module added it in 5.13.8 but before then Socket6 is our best bet.
-   # Socket6 isn't core though.
-   if( defined &Socket::pack_sockaddr_in6 ) {
-      return Socket::pack_sockaddr_in6( $port, Socket::inet_pton( Socket::AF_INET6(), $ip ), $scopeid, $flowinfo );
-   }
-   elsif( defined &Socket6::pack_sockaddr_in6_all ) {
-      return Socket6::pack_sockaddr_in6_all( $port, $flowinfo, Socket6::inet_pton( Socket6::AF_INET6(), $ip ), $scopeid );
-   }
-   else {
-      croak "Cannot pack_sockaddr_in6";
-   }
-}
-
-=item family => 'unix'
-
-Will pack a UNIX socket path from a key called C<path>.
-
-=cut
-
-sub _extract_addrinfo_unix
-{
-   my $self = shift;
-   my ( $ai ) = @_;
-
-   defined( my $path = $ai->{path} ) or croak "Expected 'path' for extract_addrinfo on family='unix'";
-
-   return Socket::pack_sockaddr_un( $path );
-}
-
-=pod
-
-=back
-
-=cut
-
-sub unpack_addrinfo { goto &extract_addrinfo }
+sub extract_addrinfo { shift; IO::Async::OS->extract_addrinfo( @_ ) }
+sub unpack_addrinfo  { goto &extract_addrinfo }
 
 =head2 $time = $loop->time
 
@@ -1785,8 +1360,7 @@ sub watch_signal
    my $self = shift;
    my ( $signal, $code ) = @_;
 
-   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::Internals::SignalProxy" );
-   $sigproxy->watch( $signal, $code );
+   IO::Async::OS->loop_watch_signal( $self, $signal, $code );
 }
 
 =head2 $loop->unwatch_signal( $signal )
@@ -1808,14 +1382,7 @@ sub unwatch_signal
    my $self = shift;
    my ( $signal ) = @_;
 
-   my $sigproxy = $self->{sigproxy} ||= $self->__new_feature( "IO::Async::Internals::SignalProxy" );
-   $sigproxy->unwatch( $signal );
-
-   if( !$sigproxy->signals ) {
-      $self->remove( $sigproxy );
-      undef $sigproxy;
-      undef $self->{sigproxy};
-   }
+   IO::Async::OS->loop_unwatch_signal( $self, $signal );
 }
 
 =head2 $id = $loop->watch_time( %args )

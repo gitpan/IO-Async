@@ -18,7 +18,6 @@ WriteMakefile
                    'Test::Identity' => 0,
                    'Test::More' => 0,
                    'Test::Refcount' => 0,
-                   'Test::Warn' => 0,
                    'Time::HiRes' => 0
                  },
   'INSTALLDIRS' => 'site',

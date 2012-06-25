@@ -8,16 +8,18 @@ package IO::Async::Connector;
 use strict;
 use warnings;
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
 
 use CPS qw( kpar kforeach );
 
+use IO::Async::OS;
+
 use Carp;
 
-use constant HAVE_MSWIN32 => ( $^O eq "MSWin32" );
+use constant CONNECT_EWOULDLBOCK => IO::Async::OS->HAVE_CONNECT_EWOULDBLOCK;
 
 =head1 NAME
 
@@ -147,7 +149,7 @@ sub _connect_addresses
          my ( $family, $socktype, $protocol, $localaddr, $peeraddr ) = 
             @{$addr}{qw( family socktype protocol localaddr peeraddr )};
 
-         $sock = $loop->socket( $family, $socktype, $protocol );
+         $sock = IO::Async::OS->socket( $family, $socktype, $protocol );
 
          if( !$sock ) {
             $socketerr = $!;
@@ -171,8 +173,7 @@ sub _connect_addresses
             # localhost, or UNIX sockets, or something like that.
             goto &$klast;
          }
-         # On MSWin32 this is reported as EWOULDBLOCK
-         elsif( $! == EINPROGRESS or HAVE_MSWIN32 && $! == POSIX::EWOULDBLOCK ) {
+         elsif( $! == EINPROGRESS or CONNECT_EWOULDLBOCK && $! == POSIX::EWOULDBLOCK ) {
             $loop->watch_io(
                handle => $sock,
                on_write_ready => sub {
@@ -230,7 +231,7 @@ is returned by the C<getaddrinfo> named resolver.
 
 Shortcut for passing a single address to connect to; it may be passed directly
 with this key, instead of in another array on its own. This should be in a
-format recognised by L<IO::Async::Loop>'s C<extract_addrinfo> method. See also
+format recognised by L<IO::Async::OS>'s C<extract_addrinfo> method. See also
 the C<EXAMPLES> section.
 
 =item local_addrs => ARRAY
@@ -460,10 +461,10 @@ sub connect
 
          foreach my $local ( @localaddrs ) {
             my ( $l_family, $l_socktype, $l_protocol, $l_addr ) = 
-               $loop->extract_addrinfo( $local, 'local_addr' );
+               IO::Async::OS->extract_addrinfo( $local, 'local_addr' );
             foreach my $peer ( @peeraddrs ) {
                my ( $p_family, $p_socktype, $p_protocol, $p_addr ) = 
-                  $loop->extract_addrinfo( $peer );
+                  IO::Async::OS->extract_addrinfo( $peer );
 
                next if $l_family   and $p_family   and $l_family   != $p_family;
                next if $l_socktype and $p_socktype and $l_socktype != $p_socktype;
@@ -489,7 +490,7 @@ sub connect
 =head2 Passing Plain Socket Addresses
 
 The C<addr> or C<addrs> parameters should contain a definition of a plain
-socket address in a form that the L<IO::Async::Loop> C<extract_addrinfo>
+socket address in a form that the L<IO::Async::OS> C<extract_addrinfo>
 method can use.
 
 This example shows how to use the C<Socket> functions to construct one for TCP

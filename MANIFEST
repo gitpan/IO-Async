@@ -15,7 +15,6 @@ lib/IO/Async/File.pm
 lib/IO/Async/FileStream.pm
 lib/IO/Async/Function.pm
 lib/IO/Async/Handle.pm
-lib/IO/Async/Internals/SignalProxy.pm
 lib/IO/Async/Internals/TimeQueue.pm
 lib/IO/Async/Listener.pm
 lib/IO/Async/Loop.pm
@@ -24,6 +23,8 @@ lib/IO/Async/Loop/Select.pm
 lib/IO/Async/LoopTests.pm
 lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
+lib/IO/Async/OS.pm
+lib/IO/Async/OS/MSWin32.pm
 lib/IO/Async/PID.pm
 lib/IO/Async/Process.pm
 lib/IO/Async/Protocol.pm
@@ -48,8 +49,8 @@ META.yml
 README
 t/00use.t
 t/01timequeue.t
-t/02loop-magic.t
-t/03loop-osabstract.t
+t/02os.t
+t/03loop-magic.t
 t/04notifier.t
 t/05notifier-child.t
 t/06notifier-mixin.t

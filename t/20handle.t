@@ -7,11 +7,12 @@ use IO::Async::Test;
 use Test::More tests => 71;
 use Test::Fatal;
 use Test::Refcount;
-use Test::Warn;
 
 use IO::Async::Loop;
 
 use IO::Async::Handle;
+
+use IO::Async::OS;
 
 my $loop = IO::Async::Loop->new;
 
@@ -19,7 +20,7 @@ testing_loop( $loop );
 
 sub mkhandles
 {
-   my ( $S1, $S2 ) = $loop->socketpair or die "Cannot create socket pair - $!";
+   my ( $S1, $S2 ) = IO::Async::OS->socketpair or die "Cannot create socket pair - $!";
 
    # Need sockets in nonblocking mode
    $S1->blocking( 0 );
