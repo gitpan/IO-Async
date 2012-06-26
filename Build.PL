@@ -8,6 +8,7 @@ my $build = Module::Build->new(
    requires => {
       'Async::MergePoint' => '0.03',
       'CPS' => 0,
+      'CPS::Future' => '0.15',
       'Exporter' => '5.57',
       'File::stat' => 0,
       'IO::Poll' => 0,
@@ -18,7 +19,9 @@ my $build = Module::Build->new(
       # Fails on perl 5.8.3 for unknown reasons
       #   https://rt.cpan.org/Ticket/Display.html?id=64493
       # Now 5.16 is stable, I see even less reason to worry about such an old Perl
-      'perl' => '5.008005',
+
+      # Furthermore we've started using 5.10'isms
+      'perl' => '5.010',
    },
    build_requires => {
       'File::Temp' => 0,

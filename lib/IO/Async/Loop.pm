@@ -8,13 +8,17 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.51';
+our $VERSION = '0.51_001';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
 
 # Base value but some classes might override
 use constant _CAN_ON_HANGUP => 0;
+
+# Some Loop implementations do not accurately handle sub-second timers.
+# This only matters for unit tests
+use constant _CAN_SUBSECOND_ACCURATELY => 1;
 
 use Carp;
 
@@ -475,6 +479,54 @@ sub loop_stop
    $self->stop;
 }
 
+#########
+# Tasks #
+#########
+
+=head1 TASK SUPPORT
+
+To support the use of Task objects in semi-synchronous programs, the following
+methods all block until some condition involving tasks is satisifed.
+
+=cut
+
+=head2 $loop->await( $task )
+
+Blocks until the given task is ready, as indicated by its C<is_ready> method.
+As a convenience it returns the task, to simplify code:
+
+ my @result = $loop->await( $task )->get;
+
+=cut
+
+sub await
+{
+   my $self = shift;
+   my ( $task ) = @_;
+
+   $self->loop_once until $task->is_ready;
+
+   return $task;
+}
+
+=head2 $loop->await_all( @tasks )
+
+Blocks until all the given tasks are ready, as indicated by the C<is_ready>
+method. Equivalent to calling C<await> on a C<< CPS::Future->wait_all >>
+except that it doesn't create the surrounding future object.
+
+=cut
+
+sub _all_ready { $_->is_ready or return 0 for @_; return 1  }
+
+sub await_all
+{
+   my $self = shift;
+   my @tasks = @_;
+
+   $self->loop_once until _all_ready @tasks;
+}
+
 ############
 # Features #
 ############
@@ -636,22 +688,6 @@ sub detach_child
    my $self = shift;
    warnings::warnif( deprecated => "Loop->detach_child is deprecated; use ->fork instead" );
    $self->fork( @_ );
-}
-
-# undocumented, to be removed soon
-sub detach_code
-{
-   my $self = shift;
-   my %params = @_;
-
-   warnings::warnif( deprecated => "Loop->detach_code is deprecated; use IO::Async::Function instead" );
-
-   require IO::Async::DetachedCode;
-
-   return IO::Async::DetachedCode->new(
-      %params,
-      loop => $self
-   );
 }
 
 =head2 $loop->spawn_child( %params )

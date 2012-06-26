@@ -27,7 +27,7 @@ use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Socket qw( sockaddr_family AF_UNIX );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.51';
+our $VERSION = '0.51_001';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -375,7 +375,7 @@ Tests the Loop's ability to handle timer events
 
 =cut
 
-use constant count_tests_timer => 22;
+use constant count_tests_timer => 21;
 sub run_tests_timer
 {
    my $done = 0;
@@ -430,20 +430,22 @@ sub run_tests_timer
       $loop->loop_once while !$done;
    } 0, 0.1, 'loop_once while waiting for negative interval timer';
 
-   my $doneA;
-   my $doneB;
+   {
+      my $done;
 
-   $id = $loop->watch_time( after => 1 * AUT, code => sub {
-      $loop->unwatch_time( $id ); undef $id;
-      $doneA++;
-   });
+      my $id;
+      $id = $loop->watch_time( after => 1 * AUT, code => sub {
+         $loop->unwatch_time( $id ); undef $id;
+      });
 
-   $loop->watch_time( after => 1.1 * AUT, code => sub { $doneB++ } );
+      $loop->watch_time( after => 1.1 * AUT, code => sub {
+         $done++;
+      });
 
-   $loop->loop_once( 1 * AUT ) for 1 .. 3;
+      wait_for { $done };
 
-   is( $doneA, 1, 'Self-cancelling timer still fires' );
-   is( $doneB, 1, 'Other timers still fire after self-cancelling one' );
+      is( $done, 1, 'Other timers still fire after self-cancelling one' );
+   }
 
    # Legacy enqueue/requeue/cancel API
    $done = 0;
@@ -464,21 +466,25 @@ sub run_tests_timer
       }
    } 1.5, 2.5, 'loop_once(5) while waiting for timer';
 
-   # Check that short delays are achievable in one ->loop_once call
-   foreach my $delay ( 0.001, 0.01, 0.1 ) {
-      my $done;
-      my $count = 0;
-      my $start = time;
+   SKIP: {
+      skip "Unable to handle sub-second timers accurately", 3 unless $loop->_CAN_SUBSECOND_ACCURATELY;
 
-      $loop->enqueue_timer( delay => $delay, code => sub { $done++ } );
+      # Check that short delays are achievable in one ->loop_once call
+      foreach my $delay ( 0.001, 0.01, 0.1 ) {
+         my $done;
+         my $count = 0;
+         my $start = time;
 
-      while( !$done ) {
-         $loop->loop_once( 1 );
-         $count++;
-         last if time - $start > 5; # bailout
+         $loop->enqueue_timer( delay => $delay, code => sub { $done++ } );
+
+         while( !$done ) {
+            $loop->loop_once( 1 );
+            $count++;
+            last if time - $start > 5; # bailout
+         }
+
+         is( $count, 1, "One ->loop_once(1) sufficient for a single $delay second timer" );
       }
-
-      is( $count, 1, "One ->loop_once(1) sufficient for a single $delay second timer" );
    }
 
    $cancelled_fired = 0;

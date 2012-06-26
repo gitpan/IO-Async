@@ -5,10 +5,11 @@
 
 package IO::Async::File;
 
+use 5.010; # //
 use strict;
 use warnings;
 
-our $VERSION = '0.51';
+our $VERSION = '0.51_001';
 
 use base qw( IO::Async::Timer::Periodic );
 
