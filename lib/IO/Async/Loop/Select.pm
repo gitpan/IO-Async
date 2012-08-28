@@ -8,7 +8,7 @@ package IO::Async::Loop::Select;
 use strict;
 use warnings;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
@@ -25,6 +25,9 @@ use constant FAKE_ISREG_READY => IO::Async::OS->HAVE_FAKE_ISREG_READY;
 # select() on most platforms indicates write-ready when connect() fails, but
 # not on MSWin32. Have to pull from evec in that case
 use constant SELECT_CONNECT_EVEC => IO::Async::OS->HAVE_SELECT_CONNECT_EVEC;
+
+use constant _CAN_WATCHDOG => 1;
+use constant WATCHDOG_ENABLE => IO::Async::Loop->WATCHDOG_ENABLE;
 
 =head1 NAME
 
@@ -173,6 +176,8 @@ sub post_select
 
    my $count = 0;
 
+   alarm( IO::Async::Loop->WATCHDOG_INTERVAL ) if WATCHDOG_ENABLE;
+
    foreach my $fd ( keys %$iowatches ) {
       my $watch = $iowatches->{$fd};
 
@@ -194,6 +199,8 @@ sub post_select
    # attempt to fire any waiting timeout events anyway
 
    $self->_manage_queues;
+
+   alarm( 0 ) if WATCHDOG_ENABLE;
 }
 
 =head2 $count = $loop->loop_once( $timeout )

@@ -8,7 +8,7 @@ package IO::Async::Socket;
 use strict;
 use warnings;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 
 use base qw( IO::Async::Handle );
 
@@ -68,7 +68,7 @@ provides a queue of outgoing data. It invokes the C<on_recv> handler when new
 data is received from the filehandle. Data may be sent to the filehandle by
 calling the C<send> method.
 
-It is primarily intended for C<SOCK_data> or C<SOCK_RAW> sockets; for
+It is primarily intended for C<SOCK_DGRAM> or C<SOCK_RAW> sockets; for
 C<SOCK_STREAM> sockets an instance of L<IO::Async::Stream> is probably more
 appropriate.
 

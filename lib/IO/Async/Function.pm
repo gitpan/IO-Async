@@ -8,7 +8,7 @@ package IO::Async::Function;
 use strict;
 use warnings;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
@@ -397,7 +397,7 @@ sub call
    if( !$worker ) {
       my $request = freeze( $args );
       push @{ $self->{pending_queue} }, [ $request, $task ];
-      return;
+      return $task;
    }
 
    $self->_call_worker( $worker, args => $args, $task );

@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -19,6 +19,14 @@ use constant _CAN_ON_HANGUP => 0;
 # Some Loop implementations do not accurately handle sub-second timers.
 # This only matters for unit tests
 use constant _CAN_SUBSECOND_ACCURATELY => 1;
+
+# Does the loop implementation support IO_ASYNC_WATCHDOG?
+use constant _CAN_WATCHDOG => 0;
+
+# Watchdog configuration constants
+use constant WATCHDOG_ENABLE   => $ENV{IO_ASYNC_WATCHDOG};
+use constant WATCHDOG_INTERVAL => $ENV{IO_ASYNC_WATCHDOG_INTERVAL} || 10;
+use constant WATCHDOG_SIGABRT  => $ENV{IO_ASYNC_WATCHDOG_SIGABRT};
 
 use Carp;
 
@@ -47,6 +55,19 @@ our $LOOP;
 # Setting this value true will avoid the IO::Async::Loop::$^O candidate in the
 # magic constructor
 our $LOOP_NO_OS;
+
+# SIGALRM handler for watchdog
+$SIG{ALRM} = sub {
+   # There are two extra frames here; this one and the signal handler itself
+   local $Carp::CarpLevel = $Carp::CarpLevel + 2;
+   if( WATCHDOG_SIGABRT ) {
+      print STDERR Carp::longmess( "Watchdog timeout" );
+      kill ABRT => $$;
+   }
+   else {
+      Carp::confess( "Watchdog timeout" );
+   }
+} if WATCHDOG_ENABLE;
 
 =head1 NAME
 
@@ -116,6 +137,9 @@ sub __new
 
    $class->API_VERSION >= NEED_API_VERSION or
       die "$class is too old for IO::Async $VERSION; we need API version >= ".NEED_API_VERSION.", it provides ".$class->API_VERSION."\n";
+
+   WATCHDOG_ENABLE and !$class->_CAN_WATCHDOG and
+      warn "$class cannot implement IO_ASYNC_WATCHDOG\n";
 
    my $self = bless {
       notifiers    => {}, # {nkey} = notifier
@@ -1909,6 +1933,47 @@ The following methods take an C<extensions> parameter:
 
  $loop->connect
  $loop->listen
+
+=cut
+
+=head1 STALL WATCHDOG
+
+A well-behaved C<IO::Async> program should spend almost all of its time
+blocked on input using the underlying C<IO::Async::Loop> instance. The stall
+watchdog is an optional debugging feature to help detect CPU spinlocks and
+other bugs, where control is not returned to the loop every so often.
+
+If the watchdog is enabled and an event handler consumes more than a given
+amount of real time before returning to the event loop, it will be interrupted
+by printing a stack trace and terminating the program. The watchdog is only in
+effect while the loop itself is not blocking; it won't fail simply because the
+loop instance is waiting for input or timers.
+
+It is implemented using C<SIGALRM>, so if enabled, this signal will no longer
+be available to user code. (Though in any case, most uses of C<alarm()> and
+C<SIGALRM> are better served by one of the L<IO::Async::Timer> subclasses).
+
+The following environment variables control its behaviour.
+
+=over 4
+
+=item IO_ASYNC_WATCHDOG => BOOL
+
+Enables the stall watchdog if set to a non-zero value.
+
+=item IO_ASYNC_WATCHDOG_INTERVAL => INT
+
+Watchdog interval, in seconds, to pass to the C<alarm(2)> call. Defaults to 10
+seconds.
+
+=item IO_ASYNC_WATCHDOG_SIGABRT => BOOL
+
+If enabled, the watchdog signal handler will raise a C<SIGABRT>, which usually
+has the effect of breaking out of a running program in debuggers such as
+F<gdb>. If not set then the process is terminated by throwing an exception with
+C<die>.
+
+=back
 
 =cut
 

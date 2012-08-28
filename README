@@ -210,17 +210,8 @@ TODO
     result, some of the potentially-useful parts or features currently
     missing are:
 
-    *   An IO::Async::Loop subclass to perform integration with Event.
-        Consider further ideas on Solaris' *ports*, BSD's *Kevents* and
+    *   Consider further ideas on Solaris' *ports*, BSD's *Kevents* and
         anything that might be useful on Win32.
-
-    *   A consideration on how to provide per-OS versions of the utility
-        classes. For example, Win32 would probably need an
-        extensively-different `ChildManager', or OSes may have specific ways
-        to perform asynchronous name resolution operations better than the
-        generic `IO::Async::Function' approach. This should be easier to
-        implement now that the IO::Async::Loop magic constructor looks for
-        OS-specific subclasses first.
 
     *   Consider some form of persistent object wrapper in the form of an
         `IO::Async::Object', based on `IO::Async::Routine'.
@@ -250,6 +241,8 @@ SEE ALSO
     *   IO::Async::Loop::AnyEvent - use IO::Async with AnyEvent
 
     *   IO::Async::Loop::Epoll - use IO::Async with epoll on Linux
+
+    *   IO::Async::Loop::Event - use IO::Async with Event
 
     *   IO::Async::Loop::EV - use IO::Async with EV
 

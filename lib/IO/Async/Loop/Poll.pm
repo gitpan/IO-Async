@@ -8,7 +8,7 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
@@ -33,6 +33,9 @@ use constant _CAN_ON_HANGUP =>
 # poll() on most platforms claims that ISREG files are always read- and
 # write-ready, but not on MSWin32. We need to fake this
 use constant FAKE_ISREG_READY => IO::Async::OS->HAVE_FAKE_ISREG_READY;
+
+use constant _CAN_WATCHDOG => 1;
+use constant WATCHDOG_ENABLE => IO::Async::Loop->WATCHDOG_ENABLE;
 
 =head1 NAME
 
@@ -140,6 +143,8 @@ sub post_poll
 
    my $count = 0;
 
+   alarm( IO::Async::Loop->WATCHDOG_INTERVAL ) if WATCHDOG_ENABLE;
+
    foreach my $fd ( keys %$iowatches ) {
       my $watch = $iowatches->{$fd} or next;
 
@@ -166,6 +171,8 @@ sub post_poll
    # Since we have no way to know if the timeout occured, we'll have to
    # attempt to fire any waiting timeout events anyway
    $count += $self->_manage_queues;
+
+   alarm( 0 ) if WATCHDOG_ENABLE;
 
    return $count;
 }
