@@ -6,12 +6,11 @@ WriteMakefile
   'NAME' => 'IO::Async',
   'VERSION_FROM' => 'lib/IO/Async.pm',
   'PREREQ_PM' => {
-                   'Async::MergePoint' => '0.03',
                    'CPS' => 0,
-                   'CPS::Future' => '0.15',
                    'Exporter' => '5.57',
                    'File::Temp' => 0,
                    'File::stat' => 0,
+                   'Future' => '0.05',
                    'IO::Poll' => 0,
                    'Socket' => '1.95',
                    'Storable' => 0,

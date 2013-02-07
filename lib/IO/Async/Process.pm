@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2011-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2011-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Process;
 
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 use Carp;
 
@@ -19,7 +19,7 @@ use POSIX qw(
 
 use Socket qw( SOCK_STREAM );
 
-use Async::MergePoint 0.03;
+use Future;
 
 use IO::Async::OS;
 
@@ -111,7 +111,7 @@ sub _init
    $self->SUPER::_init( @_ );
 
    $self->{to_close}   = {};
-   $self->{mergepoint} = Async::MergePoint->new;
+   $self->{finish_futures} = [];
 }
 
 =head1 PARAMETERS
@@ -381,7 +381,7 @@ sub _prepare_fds
    my $fd_handle = $self->{fd_handle};
    my $fd_opts   = $self->{fd_opts};
 
-   my $mergepoint = $self->{mergepoint};
+   my $finish_futures = $self->{finish_futures};
 
    my @setup;
 
@@ -441,16 +441,11 @@ sub _prepare_fds
          croak "Unsure what to do with fd_via==$via";
       }
 
-      unless( $write_only ) {
-         $mergepoint->needs( $key );
-         $handle->configure(
-            on_closed => sub {
-               $mergepoint->done( $key );
-            },
-         );
-      }
-
       $self->add_child( $handle );
+
+      unless( $write_only ) {
+         push @$finish_futures, $handle->new_close_future;
+      }
    }
 
    return @setup;
@@ -472,13 +467,10 @@ sub _add_to_loop
 
    push @setup, $self->_prepare_fds( $loop );
 
-   # Once we start the Process we'll close the MergePoint. Its on_finished
-   # coderef will strongly reference $self. So we need to break this cycle.
-   my $mergepoint = delete $self->{mergepoint};
-   
-   $mergepoint->needs( "exit" );
+   my $finish_futures = delete $self->{finish_futures};
 
    my ( $exitcode, $dollarbang, $dollarat );
+   push @$finish_futures, my $exit_future = $loop->new_future;
 
    $self->{pid} = $loop->spawn_child(
       code    => $self->{code},
@@ -488,7 +480,7 @@ sub _add_to_loop
 
       on_exit => sub {
          ( undef, $exitcode, $dollarbang, $dollarat ) = @_;
-         $mergepoint->done( "exit" );
+         $exit_future->done unless $exit_future->is_cancelled;
       },
    );
    $self->{running} = 1;
@@ -499,10 +491,9 @@ sub _add_to_loop
 
    my $is_code = defined $self->{code};
 
-   $mergepoint->close(
-      on_finished => $self->_capture_weakself( sub {
+   $self->{finish_future} = Future->needs_all( @$finish_futures )
+      ->on_done( $self->_capture_weakself( sub {
          my $self = shift or return;
-         my %items = @_;
 
          $self->{exitcode} = $exitcode;
          $self->{dollarbang} = $dollarbang;
@@ -522,6 +513,12 @@ sub _add_to_loop
          $self->remove_from_parent;
       } ),
    );
+}
+
+sub DESTROY
+{
+   my $self = shift;
+   $self->{finish_future}->cancel if $self->{finish_future};
 }
 
 sub notifier_name

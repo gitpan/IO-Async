@@ -4,7 +4,7 @@ use strict;
 
 use IO::Async::Test;
 
-use Test::More tests => 71;
+use Test::More tests => 73;
 use Test::Fatal;
 use Test::Refcount;
 
@@ -241,9 +241,21 @@ my $sub_writeready = 0;
       on_closed => sub { $closed = 1 },
    );
 
+   $loop->add( $handle );
+
+   my $close_future = $handle->new_close_future;
+
+   my $closed_by_future;
+   $close_future->on_done( sub { $closed_by_future++ } );
+
    $handle->close;
 
    is( $closed, 1, '$closed after ->close' );
+
+   ok( $close_future->is_ready, '$close_future is now ready' );
+   is( $closed_by_future, 1, '$closed_by_future after ->close' );
+
+   # removed itself
 }
 
 # Close read/write

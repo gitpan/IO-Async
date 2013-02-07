@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -248,10 +248,6 @@ sub configure
 =head2 $loop = $notifier->loop
 
 Returns the C<IO::Async::Loop> that this Notifier is a member of.
-
-=head2 $loop = $notifier->get_loop
-
-Synonym for C<loop>.
 
 =cut
 

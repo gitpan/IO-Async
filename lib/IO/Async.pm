@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 =head1 NAME
 
@@ -202,23 +202,20 @@ L<IO::Async::Channel> objects. It can be used to solve any sort of problem
 involving keeping a possibly-stateful co-routine running alongside the rest of
 an asynchronous program.
 
-=head2 Tasks
+=head2 Futures
 
-A Task object represents a single outstanding action that is yet to complete,
-such as a name resolution operation or a socket connection. It stands in
-contrast to a C<IO::Async::Notifier>, which is an object that represents an
-ongoing source of activity, such as a readable filehandle of bytes or a POSIX
-signal.
+A Future object represents a single outstanding action that is yet to
+complete, such as a name resolution operation or a socket connection. It
+stands in contrast to a C<IO::Async::Notifier>, which is an object that
+represents an ongoing source of activity, such as a readable filehandle of
+bytes or a POSIX signal.
 
-Tasks are a recent addition to the C<IO::Async> API and details are still
-subject to change and experimentation. Currently a Task object is an instance
-of L<CPS::Future>, but it is possible this may change in future (pardon the
-pun ;) ) to being some class within the C<IO::Async::> namespace, and having
-a reference to the containing Loop object.
+L<IO::Async::Future>s are a recent addition to the C<IO::Async> API and
+details are still subject to change and experimentation.
 
-In general, methods that support Tasks return a new Task object to represent
-the outstanding operation. If callback functions are supplied as well, these
-will be fired in addition to the Task object becoming ready.
+In general, methods that support Futures return a new Future object to
+represent the outstanding operation. If callback functions are supplied as
+well, these will be fired in addition to the Future object becoming ready.
 
 =head2 Networking
 
@@ -256,19 +253,20 @@ C<IO::Async::Object>, based on C<IO::Async::Routine>.
 
 =item *
 
-Build some sort of future-like system, possibly called C<IO::Async::Task> to
-represent one-shot events like name resolver lookups, socket connects, etc..
-Replace uses of C<Async::MergePoint> with it, removing a dependency.
-Use C<CPS::Future>.
-
-=item *
-
 C<IO::Async::Protocol::Datagram>
 
 =item *
 
 Support for watching filesystem entries for change. Extract logic from
 C<IO::Async::FileStream>. Define Loop watch/unwatch method pair.
+
+=item *
+
+Define more C<Future>-returning methods. Consider also one-shot Futures on
+things like C<IO::Async::Process> exits, or C<IO::Async::Handle> close.
+
+Use C<< Future->or_else >> to replace the one remaining use of C<CPS>, in
+C<IO::Async::Connector>.
 
 =back
 

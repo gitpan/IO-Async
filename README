@@ -171,22 +171,19 @@ DESCRIPTION
     involving keeping a possibly-stateful co-routine running alongside the
     rest of an asynchronous program.
 
-  Tasks
-    A Task object represents a single outstanding action that is yet to
+  Futures
+    A Future object represents a single outstanding action that is yet to
     complete, such as a name resolution operation or a socket connection. It
     stands in contrast to a `IO::Async::Notifier', which is an object that
     represents an ongoing source of activity, such as a readable filehandle
     of bytes or a POSIX signal.
 
-    Tasks are a recent addition to the `IO::Async' API and details are still
-    subject to change and experimentation. Currently a Task object is an
-    instance of CPS::Future, but it is possible this may change in future
-    (pardon the pun ;) ) to being some class within the `IO::Async::'
-    namespace, and having a reference to the containing Loop object.
+    IO::Async::Futures are a recent addition to the `IO::Async' API and
+    details are still subject to change and experimentation.
 
-    In general, methods that support Tasks return a new Task object to
+    In general, methods that support Futures return a new Future object to
     represent the outstanding operation. If callback functions are supplied
-    as well, these will be fired in addition to the Task object becoming
+    as well, these will be fired in addition to the Future object becoming
     ready.
 
   Networking
@@ -216,15 +213,17 @@ TODO
     *   Consider some form of persistent object wrapper in the form of an
         `IO::Async::Object', based on `IO::Async::Routine'.
 
-    *   Build some sort of future-like system, possibly called
-        `IO::Async::Task' to represent one-shot events like name resolver
-        lookups, socket connects, etc.. Replace uses of `Async::MergePoint'
-        with it, removing a dependency. Use `CPS::Future'.
-
     *   `IO::Async::Protocol::Datagram'
 
     *   Support for watching filesystem entries for change. Extract logic
         from `IO::Async::FileStream'. Define Loop watch/unwatch method pair.
+
+    *   Define more `Future'-returning methods. Consider also one-shot
+        Futures on things like `IO::Async::Process' exits, or
+        `IO::Async::Handle' close.
+
+        Use `Future->or_else' to replace the one remaining use of `CPS', in
+        `IO::Async::Connector'.
 
 SUPPORT
     Bugs may be reported via RT at

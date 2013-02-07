@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Handle;
 
@@ -9,11 +9,13 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 use Carp;
 
 use IO::Handle; # give methods to bare IO handles
+
+use Future;
 
 =head1 NAME
 
@@ -367,7 +369,17 @@ sub close
    my $write_handle = delete $self->{write_handle};
    $write_handle->close if defined $write_handle;
 
+   $self->_closed;
+}
+
+sub _closed
+{
+   my $self = shift;
+
    $self->maybe_invoke_event( on_closed => );
+   if( $self->{close_futures} ) {
+      $_->done for @{ $self->{close_futures} };
+   }
    $self->remove_from_parent;
 }
 
@@ -392,10 +404,7 @@ sub close_read
    my $read_handle = delete $self->{read_handle};
    $read_handle->close if defined $read_handle;
 
-   if( !$self->{write_handle} ) {
-      $self->maybe_invoke_event( on_closed => );
-      $self->remove_from_parent;
-   }
+   $self->_closed if !$self->{write_handle};
 }
 
 sub close_write
@@ -407,10 +416,32 @@ sub close_write
    my $write_handle = delete $self->{write_handle};
    $write_handle->close if defined $write_handle;
 
-   if( !$self->{read_handle} ) {
-      $self->maybe_invoke_event( on_closed => );
-      $self->remove_from_parent;
-   }
+   $self->_closed if !$self->{read_handle};
+}
+
+=head2 $future = $handle->new_close_future
+
+Returns a new L<IO::Async::Future> object which will become done when the
+handle is closed. Cancelling the C<$future> will remove this notification
+ability but will not otherwise affect the C<$handle>.
+
+=cut
+
+sub new_close_future
+{
+   my $self = shift;
+
+   push @{ $self->{close_futures} }, my $future = $self->loop->new_future;
+   $future->on_cancel(
+      $self->_capture_weakself( sub {
+         my $self = shift;
+         my $future = shift;
+
+         @{ $self->{close_futures} } = grep { $_ != $future } @{ $self->{close_futures} };
+      })
+   );
+
+   return $future;
 }
 
 =head2 $handle = $handle->read_handle

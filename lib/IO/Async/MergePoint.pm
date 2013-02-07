@@ -8,11 +8,13 @@ package IO::Async::MergePoint;
 use strict;
 use warnings;
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 use Carp;
 
 use base qw( Async::MergePoint );
+
+carp "This module is deprecated; use Async::MergePoint instead";
 
 =head1 NAME
 

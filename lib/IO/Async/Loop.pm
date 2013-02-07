@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -503,41 +503,53 @@ sub loop_stop
    $self->stop;
 }
 
-#########
-# Tasks #
-#########
+###########
+# Futures #
+###########
 
-=head1 TASK SUPPORT
+=head1 FUTURE SUPPORT
 
-To support the use of Task objects in semi-synchronous programs, the following
-methods all block until some condition involving tasks is satisifed.
+The following methods relate to L<IO::Async::Future> objects.
 
 =cut
 
-=head2 $loop->await( $task )
+=head2 $future = $loop->new_future
 
-Blocks until the given task is ready, as indicated by its C<is_ready> method.
-As a convenience it returns the task, to simplify code:
+Returns a new C<IO::Async::Future> instance with a reference to the Loop.
 
- my @result = $loop->await( $task )->get;
+=cut
+
+sub new_future
+{
+   my $self = shift;
+   require IO::Async::Future;
+   return IO::Async::Future->new( $self );
+}
+
+=head2 $loop->await( $future )
+
+Blocks until the given future is ready, as indicated by its C<is_ready> method.
+As a convenience it returns the future, to simplify code:
+
+ my @result = $loop->await( $future )->get;
 
 =cut
 
 sub await
 {
    my $self = shift;
-   my ( $task ) = @_;
+   my ( $future ) = @_;
 
-   $self->loop_once until $task->is_ready;
+   $self->loop_once until $future->is_ready;
 
-   return $task;
+   return $future;
 }
 
-=head2 $loop->await_all( @tasks )
+=head2 $loop->await_all( @futures )
 
-Blocks until all the given tasks are ready, as indicated by the C<is_ready>
-method. Equivalent to calling C<await> on a C<< CPS::Future->wait_all >>
-except that it doesn't create the surrounding future object.
+Blocks until all the given futures are ready, as indicated by the C<is_ready>
+method. Equivalent to calling C<await> on a C<< Future->wait_all >> except
+that it doesn't create the surrounding future object.
 
 =cut
 
@@ -546,9 +558,9 @@ sub _all_ready { $_->is_ready or return 0 for @_; return 1  }
 sub await_all
 {
    my $self = shift;
-   my @tasks = @_;
+   my @futures = @_;
 
-   $self->loop_once until _all_ready @tasks;
+   $self->loop_once until _all_ready @futures;
 }
 
 ############

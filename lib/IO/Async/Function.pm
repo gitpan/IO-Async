@@ -1,21 +1,19 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2011-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2011-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Function;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.53';
+our $VERSION = '0.54';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
 
 use Carp;
-
-use CPS::Future;
 
 use Storable qw( freeze );
 
@@ -334,9 +332,9 @@ circumstances given above. They will be called directly, without the leading
 
 =back
 
-=head2 $task = $function->call( %params )
+=head2 $future = $function->call( %params )
 
-When returning a task, the C<on_result>, C<on_return> and C<on_error>
+When returning a future, the C<on_result>, C<on_return> and C<on_error>
 continuations are optional.
 
 =cut
@@ -352,18 +350,18 @@ sub call
    my $args = delete $params{args};
    ref $args eq "ARRAY" or croak "Expected 'args' to be an array";
 
-   my $task = CPS::Future->new;
+   my $future = $self->loop->new_future;
 
    if( defined $params{on_result} ) {
       my $on_result = delete $params{on_result};
       ref $on_result or croak "Expected 'on_result' to be a reference";
 
-      $task->on_done( $self->_capture_weakself( sub {
+      $future->on_done( $self->_capture_weakself( sub {
          my $self = shift;
          $self->debug_printf( "CONT on_return" );
          $on_result->( return => @_ );
       } ) );
-      $task->on_fail( $self->_capture_weakself( sub {
+      $future->on_fail( $self->_capture_weakself( sub {
          my $self = shift;
          my ( $err, @values ) = @_;
          $self->debug_printf( "CONT on_error" );
@@ -376,12 +374,12 @@ sub call
       my $on_error  = delete $params{on_error};
       ref $on_error or croak "Expected 'on_error' to be a reference";
 
-      $task->on_done( $self->_capture_weakself( sub {
+      $future->on_done( $self->_capture_weakself( sub {
          my $self = shift;
          $self->debug_printf( "CONT on_return" );
          $on_return->( @_ );
       } ) );
-      $task->on_fail( $self->_capture_weakself( sub {
+      $future->on_fail( $self->_capture_weakself( sub {
          my $self = shift;
          my ( $err, @values ) = @_;
          $self->debug_printf( "CONT on_error" );
@@ -389,20 +387,20 @@ sub call
       } ) );
    }
    elsif( !defined wantarray ) {
-      croak "Expected either 'on_result' or 'on_return' and 'on_error' keys, or to return a Task";
+      croak "Expected either 'on_result' or 'on_return' and 'on_error' keys, or to return a Future";
    }
 
    my $worker = $self->_get_worker;
 
    if( !$worker ) {
       my $request = freeze( $args );
-      push @{ $self->{pending_queue} }, [ $request, $task ];
-      return $task;
+      push @{ $self->{pending_queue} }, [ $request, $future ];
+      return $future;
    }
 
-   $self->_call_worker( $worker, args => $args, $task );
+   $self->_call_worker( $worker, args => $args, $future );
 
-   return $task;
+   return $future;
 }
 
 sub _worker_objects
@@ -488,9 +486,9 @@ sub _get_worker
 sub _call_worker
 {
    my $self = shift;
-   my ( $worker, $type, $args, $task ) = @_;
+   my ( $worker, $type, $args, $future ) = @_;
 
-   $worker->call( $type, $args, $task );
+   $worker->call( $type, $args, $future );
 
    if( $self->workers_idle == 0 ) {
       $self->{idle_timer}->stop if $self->{idle_timer};
@@ -575,7 +573,7 @@ sub stop
 sub call
 {
    my $worker = shift;
-   my ( $type, $args, $task ) = @_;
+   my ( $type, $args, $future ) = @_;
 
    if( $type eq "args" ) {
       $worker->{arg_channel}->send( $args );
@@ -597,10 +595,10 @@ sub call
          my $function = $worker->parent;
 
          if( $type eq "r" ) {
-            $task->done( @values );
+            $future->done( @values );
          }
          elsif( $type eq "e" ) {
-            $task->fail( $values[0], @values );
+            $future->fail( $values[0], @values );
             $worker->stop if $worker->{exit_on_die};
          }
          else {
@@ -618,7 +616,7 @@ sub call
 
          my $function = $worker->parent;
 
-         $task->fail( "closed", "closed" );
+         $future->fail( "closed", "closed" );
          $worker->stop;
 
          $function->_dispatch_pending if $function;

@@ -13,6 +13,7 @@ lib/IO/Async/Connector.pm
 lib/IO/Async/File.pm
 lib/IO/Async/FileStream.pm
 lib/IO/Async/Function.pm
+lib/IO/Async/Future.pm
 lib/IO/Async/Handle.pm
 lib/IO/Async/Internals/TimeQueue.pm
 lib/IO/Async/Listener.pm
@@ -67,7 +68,7 @@ t/15loop-poll-control.t
 t/15loop-select-control.t
 t/18loop-poll-legacy.t
 t/18loop-select-legacy.t
-t/19loop-task.t
+t/19loop-future.t
 t/19test.t
 t/20handle.t
 t/21stream-1read.t
