@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.54';
+our $VERSION = '0.55';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -16,9 +16,9 @@ use constant NEED_API_VERSION => '0.33';
 # Base value but some classes might override
 use constant _CAN_ON_HANGUP => 0;
 
-# Some Loop implementations do not accurately handle sub-second timers.
+# Most Loop implementations do not accurately handle sub-second timers.
 # This only matters for unit tests
-use constant _CAN_SUBSECOND_ACCURATELY => 1;
+use constant _CAN_SUBSECOND_ACCURATELY => 0;
 
 # Does the loop implementation support IO_ASYNC_WATCHDOG?
 use constant _CAN_WATCHDOG => 0;
@@ -161,6 +161,10 @@ sub __new
    my $old_timer = $self->can( "enqueue_timer" ) != \&enqueue_timer;
    if( $old_timer != ( $self->can( "cancel_timer" ) != \&cancel_timer ) ) {
       die "$class should overload both ->enqueue_timer and ->cancel_timer, or neither";
+   }
+
+   if( $old_timer ) {
+      warnings::warnif( deprecated => "Enabling old_timer workaround for old loop class " . $class );
    }
 
    $self->{old_timer} = $old_timer;
@@ -718,14 +722,6 @@ sub later
    return $self->watch_idle( when => 'later', code => $code );
 }
 
-# undocumented, to be removed soon
-sub detach_child
-{
-   my $self = shift;
-   warnings::warnif( deprecated => "Loop->detach_child is deprecated; use ->fork instead" );
-   $self->fork( @_ );
-}
-
 =head2 $loop->spawn_child( %params )
 
 This method creates a new child process to run a given code block or command.
@@ -1163,7 +1159,6 @@ sub pipequad    { shift; IO::Async::OS->pipequad( @_ ) }
 sub signame2num { shift; IO::Async::OS->signame2num( @_ ) }
 
 sub extract_addrinfo { shift; IO::Async::OS->extract_addrinfo( @_ ) }
-sub unpack_addrinfo  { goto &extract_addrinfo }
 
 =head2 $time = $loop->time
 
@@ -1240,8 +1235,6 @@ sub fork
       defined $exitvalue or $exitvalue = -1;
       _exit( $exitvalue );
    }
-
-   my $loop = $self->{loop};
 
    if( defined $params{on_exit} ) {
       $self->watch_child( $kid => $params{on_exit} );

@@ -32,7 +32,6 @@ lib/IO/Async/Protocol/LineStream.pm
 lib/IO/Async/Protocol/Stream.pm
 lib/IO/Async/Resolver.pm
 lib/IO/Async/Routine.pm
-lib/IO/Async/Sequencer.pm
 lib/IO/Async/Signal.pm
 lib/IO/Async/Socket.pm
 lib/IO/Async/Stream.pm
@@ -100,8 +99,6 @@ t/51loop-connect.t
 t/52loop-listen.t
 t/53loop-extend.t
 t/60protocol.t
-t/60sequencer-client.t
-t/60sequencer-server.t
 t/61protocol-stream.t
 t/62protocol-linestream.t
 t/99pod.t

@@ -1,8 +1,9 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 use strict;
+use warnings;
 
-use Test::More tests => 39;
+use Test::More;
 
 use IO::Async::OS;
 
@@ -13,6 +14,16 @@ use Socket qw(
 );
 
 use POSIX qw( SIGTERM );
+
+SKIP: {
+   skip "No IO::Socket::IP", 2 unless eval { require IO::Socket::IP };
+
+   my $S_inet = IO::Async::OS->socket( "inet", "stream" );
+   isa_ok( $S_inet, "IO::Socket::IP" );
+
+   my $S_inet6 = IO::Async::OS->socket( "inet6", "stream" );
+   isa_ok( $S_inet6, "IO::Socket::IP" );
+}
 
 foreach my $family ( undef, "inet" ) {
    my ( $S1, $S2 ) = IO::Async::OS->socketpair( $family, "stream" )
@@ -142,3 +153,5 @@ SKIP: {
               [ AF_UNIX, SOCK_STREAM, 0, $sunaddr ],
               'extract_addrinfo( HASH ) with unix, path' );
 }
+
+done_testing;

@@ -172,14 +172,14 @@ DESCRIPTION
     rest of an asynchronous program.
 
   Futures
-    A Future object represents a single outstanding action that is yet to
-    complete, such as a name resolution operation or a socket connection. It
-    stands in contrast to a `IO::Async::Notifier', which is an object that
-    represents an ongoing source of activity, such as a readable filehandle
-    of bytes or a POSIX signal.
+    An IO::Async::Future object represents a single outstanding action that
+    is yet to complete, such as a name resolution operation or a socket
+    connection. It stands in contrast to a `IO::Async::Notifier', which is
+    an object that represents an ongoing source of activity, such as a
+    readable filehandle of bytes or a POSIX signal.
 
-    IO::Async::Futures are a recent addition to the `IO::Async' API and
-    details are still subject to change and experimentation.
+    Futures are a recent addition to the `IO::Async' API and details are
+    still subject to change and experimentation.
 
     In general, methods that support Futures return a new Future object to
     represent the outstanding operation. If callback functions are supplied
@@ -216,7 +216,7 @@ TODO
     *   `IO::Async::Protocol::Datagram'
 
     *   Support for watching filesystem entries for change. Extract logic
-        from `IO::Async::FileStream'. Define Loop watch/unwatch method pair.
+        from `IO::Async::File' and define a Loop watch/unwatch method pair.
 
     *   Define more `Future'-returning methods. Consider also one-shot
         Futures on things like `IO::Async::Process' exits, or

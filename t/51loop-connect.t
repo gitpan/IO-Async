@@ -1,10 +1,11 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 use strict;
+use warnings;
 
 use IO::Async::Test;
 
-use Test::More tests => 28;
+use Test::More;
 
 use IO::Socket::INET;
 use POSIX qw( ENOENT );
@@ -37,7 +38,8 @@ my $addr = $listensock->sockname;
 
    wait_for { $sock };
 
-   isa_ok( $sock, "IO::Socket::INET", 'by addr: $sock isa IO::Socket::INET' );
+   # Not sure if it'll be an IO::Socket::INET or ::IP, but either way it should support these
+   can_ok( $sock, qw( peerhost peerport ) );
    is_deeply( [ unpack_sockaddr_in $sock->peername ],
               [ unpack_sockaddr_in $addr ], 'by addr: $sock->getpeername is $addr' );
 
@@ -55,7 +57,7 @@ my $addr = $listensock->sockname;
 
    my ( $sock ) = $future->get;
 
-   isa_ok( $sock, "IO::Socket::INET", 'by addr: $sock isa IO::Socket::INET from future' );
+   can_ok( $sock, qw( peerhost peerport ) );
    is_deeply( [ unpack_sockaddr_in $sock->peername ],
               [ unpack_sockaddr_in $addr ], 'by addr: $sock->getpeername is $addr from future' );
 
@@ -77,7 +79,7 @@ my $addr = $listensock->sockname;
 
    wait_for { $sock };
 
-   isa_ok( $sock, "IO::Socket::INET", 'by host/service: $sock isa IO::Socket::INET' );
+   can_ok( $sock, qw( peerhost peerport ) );
    is_deeply( [ unpack_sockaddr_in $sock->peername ],
               [ unpack_sockaddr_in $addr ], 'by host/service: $sock->getpeername is $addr' );
 
@@ -99,7 +101,7 @@ my $addr = $listensock->sockname;
 
    my ( $sock ) = $future->get;
 
-   isa_ok( $sock, "IO::Socket::INET", 'by host/service: $sock isa IO::Socket::INET from future' );
+   can_ok( $sock, qw( peerhost peerport ) );
    is_deeply( [ unpack_sockaddr_in $sock->peername ],
               [ unpack_sockaddr_in $addr ], 'by host/service: $sock->getpeername is $addr from future' );
 
@@ -270,3 +272,5 @@ SKIP: {
    is( $error[0], "connect", '$error[0] is connect' );
    is( "$error[1]", $failure, "\$error[1] is '$failure'" );
 }
+
+done_testing;

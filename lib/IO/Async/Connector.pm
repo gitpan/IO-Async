@@ -8,13 +8,13 @@ package IO::Async::Connector;
 use strict;
 use warnings;
 
-our $VERSION = '0.54';
+our $VERSION = '0.55';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
 
-use CPS qw( kforeach );
 use Future;
+use Future::Utils qw( repeat_until_success );
 
 use IO::Async::OS;
 
@@ -137,83 +137,78 @@ sub _get_sock_err
 sub _connect_addresses
 {
    my $self = shift;
-   my ( $addrlist, $future, $on_fail ) = @_;
+   my ( $addrlist, $on_fail ) = @_;
 
    my $loop = $self->{loop};
 
-   my $sock;
    my ( $connecterr, $binderr, $socketerr );
 
-   kforeach( $addrlist,
-      sub {
-         my ( $addr, $knext, $klast ) = @_;
-         my ( $family, $socktype, $protocol, $localaddr, $peeraddr ) = 
-            @{$addr}{qw( family socktype protocol localaddr peeraddr )};
+   my $future = repeat_until_success {
+      my $addr = shift;
+      my ( $family, $socktype, $protocol, $localaddr, $peeraddr ) =
+         @{$addr}{qw( family socktype protocol localaddr peeraddr )};
 
-         $sock = IO::Async::OS->socket( $family, $socktype, $protocol );
+      my $sock = IO::Async::OS->socket( $family, $socktype, $protocol );
 
-         if( !$sock ) {
-            $socketerr = $!;
-            $on_fail->( "socket", $family, $socktype, $protocol, $! ) if $on_fail;
-            goto &$knext;
-         }
-
-         if( $localaddr and not $sock->bind( $localaddr ) ) {
-            $binderr = $!;
-            $on_fail->( "bind", $sock, $localaddr, $! ) if $on_fail;
-            undef $sock;
-            goto &$knext;
-         }
-
-         $sock->blocking( 0 );
-
-         # TODO: $sock->connect returns success masking EINPROGRESS
-         my $ret = connect( $sock, $peeraddr );
-         if( $ret ) {
-            # Succeeded already? Dubious, but OK. Can happen e.g. with connections to
-            # localhost, or UNIX sockets, or something like that.
-            goto &$klast;
-         }
-         elsif( $! == EINPROGRESS or CONNECT_EWOULDLBOCK && $! == POSIX::EWOULDBLOCK ) {
-            $loop->watch_io(
-               handle => $sock,
-               on_write_ready => sub {
-                  $loop->unwatch_io( handle => $sock, on_write_ready => 1 );
-
-                  my $err = _get_sock_err( $sock );
-
-                  goto &$klast if !defined $err;
-
-                  $connecterr = $!;
-                  $on_fail->( "connect", $sock, $peeraddr, $err ) if $on_fail;
-                  undef $sock;
-                  goto &$knext;
-               },
-            );
-         }
-         else {
-            $connecterr = $!;
-            $on_fail->( "connect", $sock, $peeraddr, $! ) if $on_fail;
-            undef $sock;
-            goto &$knext;
-         }
-      },
-      sub {
-         if( $sock ) {
-            return $future->done( $sock );
-         }
-         else {
-            return $future->fail( "connect: $connecterr", connect => connect => $connecterr )
-               if $connecterr;
-            return $future->fail( "bind: $binderr",       connect => bind    => $binderr    )
-               if $binderr;
-            return $future->fail( "socket: $socketerr",   connect => socket  => $socketerr  )
-               if $socketerr;
-            # If it gets this far then something went wrong
-            die 'Oops; $loop->connect failed but no error cause was found';
-         }
+      if( !$sock ) {
+         $socketerr = $!;
+         $on_fail->( "socket", $family, $socktype, $protocol, $! ) if $on_fail;
+         return Future->new->fail( 1 );
       }
-   );
+
+      if( $localaddr and not $sock->bind( $localaddr ) ) {
+         $binderr = $!;
+         $on_fail->( "bind", $sock, $localaddr, $! ) if $on_fail;
+         return Future->new->fail( 1 );
+      }
+
+      $sock->blocking( 0 );
+
+      # TODO: $sock->connect returns success masking EINPROGRESS
+      my $ret = connect( $sock, $peeraddr );
+      if( $ret ) {
+         # Succeeded already? Dubious, but OK. Can happen e.g. with connections to
+         # localhost, or UNIX sockets, or something like that.
+         return Future->new->done( $sock );
+      }
+      elsif( $! != EINPROGRESS and !CONNECT_EWOULDLBOCK || $! != POSIX::EWOULDBLOCK ) {
+         $connecterr = $!;
+         $on_fail->( "connect", $sock, $peeraddr, $! ) if $on_fail;
+         return Future->new->fail( 1 );
+      }
+
+      # Else
+      my $f = $loop->new_future;
+      $loop->watch_io(
+         handle => $sock,
+         on_write_ready => sub {
+            $loop->unwatch_io( handle => $sock, on_write_ready => 1 );
+
+            my $err = _get_sock_err( $sock );
+
+            return $f->done( $sock ) if !$err;
+
+            $connecterr = $!;
+            $on_fail->( "connect", $sock, $peeraddr, $err ) if $on_fail;
+            return $f->fail( 1 );
+         },
+      );
+      $f->on_cancel(
+         sub { $loop->unwatch_io( handle => $sock, on_write_ready => 1 ); }
+      );
+      return $f;
+   } foreach => $addrlist;
+
+   return $future->or_else( sub {
+      return $future->new->fail( "connect: $connecterr", connect => connect => $connecterr )
+         if $connecterr;
+      return $future->new->fail( "bind: $binderr",       connect => bind    => $binderr    )
+         if $binderr;
+      return $future->new->fail( "socket: $socketerr",   connect => socket  => $socketerr  )
+         if $socketerr;
+      # If it gets this far then something went wrong
+      die 'Oops; $loop->connect failed but no error cause was found';
+   } );
 }
 
 =head2 $loop->connect( %params )
@@ -366,36 +361,35 @@ sub connect
 
    my $loop = $self->{loop};
 
-   my $future = $loop->new_future;
+   my $on_done;
 
    # Callbacks
    if( my $on_connected = delete $params{on_connected} ) {
-      $future->on_done( $on_connected );
+      $on_done = $on_connected;
    }
    elsif( my $on_stream = delete $params{on_stream} ) {
       require IO::Async::Stream;
       # TODO: It doesn't make sense to put a SOCK_DGRAM in an
       # IO::Async::Stream but currently we don't detect this
-      $future->on_done( sub {
+      $on_done = sub {
          my ( $handle ) = @_;
          $on_stream->( IO::Async::Stream->new( handle => $handle ) );
-      } );
+      };
    }
    elsif( my $on_socket = delete $params{on_socket} ) {
       require IO::Async::Socket;
-      $future->on_done( sub {
+      $on_done = sub {
          my ( $handle ) = @_;
          $on_socket->( IO::Async::Socket->new( handle => $handle ) );
-      } );
+      };
    }
    elsif( !defined wantarray ) {
       croak "Expected 'on_connected' or 'on_stream' callback or to return a Future";
    }
 
-   if( my $on_connect_error = $params{on_connect_error} ) {
-      $future->on_fail( sub {
-         $on_connect_error->( @_[2,3] ) if $_[1] eq "connect";
-      } );
+   my $on_connect_error;
+   if( $on_connect_error = $params{on_connect_error} ) {
+      # OK
    }
    elsif( !defined wantarray ) {
       croak "Expected 'on_connect_error' callback";
@@ -413,10 +407,9 @@ sub connect
    }
 
    my $have_fail_resolve = 1;
-   if( my $on_resolve_error = $params{on_resolve_error} ) {
-      $future->on_fail( sub {
-         $on_resolve_error->( $_[2] ) if $_[1] eq "resolve";
-      } );
+   my $on_resolve_error;
+   if( $on_resolve_error = $params{on_resolve_error} ) {
+      # OK
    }
    elsif( !defined wantarray ) {
       undef $have_fail_resolve;
@@ -463,8 +456,12 @@ sub connect
       $localaddrfuture = $loop->new_future->done( {} );
    }
 
-   my $addrfuture = Future->needs_all( $peeraddrfuture, $localaddrfuture )
-      ->on_done( sub {
+   my $future = Future->needs_all( $peeraddrfuture, $localaddrfuture )
+      ->or_else( sub {
+         my $f = shift;
+         return $loop->new_future->fail( $f->failure, resolve => $f->failure );
+      } )
+      ->and_then( sub {
          my @peeraddrs  = $peeraddrfuture->get;
          my @localaddrs = $localaddrfuture->get;
 
@@ -491,13 +488,14 @@ sub connect
             }
          }
 
-         $self->_connect_addresses( \@addrs, $future, $on_fail );
-      } )
-      ->on_fail( sub {
-         $future->fail( "$_[0]\n", resolve => $_[0] );
+         return $self->_connect_addresses( \@addrs, $on_fail );
       } );
 
-   $future->on_cancel( sub { $addrfuture->cancel } ) if !$future->is_ready;
+   $future->on_done( $on_done ) if $on_done;
+   $future->on_fail( sub {
+      $on_connect_error->( @_[2,3] ) if $on_connect_error and $_[1] eq "connect";
+      $on_resolve_error->( $_[2] )   if $on_resolve_error and $_[1] eq "resolve";
+   } );
 
    return $future;
 }

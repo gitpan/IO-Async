@@ -6,8 +6,7 @@ use Module::Build;
 my $build = Module::Build->new(
    module_name => 'IO::Async',
    requires => {
-      'CPS' => 0,
-      'Future' => '0.05',
+      'Future' => '0.08',
       'Exporter' => '5.57',
       'File::stat' => 0,
       'IO::Poll' => 0,
@@ -22,11 +21,14 @@ my $build = Module::Build->new(
       # Furthermore we've started using 5.10'isms
       'perl' => '5.010',
    },
+   recommends => {
+      'IO::Socket::IP' => 0,
+   },
    build_requires => {
       'File::Temp' => 0,
-      'Test::More' => 0,
       'Test::Fatal' => 0,
       'Test::Identity' => 0,
+      'Test::More' => '0.88',
       'Test::Refcount' => 0,
    },
    auto_configure_requires => 0, # Don't add M::B to configure_requires

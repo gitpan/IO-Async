@@ -8,7 +8,7 @@ package IO::Async::OS;
 use strict;
 use warnings;
 
-our $VERSION = '0.54';
+our $VERSION = '0.55';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -46,6 +46,9 @@ use constant HAVE_CONNECT_EWOULDBLOCK => 0;
 
 # Can we rename() files that are open?
 use constant HAVE_RENAME_OPEN_FILES => 1;
+
+# Do we have IO::Socket::IP available?
+use constant HAVE_IO_SOCKET_IP => defined eval { require IO::Socket::IP };
 
 =head1 NAME
 
@@ -115,15 +118,21 @@ sub socket
    my ( $family, $socktype, $proto ) = @_;
 
    croak "Cannot create a new socket without a family" unless $family;
+   # PF_UNSPEC and undef are both false
+   $family = $self->getfamilybyname( $family ) || AF_UNIX;
 
    # SOCK_STREAM is the most likely
-   defined $socktype or $socktype = SOCK_STREAM;
+   $socktype = $self->getsocktypebyname( $socktype ) || SOCK_STREAM;
 
    defined $proto or $proto = 0;
 
+   if( HAVE_IO_SOCKET_IP and ( $family == AF_INET || $family == AF_INET6() ) ) {
+      return IO::Socket::IP->new->socket( $family, $socktype, $proto );
+   }
+
    my $sock = eval {
       IO::Socket->new(
-         Domain => $family, 
+         Domain => $family,
          Type   => $socktype,
          Proto  => $proto,
       );
