@@ -103,3 +103,4 @@ t/61protocol-stream.t
 t/62protocol-linestream.t
 t/99pod.t
 t/StupidLoop.pm
+t/TimeAbout.pm

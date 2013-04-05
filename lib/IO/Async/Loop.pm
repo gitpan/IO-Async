@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -565,6 +565,54 @@ sub await_all
    my @futures = @_;
 
    $self->loop_once until _all_ready @futures;
+}
+
+=head2 $future = $loop->delay_future( %args )
+
+Returns a new C<IO::Async::Future> instance which will become done at a given
+point in time. The C<%args> should contain an C<at> or C<after> key as per the
+C<watch_time> method. The returned future may be cancelled to cancel the
+timer. At the alloted time the future will succeed with an empty result list.
+
+=cut
+
+sub delay_future
+{
+   my $self = shift;
+   my %args = @_;
+
+   my $future = $self->new_future;
+   my $id = $self->watch_time( %args,
+      code => sub { $future->done },
+   );
+
+   $future->on_cancel( sub { shift->loop->unwatch_time( $id ) } );
+
+   return $future;
+}
+
+=head2 $future = $loop->timeout_future( %args )
+
+Returns a new C<IO::Async::Future> instance which will fail at a given point
+in time. The C<%args> should contain an C<at> or C<after> key as per the
+C<watch_time> method. The returned future may be cancelled to cancel the
+timer. At the alloted time, the future will fail with the string C<"Timeout">.
+
+=cut
+
+sub timeout_future
+{
+   my $self = shift;
+   my %args = @_;
+
+   my $future = $self->new_future;
+   my $id = $self->watch_time( %args,
+      code => sub { $future->fail( "Timeout" ) },
+   );
+
+   $future->on_cancel( sub { shift->loop->unwatch_time( $id ) } );
+
+   return $future;
 }
 
 ############
@@ -1141,24 +1189,13 @@ to give different implementations on that OS.
 
 =cut
 
-=head2 ( $S1, $S2 ) = $loop->socketpair( $family, $socktype, $proto )
-
-=head2 ( $rd, $wr ) = $loop->pipepair
-
-=head2 ( $rdA, $wrA, $rdB, $wrB ) = $loop->pipequad
-
 =head2 $signum = $loop->signame2num( $signame )
 
 Legacy wrappers around L<IO::Async::OS> functions.
 
 =cut
 
-sub socketpair  { shift; IO::Async::OS->socketpair( @_ ) }
-sub pipepair    { shift; IO::Async::OS->pipepair( @_ ) }
-sub pipequad    { shift; IO::Async::OS->pipequad( @_ ) }
 sub signame2num { shift; IO::Async::OS->signame2num( @_ ) }
-
-sub extract_addrinfo { shift; IO::Async::OS->extract_addrinfo( @_ ) }
 
 =head2 $time = $loop->time
 

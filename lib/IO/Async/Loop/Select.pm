@@ -8,7 +8,7 @@ package IO::Async::Loop::Select;
 use strict;
 use warnings;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
@@ -17,7 +17,7 @@ use IO::Async::OS;
 
 use Carp;
 
-use POSIX qw( S_ISREG );
+use Fcntl qw( S_ISREG );
 
 # select() on most platforms claims that ISREG files are always read- and
 # write-ready, but not on MSWin32. We need to fake this
@@ -224,6 +224,11 @@ sub loop_once
 
    my $ret = select( $rvec, $wvec, $evec, $timeout );
 
+   if( $ret < 0 ) {
+      # r/w/e vec can't be trusted
+      $rvec = $wvec = $evec = '';
+   }
+
    {
       local $!;
       $self->post_select( $rvec, $wvec, $evec );
@@ -248,7 +253,7 @@ sub watch_io
    # but it does indicate exceptional
    vec( $self->{evec}, $fileno, 1 ) = 1 if SELECT_CONNECT_EVEC and $params{on_write_ready};
 
-   vec( $self->{avec}, $fileno, 1 ) = 1 if FAKE_ISREG_READY and S_ISREG(stat $params{handle});
+   vec( $self->{avec}, $fileno, 1 ) = 1 if FAKE_ISREG_READY and S_ISREG +(stat $params{handle})[2];
 }
 
 sub unwatch_io
@@ -265,7 +270,7 @@ sub unwatch_io
 
    vec( $self->{evec}, $fileno, 1 ) = 0 if SELECT_CONNECT_EVEC and $params{on_write_ready};
 
-   vec( $self->{avec}, $fileno, 1 ) = 0 if FAKE_ISREG_READY and S_ISREG(stat $params{handle});
+   vec( $self->{avec}, $fileno, 1 ) = 0 if FAKE_ISREG_READY and S_ISREG +(stat $params{handle})[2];
 
    # vec will grow a bit vector as needed, but never shrink it. We'll trim
    # trailing null bytes

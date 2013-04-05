@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 
 use Carp;
 
@@ -337,7 +337,7 @@ sub configure_fd
       $wants_read++;
    }
 
-   if( my $from = delete $args{from} ) {
+   if( defined( my $from = delete $args{from} ) ) {
       $opts->{from} = $from;
 
       $wants_write++;

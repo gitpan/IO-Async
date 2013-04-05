@@ -8,7 +8,7 @@ package IO::Async::Future;
 use strict;
 use warnings;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 
 use base qw( Future );
 Future->VERSION( '0.05' ); # to respect subclassing
@@ -40,6 +40,26 @@ For a full description on how to use Futures, see the L<Future> documentation.
 
 =cut
 
+=head1 CONSTRUCTORS
+
+New C<IO::Async::Future> objects should be constructed by using the following
+methods on the C<Loop>. For more detail see the L<IO::Async::Loop>
+documentation.
+
+=head2 $future = $loop->new_future
+
+Returns a new pending Future.
+
+=head2 $future = $loop->delay_future( %args )
+
+Returns a new Future that will become done at a given time.
+
+=head2 $future = $loop->timeout_future( %args )
+
+Returns a new Future that will become failed at a given time.
+
+=cut
+
 sub new
 {
    my $proto = shift;
@@ -53,6 +73,22 @@ sub new
    }
 
    return $self;
+}
+
+=head1 METHODS
+
+=cut
+
+=head2 $loop = $future->loop
+
+Returns the underlying C<IO::Async::Loop> object.
+
+=cut
+
+sub loop
+{
+   my $self = shift;
+   return $self->{loop};
 }
 
 sub await

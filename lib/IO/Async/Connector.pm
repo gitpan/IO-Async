@@ -8,7 +8,7 @@ package IO::Async::Connector;
 use strict;
 use warnings;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
@@ -197,7 +197,7 @@ sub _connect_addresses
          sub { $loop->unwatch_io( handle => $sock, on_write_ready => 1 ); }
       );
       return $f;
-   } foreach => $addrlist;
+   } foreach => $addrlist, return => $loop->new_future;
 
    return $future->or_else( sub {
       return $future->new->fail( "connect: $connecterr", connect => connect => $connecterr )

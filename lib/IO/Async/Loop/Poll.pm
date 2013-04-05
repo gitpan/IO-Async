@@ -8,7 +8,7 @@ package IO::Async::Loop::Poll;
 use strict;
 use warnings;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
@@ -17,7 +17,8 @@ use Carp;
 
 use IO::Poll qw( POLLIN POLLOUT POLLHUP POLLERR );
 
-use POSIX qw( EINTR S_ISREG );
+use Errno qw( EINTR );
+use Fcntl qw( S_ISREG );
 
 # IO::Poll version 0.05 contain a bug whereby the ->remove method doesn't
 # properly clean up all the references to the handles. If the version we're
@@ -255,7 +256,7 @@ sub watch_io
    $params{on_write_ready} and $mask |= POLLOUT;
    $params{on_hangup}      and $mask |= POLLHUP;
 
-   if( FAKE_ISREG_READY and S_ISREG(stat $handle) ) {
+   if( FAKE_ISREG_READY and S_ISREG +(stat $handle)[2] ) {
       $self->{fake_isreg}{$handle->fileno} = [ $handle, $mask ];
    }
 
@@ -281,7 +282,7 @@ sub unwatch_io
    $params{on_write_ready} and $mask &= ~POLLOUT;
    $params{on_hangup}      and $mask &= ~POLLHUP;
 
-   if( FAKE_ISREG_READY and S_ISREG(stat $handle) ) {
+   if( FAKE_ISREG_READY and S_ISREG +(stat $handle)[2] ) {
       if( $mask ) {
          $self->{fake_isreg}{$handle->fileno} = [ $handle, $mask ];
       }

@@ -8,7 +8,7 @@ package IO::Async::OS::MSWin32;
 use strict;
 use warnings;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -37,6 +37,13 @@ This module contains OS support code for C<MSWin32>.
 See instead L<IO::Async::OS>.
 
 =cut
+
+# Win32's pipes don't actually work with select(). We'll have to create
+# sockets instead
+sub pipepair
+{
+   shift->socketpair( 'inet', 'stream' );
+}
 
 # Win32 doesn't have a socketpair(). We'll fake one up
 sub socketpair

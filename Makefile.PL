@@ -9,7 +9,7 @@ WriteMakefile
                    'Exporter' => '5.57',
                    'File::Temp' => 0,
                    'File::stat' => 0,
-                   'Future' => '0.08',
+                   'Future' => '0.12',
                    'IO::Poll' => 0,
                    'Socket' => '1.95',
                    'Storable' => 0,
