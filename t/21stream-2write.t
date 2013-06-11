@@ -77,13 +77,16 @@ sub read_data
 
    my $flushed;
 
-   $stream->write( "hello again\n", on_flush => sub {
+   my $f = $stream->write( "hello again\n", on_flush => sub {
       is( $_[0], $stream, 'on_flush $_[0] is $stream' );
       $flushed++
    } );
 
+   ok( !$f->is_ready, '->write future not yet ready' );
+
    wait_for { $flushed };
 
+   ok( $f->is_ready, '->write future is ready after flush' );
    is( read_data( $rd ), "hello again\n", 'flushed data does get flushed' );
 
    $flushed = 0;
@@ -91,33 +94,6 @@ sub read_data
    wait_for { $flushed };
 
    ok( 1, "write empty data with on_flush" );
-
-   my $done;
-
-   $stream->write(
-      sub {
-         is( $_[0], $stream, 'Writersub $_[0] is $stream' );
-         return $done++ ? undef : "a lazy message\n";
-      },
-      on_flush => sub { $flushed++ },
-   );
-
-   $flushed = 0;
-   wait_for { $flushed };
-
-   is( read_data( $rd ), "a lazy message\n", 'lazy data was written' );
-
-   my @chunks = ( "some ", "message chunks ", "here\n" );
-
-   $stream->write(
-      sub { return shift @chunks },
-      on_flush => sub { $flushed++ },
-   );
-
-   $flushed = 0;
-   wait_for { $flushed };
-
-   is( read_data( $rd ), "some message chunks here\n", 'multiple lazy data was written' );
 
    $stream->configure( autoflush => 1 );
    $stream->write( "immediate\n" );
@@ -189,10 +165,12 @@ sub read_data
 
    $rd->close;
 
+   ok( !$stream->is_write_eof, '$stream->is_write_eof before wait' );
    is( $eof, 0, 'EOF indication before wait' );
 
    wait_for { $eof };
 
+   ok( $stream->is_write_eof, '$stream->is_write_eof after wait' );
    is( $eof, 1, 'EOF indication after wait' );
 
    ok( !defined $stream->loop, 'EOF stream no longer member of Loop' );
@@ -235,6 +213,100 @@ sub read_data
    ok( !defined $stream->loop, 'Stream no longer member of Loop' );
 
    is_oneref( $stream, 'closing $stream refcount 1 finally' );
+}
+
+# ->write( Future )
+{
+   my ( $rd, $wr ) = mkhandles;
+   my $stream = IO::Async::Stream->new(
+      write_handle => $wr,
+   );
+   $loop->add( $stream );
+
+   my $flushed;
+   $stream->write(
+      my $future = $loop->new_future,
+      on_flush => sub { $flushed++ },
+   );
+
+   $loop->loop_once( 0.1 );
+   is( read_data( $rd ), "", 'stream idle before Future completes' );
+
+   $future->done( "some data to write" );
+
+   wait_for { $flushed };
+
+   is( read_data( $rd ), "some data to write", 'stream written by Future completion' );
+
+   $loop->remove( $stream );
+}
+
+# ->write( CODE )
+{
+   my ( $rd, $wr ) = mkhandles;
+   my $stream = IO::Async::Stream->new(
+      write_handle => $wr,
+   );
+   $loop->add( $stream );
+
+   my $done;
+   my $flushed;
+
+   $stream->write(
+      sub {
+         is( $_[0], $stream, 'Writersub $_[0] is $stream' );
+         return $done++ ? undef : "a lazy message\n";
+      },
+      on_flush => sub { $flushed++ },
+   );
+
+   $flushed = 0;
+   wait_for { $flushed };
+
+   is( read_data( $rd ), "a lazy message\n", 'lazy data was written' );
+
+   my @chunks = ( "some ", "message chunks ", "here\n" );
+
+   $stream->write(
+      sub {
+         return shift @chunks;
+      },
+      on_flush => sub { $flushed++ },
+   );
+
+   $flushed = 0;
+   wait_for { $flushed };
+
+   is( read_data( $rd ), "some message chunks here\n", 'multiple lazy data was written' );
+
+   $loop->remove( $stream );
+}
+
+# ->write mixed returns
+{
+   my ( $rd, $wr ) = mkhandles;
+   my $stream = IO::Async::Stream->new(
+      write_handle => $wr,
+   );
+   $loop->add( $stream );
+
+   my $flushed;
+   $stream->write( my $future = $loop->new_future, on_flush => sub { $flushed++ } );
+
+   my $once = 0;
+   $future->done( sub {
+      return $once++ ? undef : ( $future = $loop->new_future );
+   });
+
+   wait_for { $once };
+
+   $future->done( "Eventual string" );
+
+   wait_for { $flushed };
+
+   is( read_data( $rd ), "Eventual string", 'multiple lazy data was written' );
+
+   $loop->remove( $stream );
 }
 
 {

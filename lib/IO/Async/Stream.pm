@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2006-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2006-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Stream;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.56';
+our $VERSION = '0.57';
 
 use base qw( IO::Async::Handle );
 
@@ -17,6 +17,7 @@ use Errno qw( EAGAIN EWOULDBLOCK EINTR EPIPE );
 use Carp;
 
 use Encode 2.11 qw( find_encoding STOP_AT_PARTIAL );
+use Scalar::Util qw( blessed );
 
 # Tuneable from outside
 # Not yet documented
@@ -26,7 +27,10 @@ our $WRITELEN = 8192;
 # Indicies in writequeue elements
 use constant WQ_DATA     => 0;
 use constant WQ_ON_FLUSH => 1;
-use constant WQ_GENSUB   => 2;
+use constant WQ_WATCHING => 2;
+# Indicies into readqueue elements
+use constant RQ_ONREAD => 0;
+use constant RQ_FUTURE => 1;
 
 =head1 NAME
 
@@ -111,6 +115,10 @@ C<undef>. Whenever the callback is changed in this way, the new code is called
 again; even if the read buffer is currently empty. See the examples at the end
 of this documentation for more detail.
 
+The C<push_on_read> method can be used to insert new, temporary handlers that
+take precedence over the global C<on_read> handler. This event is only used if
+there are no further pending handlers created by C<push_on_read>.
+
 =head2 on_read_eof
 
 Optional. Invoked when the read handle indicates an end-of-file (EOF)
@@ -150,7 +158,8 @@ sub _init
 {
    my $self = shift;
 
-   $self->{writequeue} = []; # Queue of ARRAYs. Each will be [ $data, $on_flushed, $gensub ]
+   $self->{writequeue} = []; # Queue of ARRAYs of [ $data, $on_flushed ]
+   $self->{readqueue} = []; # Queue of ARRAYs of [ CODE, $readfuture ]
    $self->{readbuff} = "";
 
    $self->{read_len}  = $READLEN;
@@ -235,11 +244,11 @@ may be useful for reading regular files, or interacting with TTY devices.
 =item encoding => STRING
 
 If supplied, sets the name of encoding of the underlying stream. If an
-encoding is set, then the C<print> method will expect to receive Unicode
+encoding is set, then the C<write> method will expect to receive Unicode
 strings and encodes them into bytes, and incoming bytes will be decoded into
 Unicode strings for the C<on_read> event.
 
-If an encoding is not supplied then C<print> and C<on_read> will work in byte
+If an encoding is not supplied then C<write> and C<on_read> will work in byte
 strings.
 
 I<IMPORTANT NOTE:> in order to handle reads of UTF-8 content or other
@@ -334,54 +343,6 @@ sub _is_empty
    return !@{ $self->{writequeue} };
 }
 
-sub _flush_one
-{
-   my $self = shift;
-
-   my $head = $self->{writequeue}[WQ_DATA];
-
-   if( !defined $head->[WQ_DATA] ) {
-      my $gensub = $head->[WQ_GENSUB] or die "Internal consistency problem - empty writequeue item without a gensub\n";
-      $head->[WQ_DATA] = $gensub->( $self );
-
-      if( !defined $head->[WQ_DATA] ) {
-         $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
-         shift @{ $self->{writequeue} };
-
-         return 1;
-      }
-   }
-
-   my $len = $self->write_handle->syswrite( $head->[WQ_DATA], $self->{write_len} );
-
-   if( !defined $len ) {
-      my $errno = $!;
-
-      return 0 if _nonfatal_error( $errno );
-
-      $self->maybe_invoke_event( on_write_eof => ) if $errno == EPIPE;
-
-      $self->maybe_invoke_event( on_write_error => $errno )
-         or $self->close_now;
-
-      return 0;
-   }
-
-   substr( $head->[WQ_DATA], 0, $len ) = "";
-
-   if( !length $head->[WQ_DATA] ) {
-      if( $head->[WQ_GENSUB] ) {
-         undef $head->[WQ_DATA]; # We'll get some more next time around
-      }
-      else {
-         $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
-         shift @{ $self->{writequeue} };
-      }
-   }
-
-   return 1;
-}
-
 =head2 $stream->close
 
 A synonym for C<close_when_empty>. This should not be used when the deferred
@@ -438,6 +399,27 @@ sub close_now
    $self->SUPER::close;
 }
 
+=head2 $eof = $stream->is_read_eof
+
+=head2 $eof = $stream->is_write_eof
+
+Returns true after an EOF condition is reported on either the read or the
+write handle, respectively.
+
+=cut
+
+sub is_read_eof
+{
+   my $self = shift;
+   return $self->{read_eof};
+}
+
+sub is_write_eof
+{
+   my $self = shift;
+   return $self->{write_eof};
+}
+
 =head2 $stream->write( $data, %params )
 
 This method adds data to the outgoing data queue, or writes it immediately,
@@ -449,12 +431,21 @@ will have been written by the time this method returns. If it fails to write
 completely, then the data is queued as if C<autoflush> were not set, and will
 be flushed as normal.
 
-C<$data> can either be a plain string, or a CODE reference. If it is a CODE
-reference, it will be invoked to generate data to be written. Each time the
-filehandle is ready to receive more data to it, the function is invoked, and
-what it returns written to the filehandle. Once the function has finished
-generating data it should return undef. The function is passed the Stream
-object as its first argument.
+C<$data> can either be a plain string, a L<Future>, or a CODE reference. If it
+is a plain string it is written immediately. If it is not, its value will be
+used to generate more C<$data> values, eventually leading to strings to be
+written.
+
+If C<$data> is a C<Future>, the Stream will wait until it is ready, and take
+the single value it yields.
+
+If C<$data> is a CODE reference, it will be repeatedly invoked to generate new
+values. Each time the filehandle is ready to write more data to it, the
+function is invoked. Once the function has finished generating data it should
+return undef. The function is passed the Stream object as its first argument.
+
+It is allowed that C<Future>s yield CODE references, or CODE references return
+C<Future>s, as well as plain strings.
 
 For example, to stream the contents of an existing opened filehandle:
 
@@ -490,7 +481,92 @@ C<on_flush> continuation will be invoked, if supplied. This can be used to
 obtain a marker, to invoke some code once the output queue has been flushed up
 to this point.
 
+=head2 $f = $stream->write( ... )
+
+If called in non-void context, this method returns a L<Future> which will
+complete (with no value) when the write operation has been flushed. This may
+be used as an alternative to, or combined with, the C<on_flush> callback.
+
 =cut
+
+sub _flush_one_write
+{
+   my $self = shift;
+
+   my $writequeue = $self->{writequeue};
+
+   my $head;
+   while( $head = $writequeue->[0] and ref $head->[WQ_DATA] ) {
+      if( ref $head->[WQ_DATA] eq "CODE" ) {
+         my $data = $head->[WQ_DATA]->( $self );
+         if( !defined $data ) {
+            $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
+            shift @$writequeue;
+            return 1;
+         }
+         if( !ref $data and my $encoding = $self->{encoding} ) {
+            $data = $encoding->encode( $data );
+         }
+         unshift @$writequeue, [ $data ];
+         next;
+      }
+      elsif( blessed $head->[WQ_DATA] and $head->[WQ_DATA]->isa( "Future" ) ) {
+         my $f = $head->[WQ_DATA];
+         if( !$f->is_ready ) {
+            return 0 if $head->[WQ_WATCHING];
+            $f->on_ready( sub { $self->_flush_one_write } );
+            $head->[WQ_WATCHING]++;
+            return 0;
+         }
+         my $data = $f->get;
+         if( !ref $data and my $encoding = $self->{encoding} ) {
+            $data = $encoding->encode( $data );
+         }
+         $head->[WQ_DATA] = $data;
+         next;
+      }
+      else {
+         die "Unsure what to do with reference ".ref($head->[WQ_DATA])." in write queue";
+      }
+   }
+
+   while( !$head->[WQ_ON_FLUSH] and
+          $writequeue->[1] and
+          !ref $writequeue->[1][WQ_DATA] ) {
+      $head->[WQ_DATA] .= $writequeue->[1][WQ_DATA];
+      $head->[WQ_ON_FLUSH] = $writequeue->[1][WQ_ON_FLUSH];
+      splice @$writequeue, 1, 1, ();
+   }
+
+   die "TODO: head data does not contain a plain string" if ref $head->[WQ_DATA];
+
+   my $len = $self->write_handle->syswrite( $head->[WQ_DATA], $self->{write_len} );
+
+   if( !defined $len ) {
+      my $errno = $!;
+
+      return 0 if _nonfatal_error( $errno );
+
+      if( $errno == EPIPE ) {
+         $self->{write_eof} = 1;
+         $self->maybe_invoke_event( on_write_eof => );
+      }
+
+      $self->maybe_invoke_event( on_write_error => $errno )
+         or $self->close_now;
+
+      return 0;
+   }
+
+   substr( $head->[WQ_DATA], 0, $len ) = "";
+
+   if( !length $head->[WQ_DATA] ) {
+      $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
+      shift @{ $self->{writequeue} };
+   }
+
+   return 1;
+}
 
 sub write
 {
@@ -505,48 +581,84 @@ sub write
 
    croak "Cannot write data to a Stream with no write_handle" if !$handle and $self->loop;
 
-   if( my $encoding = $self->{encoding} ) {
+   if( !ref $data and my $encoding = $self->{encoding} ) {
       $data = $encoding->encode( $data );
    }
 
-   # Combine short writes we can
-   my $tail = @{ $self->{writequeue} } ? $self->{writequeue}[-1] : undef;
+   my $on_flush = delete $params{on_flush};
 
-   if( $tail and
-       !ref $data and
-       !$tail->[WQ_GENSUB] and
-       length($data) + length($tail->[WQ_DATA]) < $self->{write_len} and
-       !$params{on_flush} and
-       !$tail->[WQ_ON_FLUSH]) {
-      $tail->[WQ_DATA] .= $data;
+   my $f;
+   if( defined wantarray ) {
+      my $orig_on_flush = $on_flush;
+      $f = $self->loop->new_future;
+      $on_flush = sub {
+         $f->done;
+         $orig_on_flush->( @_ ) if $orig_on_flush;
+      };
    }
-   else {
-      push @{ $self->{writequeue} }, my $elem = [];
 
-      if( ref $data eq "CODE" ) {
-         $elem->[WQ_GENSUB] = $data;
-      }
-      else {
-         $elem->[WQ_DATA] = $data;
-      }
-
-      $elem->[WQ_ON_FLUSH] = delete $params{on_flush};
-   }
+   push @{ $self->{writequeue} }, [ $data, $on_flush ];
 
    keys %params and croak "Unrecognised keys for ->write - " . join( ", ", keys %params );
 
-   return unless $handle;
+   return $f unless $handle;
 
    if( $self->{autoflush} ) {
-      1 while !$self->_is_empty and $self->_flush_one;
+      1 while !$self->_is_empty and $self->_flush_one_write;
 
       if( $self->_is_empty ) {
          $self->want_writeready( 0 );
-         return;
+         return $f;
       }
    }
 
    $self->want_writeready( 1 );
+   return $f;
+}
+
+sub on_write_ready
+{
+   my $self = shift;
+
+   1 while !$self->_is_empty and $self->_flush_one_write and $self->{write_all};
+
+   # All data successfully flushed
+   if( $self->_is_empty ) {
+      $self->want_writeready( 0 );
+
+      $self->maybe_invoke_event( on_outgoing_empty => );
+
+      $self->close_now if $self->{stream_closing};
+   }
+}
+
+sub _flush_one_read
+{
+   my $self = shift;
+   my ( $eof ) = @_;
+
+   my $readqueue = $self->{readqueue};
+
+   my $ret;
+   if( $readqueue->[0] and my $on_read = $readqueue->[0][RQ_ONREAD] ) {
+      $ret = $on_read->( $self, \$self->{readbuff}, $eof );
+   }
+   else {
+      $ret = $self->invoke_event( on_read => \$self->{readbuff}, $eof );
+   }
+
+   if( ref $ret eq "CODE" ) {
+      # Replace the top CODE, or add it if there was none
+      $readqueue->[0] = [ $ret ];
+      return 1;
+   }
+   elsif( @$readqueue and !defined $ret ) {
+      shift @$readqueue;
+      return 1;
+   }
+   else {
+      return $ret && ( length( $self->{readbuff} ) > 0 || $eof );
+   }
 }
 
 sub on_read_ready
@@ -567,6 +679,11 @@ sub on_read_ready
          $self->maybe_invoke_event( on_read_error => $errno )
             or $self->close_now;
 
+         foreach ( @{ $self->{readqueue} } ) {
+            $_->[RQ_FUTURE]->fail( $errno ) if $_->[RQ_FUTURE];
+         }
+         undef @{ $self->{readqueue} };
+
          return;
       }
 
@@ -580,35 +697,16 @@ sub on_read_ready
 
       $self->{readbuff} .= $data if !$eof;
 
-      while(1) {
-         my $ret;
-         if( my $on_read = $self->{current_on_read} ) {
-            $ret = $on_read->( $self, \$self->{readbuff}, $eof );
-         }
-         else {
-            $ret = $self->invoke_event( on_read => \$self->{readbuff}, $eof );
-         }
-
-         my $again;
-
-         if( ref $ret eq "CODE" ) {
-            $self->{current_on_read} = $ret;
-            $again = 1;
-         }
-         elsif( $self->{current_on_read} and !defined $ret ) {
-            undef $self->{current_on_read};
-            $again = 1;
-         }
-         else {
-            $again = $ret && ( length( $self->{readbuff} ) > 0 || $eof );
-         }
-
-         last if !$again;
-      }
+      1 while $self->_flush_one_read( $eof );
 
       if( $eof ) {
+         $self->{read_eof} = 1;
          $self->maybe_invoke_event( on_read_eof => );
          $self->close_now if $self->{close_on_read_eof};
+         foreach ( @{ $self->{readqueue} } ) {
+            $_->[RQ_FUTURE]->done( undef ) if $_->[RQ_FUTURE];
+         }
+         undef @{ $self->{readqueue} };
          return;
       }
 
@@ -616,20 +714,186 @@ sub on_read_ready
    }
 }
 
-sub on_write_ready
+=head2 $stream->push_on_read( $on_read )
+
+Pushes a new temporary C<on_read> handler to the end of the queue. This queue,
+if non-empty, is used to provide C<on_read> event handling code in preference
+to using the object's main event handler or method. New handlers can be
+supplied at any time, and they will be used in first-in first-out (FIFO)
+order.
+
+As with the main C<on_read> event handler, each can return a (defined) boolean
+to indicate if they wish to be invoked again or not, another C<CODE> reference
+to replace themself with, or C<undef> to indicate it is now complete and
+should be removed. When a temporary handler returns C<undef> it is shifted
+from the queue and the next one, if present, is invoked instead. If there are
+no more then the object's main handler is invoked instead.
+
+=cut
+
+sub push_on_read
+{
+   my $self = shift;
+   my ( $on_read, %args ) = @_;
+   # %args undocumented for internal use
+
+   push @{ $self->{readqueue} }, [ $on_read, $args{future} ];
+
+   # TODO: Should this always defer?
+   1 while length $self->{readbuff} and $self->_flush_one_read( 0 );
+}
+
+=head1 FUTURE-RETURNING READ METHODS
+
+The following methods all return a L<Future> which will become ready when
+enough data has been read by the Stream into its buffer. At this point, the
+data is removed from the buffer and given to the C<Future> object to complete
+it.
+
+ my $f = $stream->read_...
+
+ my ( $string ) = $f->get;
+
+Unlike the C<on_read> event handlers, these methods don't allow for access to
+"partial" results; they only provide the final result once it is ready.
+
+If a C<Future> is cancelled before it completes it is removed from the read
+queue without consuming any data; i.e. each C<Future> atomically either
+completes or is cancelled.
+
+Since it is possible to use a readable C<Stream> entirely using these
+C<Future>-returning methods instead of the C<on_read> event, it may be useful
+to configure a trivial return-false event handler to keep it from consuming
+any input, and to allow it to be added to a C<Loop> in the first place.
+
+ my $stream = IO::Async::Stream->new( on_read => sub { 0 }, ... );
+ $loop->add( $stream );
+
+ my $f = $stream->read_...
+
+If a read EOF or error condition happens while there are read C<Future>s
+pending, they are all completed. In the case of a read EOF, they are done with
+C<undef>; in the case of a read error they are failed using the C<$!> error
+value as the failure.
+
+If a read EOF condition happens to the currently-processing read C<Future>, it
+will return a partial result. The calling code can detect this by the fact
+that the returned data is not complete according to the specification (too
+short in C<read_exactly>'s case, or lacking the ending pattern in
+C<read_until>'s case). Additionally, each C<Future> will yield the C<$eof>
+value in its results.
+
+ my ( $string, $eof ) = $f->get;
+
+=cut
+
+sub _read_future
+{
+   my $self = shift;
+   my $f = $self->loop->new_future;
+   $f->on_cancel( $self->_capture_weakself( sub {
+      my $self = shift;
+      1 while $self->_flush_one_read;
+   }));
+   return $f;
+}
+
+=head2 $f = $stream->read_atmost( $len )
+
+=head2 $f = $stream->read_exactly( $len )
+
+Completes the C<Future> when the read buffer contains C<$len> or more
+characters of input. C<read_atmost> will also complete after the first
+invocation of C<on_read>, even if fewer characters are available, whereas
+C<read_exactly> will wait until at least C<$len> are available.
+
+=cut
+
+sub read_atmost
+{
+   my $self = shift;
+   my ( $len ) = @_;
+
+   my $f = $self->_read_future;
+   $self->push_on_read( sub {
+      my ( undef, $buffref, $eof ) = @_;
+      return undef if $f->is_cancelled;
+      $f->done( substr( $$buffref, 0, $len, "" ), $eof );
+      return undef;
+   }, future => $f );
+   return $f;
+}
+
+sub read_exactly
+{
+   my $self = shift;
+   my ( $len ) = @_;
+
+   my $f = $self->_read_future;
+   $self->push_on_read( sub {
+      my ( undef, $buffref, $eof ) = @_;
+      return undef if $f->is_cancelled;
+      return 0 unless $eof or length $$buffref >= $len;
+      $f->done( substr( $$buffref, 0, $len, "" ), $eof );
+      return undef;
+   }, future => $f );
+   return $f;
+}
+
+=head2 $f = $stream->read_until( $end )
+
+Completes the C<Future> when the read buffer contains a match for C<$end>,
+which may either be a plain string or a compiled C<Regexp> reference. Yields
+the prefix of the buffer before and including this match.
+
+=cut
+
+sub read_until
+{
+   my $self = shift;
+   my ( $until ) = @_;
+
+   ref $until or $until = qr/\Q$until\E/;
+
+   my $f = $self->_read_future;
+   $self->push_on_read( sub {
+      my ( undef, $buffref, $eof ) = @_;
+      return undef if $f->is_cancelled;
+      if( $$buffref =~ $until ) {
+         $f->done( substr( $$buffref, 0, $+[0], "" ), $eof );
+         return undef;
+      }
+      elsif( $eof ) {
+         $f->done( $$buffref, $eof ); $$buffref = "";
+         return undef;
+      }
+      else {
+         return 0;
+      }
+   }, future => $f );
+   return $f;
+}
+
+=head2 $f = $stream->read_until_eof
+
+Completes the C<Future> when the stream is eventually closed at EOF, and
+yields all of the data that was available.
+
+=cut
+
+sub read_until_eof
 {
    my $self = shift;
 
-   1 while !$self->_is_empty and $self->_flush_one and $self->{write_all};
-
-   # All data successfully flushed
-   if( $self->_is_empty ) {
-      $self->want_writeready( 0 );
-
-      $self->maybe_invoke_event( on_outgoing_empty => );
-
-      $self->close_now if $self->{stream_closing};
-   }
+   my $f = $self->_read_future;
+   $self->push_on_read( sub {
+      my ( undef, $buffref, $eof ) = @_;
+      return undef if $f->is_cancelled;
+      return 0 unless $eof;
+      $f->done( $$buffref, $eof ); $$buffref = "";
+      return undef;
+   }, future => $f );
+   return $f;
 }
 
 =head1 UTILITY CONSTRUCTORS

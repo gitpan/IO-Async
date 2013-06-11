@@ -5,7 +5,7 @@ use warnings;
 
 use IO::Async::Test;
 
-use Test::More tests => 54;
+use Test::More;
 use Test::Fatal;
 use Test::Refcount;
 
@@ -253,6 +253,52 @@ my @sub_lines;
    is_oneref( $stream, 'dynamic reading $stream has refcount 1 finally' );
 }
 
+# ->push_on_read
+{
+   my ( $rd, $wr ) = mkhandles;
+
+   my $base;
+   my $stream = IO::Async::Stream->new( read_handle => $rd,
+      on_read => sub {
+         my ( $self, $buffref ) = @_;
+         $base = $$buffref; $$buffref = "";
+         return 0;
+      },
+   );
+
+   $loop->add( $stream );
+
+   my $firstline;
+   $stream->push_on_read(
+      sub {
+         my ( $stream, $buffref, $eof ) = @_;
+         return 0 unless $$buffref =~ s/(.*)\n//;
+         $firstline = $1;
+         return undef;
+      }
+   );
+
+   my $eightbytes;
+   $stream->push_on_read(
+      sub {
+         my ( $stream, $buffref, $eof ) = @_;
+         return 0 unless length $$buffref >= 8;
+         $eightbytes = substr( $$buffref, 0, 8, "" );
+         return undef;
+      }
+   );
+
+   $wr->syswrite( "The first line\nABCDEFGHIJK" );
+
+   wait_for { defined $firstline and defined $eightbytes };
+
+   is( $firstline,  "The first line", '$firstline from ->push_on_read CODE' );
+   is( $eightbytes, "ABCDEFGH",       '$eightbytes from ->push_on_read CODE' );
+   is( $base,       "IJK",            '$base from ->push_on_read CODE' );
+
+   $loop->remove( $stream );
+}
+
 # EOF
 {
    my ( $rd, $wr ) = mkhandles;
@@ -275,10 +321,12 @@ my @sub_lines;
 
    $wr->close;
 
+   ok( !$stream->is_read_eof, '$stream ->is_read_eof before wait' );
    is( $eof, 0, 'EOF indication before wait' );
 
    wait_for { $eof };
 
+   ok( $stream->is_read_eof, '$stream ->is_read_eof after wait' );
    is( $eof, 1, 'EOF indication after wait' );
    is( $partial, "Incomplete", 'EOF stream retains partial input' );
 
@@ -354,6 +402,61 @@ my @sub_lines;
    is_oneref( $stream, 'closing $stream refcount 1 finally' );
 }
 
+# ->read Futures
+{
+   my ( $rd, $wr ) = mkhandles;
+
+   my $stream = IO::Async::Stream->new( read_handle => $rd,
+      on_read => sub {
+         my ( $self, $buffref ) = @_;
+         die "Base on_read invoked with data in the buffer" if length $$buffref;
+         return 0;
+      },
+   );
+
+   $loop->add( $stream );
+
+   my $f_atmost = $stream->read_atmost( 256 );
+
+   $wr->syswrite( "Some data\n" );
+   wait_for { $f_atmost->is_ready };
+
+   is( scalar $f_atmost->get, "Some data\n", '->read_atmost' );
+
+   my $f_exactly   = $stream->read_exactly( 4 );
+   my $f_until_qr  = $stream->read_until( qr/[A-Z][a-z]*/ );
+   my $f_until_str = $stream->read_until( "\n" );
+
+   $wr->syswrite( "Here is the First line of input\n" );
+
+   wait_for { $f_exactly->is_ready and $f_until_qr->is_ready and $f_until_str->is_ready };
+
+   is( scalar $f_exactly->get,   "Here", '->read_exactly' );
+   is( scalar $f_until_qr->get,  " is the First", '->read_until regexp' );
+   is( scalar $f_until_str->get, " line of input\n", '->read_until str' );
+
+   my $f_first = $stream->read_until( "\n" );
+   my $f_second = $stream->read_until( "\n" );
+   $f_first->cancel;
+
+   $wr->syswrite( "For the second\n" );
+
+   wait_for { $f_second->is_ready };
+
+   is( scalar $f_second->get, "For the second\n", 'Second ->read_until recieves data after first is ->cancelled' );
+
+   my $f_until_eof = $stream->read_until_eof;
+
+   $wr->syswrite( "And the rest of it" );
+   $wr->close;
+
+   wait_for { $f_until_eof->is_ready };
+
+   is( scalar $f_until_eof->get, "And the rest of it", '->read_until_eof' );
+
+   # No need to remove as ->close did it
+}
+
 # Errors
 {
    my ( $rd, $wr ) = mkhandles;
@@ -378,6 +481,11 @@ my @sub_lines;
    wait_for { defined $read_errno };
 
    cmp_ok( $read_errno, "==", ECONNRESET, 'errno after failed read' );
+
+   my $f = $stream->read_atmost( 256 );
+
+   wait_for { $f->is_ready };
+   cmp_ok( $f->failure, "==", ECONNRESET, 'failure from ->read_atmost after failed read' );
 
    $loop->remove( $stream );
 }

@@ -12,7 +12,7 @@ use warnings;
 # It is provided simply to keep CPAN happy:
 #   cpan -i IO::Async
 
-our $VERSION = '0.56';
+our $VERSION = '0.57';
 
 =head1 NAME
 
@@ -264,9 +264,6 @@ C<IO::Async::File> and define a Loop watch/unwatch method pair.
 
 Define more C<Future>-returning methods. Consider also one-shot Futures on
 things like C<IO::Async::Process> exits, or C<IO::Async::Handle> close.
-
-Use C<< Future->or_else >> to replace the one remaining use of C<CPS>, in
-C<IO::Async::Connector>.
 
 =back
 

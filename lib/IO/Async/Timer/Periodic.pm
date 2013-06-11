@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.56';
+our $VERSION = '0.57';
 
 use Carp;
 
@@ -229,7 +229,8 @@ sub _make_cb
 
       $self->invoke_event( on_tick => );
 
-      $self->start;
+      # detect ->stop
+      $self->start if defined $self->{next_time};
    } );
 }
 

@@ -222,9 +222,6 @@ TODO
         Futures on things like `IO::Async::Process' exits, or
         `IO::Async::Handle' close.
 
-        Use `Future->or_else' to replace the one remaining use of `CPS', in
-        `IO::Async::Connector'.
-
 SUPPORT
     Bugs may be reported via RT at
 

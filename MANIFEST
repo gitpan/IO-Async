@@ -3,6 +3,7 @@ Changes
 examples/chat-server.pl
 examples/echo-server.pl
 examples/netcat-client.pl
+examples/readwrite-futures.pl
 examples/tail-logfile.pl
 examples/tcp-proxy.pl
 examples/whoami-server.pl
