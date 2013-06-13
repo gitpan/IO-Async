@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -519,6 +519,9 @@ code body.
     my ( @event_args ) = @_;
     ...
  } );
+
+For stand-alone generic implementation of this behaviour, see also L<curry>
+and C<curry::weak>.
 
 =cut
 

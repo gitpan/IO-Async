@@ -8,7 +8,7 @@ package IO::Async::FileStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use base qw( IO::Async::Stream );
 
@@ -214,7 +214,7 @@ sub _watch_write
 
 sub on_devino_changed
 {
-   my $self = shift;
+   my $self = shift or return;
 
    $self->{renamed} = 1;
    $self->debug_printf( "read tail of old file" );
@@ -223,7 +223,7 @@ sub on_devino_changed
 
 sub on_size_changed
 {
-   my $self = shift;
+   my $self = shift or return;
    my ( $size ) = @_;
 
    if( $size < $self->{last_size} ) {

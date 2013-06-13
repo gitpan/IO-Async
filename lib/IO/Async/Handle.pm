@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use Carp;
 
@@ -434,7 +434,7 @@ sub new_close_future
    push @{ $self->{close_futures} }, my $future = $self->loop->new_future;
    $future->on_cancel(
       $self->_capture_weakself( sub {
-         my $self = shift;
+         my $self = shift or return;
          my $future = shift;
 
          @{ $self->{close_futures} } = grep { $_ != $future } @{ $self->{close_futures} };

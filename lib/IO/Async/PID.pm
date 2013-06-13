@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use Carp;
 
@@ -130,7 +130,8 @@ sub _add_to_loop
    # on_exit continuation gets passed PID value; need to replace that with
    # $self
    $self->{cb} ||= $self->_replace_weakself( sub {
-      my ( $self, $exitcode ) = @_;
+      my $self = shift or return;
+      my ( $exitcode ) = @_;
 
       $self->invoke_event( on_exit => $exitcode );
 

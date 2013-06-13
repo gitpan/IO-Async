@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2011-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2011-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Channel;
 
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier ); # just to get _capture_weakself
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use Carp;
 use Storable qw( freeze thaw );
@@ -346,7 +346,7 @@ sub _close_async
 
 sub _on_stream_read
 {
-   my $self = shift;
+   my $self = shift or return;
    my ( $stream, $buffref, $eof ) = @_;
 
    if( $eof ) {

@@ -8,7 +8,7 @@ package IO::Async::Protocol::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use base qw( IO::Async::Protocol );
 
@@ -160,19 +160,16 @@ sub setup_transport
    $self->SUPER::setup_transport( $transport );
 
    $transport->configure( 
-      on_read => $self->_capture_weakself( sub {
-         my $self = shift;
-         shift;
+      on_read => $self->_replace_weakself( sub {
+         my $self = shift or return;
          $self->invoke_event( on_read => @_ );
       } ),
-      on_read_eof => $self->_capture_weakself( sub {
-         my $self = shift;
-         shift;
+      on_read_eof => $self->_replace_weakself( sub {
+         my $self = shift or return;
          $self->maybe_invoke_event( on_read_eof => @_ );
       } ),
-      on_write_eof => $self->_capture_weakself( sub {
-         my $self = shift;
-         shift;
+      on_write_eof => $self->_replace_weakself( sub {
+         my $self = shift or return;
          $self->maybe_invoke_event( on_write_eof => @_ );
       } ),
    );
