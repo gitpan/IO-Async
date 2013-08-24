@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Function );
 
-our $VERSION = '0.58';
+our $VERSION = '0.59';
 
 use Socket 1.93 qw(
    AI_NUMERICHOST AI_PASSIVE
@@ -330,7 +330,7 @@ sub getaddrinfo
           # fallthrough to async case
        }
        else {
-          my $future = $self->loop->new_future->fail( "$err\n" );
+          my $future = $self->loop->new_future->fail( $err, resolve => getaddrinfo => $err+0 );
           $future->on_fail( $args{on_error} ) if $args{on_error};
           return $future;
        }
@@ -434,7 +434,7 @@ sub getnameinfo
       my ( $err, $host, $service ) = _getnameinfo( $args{addr}, $flags );
 
       if( $err ) {
-         my $future = $self->loop->new_future->fail( "$err\n" );
+         my $future = $self->loop->new_future->fail( $err, resolve => getnameinfo => $err+0 );
          $future->on_fail( $args{on_error} ) if $args{on_error};
          return $future;
       }
@@ -516,23 +516,23 @@ taking and returning a list of values exactly as the perl function does:
 
 # Now register the inbuilt methods
 
-register_resolver getpwnam => sub { return getpwnam( $_[0] ) or die "$!\n" };
-register_resolver getpwuid => sub { return getpwuid( $_[0] ) or die "$!\n" };
+register_resolver getpwnam => sub { my @r = getpwnam( $_[0] ) or die "$!\n"; @r };
+register_resolver getpwuid => sub { my @r = getpwuid( $_[0] ) or die "$!\n"; @r };
 
-register_resolver getgrnam => sub { return getgrnam( $_[0] ) or die "$!\n" };
-register_resolver getgrgid => sub { return getgrgid( $_[0] ) or die "$!\n" };
+register_resolver getgrnam => sub { my @r = getgrnam( $_[0] ) or die "$!\n"; @r };
+register_resolver getgrgid => sub { my @r = getgrgid( $_[0] ) or die "$!\n"; @r };
 
-register_resolver getservbyname => sub { return getservbyname( $_[0], $_[1] ) or die "$!\n" };
-register_resolver getservbyport => sub { return getservbyport( $_[0], $_[1] ) or die "$!\n" };
+register_resolver getservbyname => sub { my @r = getservbyname( $_[0], $_[1] ) or die "$!\n"; @r };
+register_resolver getservbyport => sub { my @r = getservbyport( $_[0], $_[1] ) or die "$!\n"; @r };
 
-register_resolver gethostbyname => sub { return gethostbyname( $_[0] ) or die "$!\n" };
-register_resolver gethostbyaddr => sub { return gethostbyaddr( $_[0], $_[1] ) or die "$!\n" };
+register_resolver gethostbyname => sub { my @r = gethostbyname( $_[0] ) or die "$!\n"; @r };
+register_resolver gethostbyaddr => sub { my @r = gethostbyaddr( $_[0], $_[1] ) or die "$!\n"; @r };
 
-register_resolver getnetbyname => sub { return getnetbyname( $_[0] ) or die "$!\n" };
-register_resolver getnetbyaddr => sub { return getnetbyaddr( $_[0], $_[1] ) or die "$!\n" };
+register_resolver getnetbyname => sub { my @r = getnetbyname( $_[0] ) or die "$!\n"; @r };
+register_resolver getnetbyaddr => sub { my @r = getnetbyaddr( $_[0], $_[1] ) or die "$!\n"; @r };
 
-register_resolver getprotobyname   => sub { return getprotobyname( $_[0] ) or die "$!\n" };
-register_resolver getprotobynumber => sub { return getprotobynumber( $_[0] ) or die "$!\n" };
+register_resolver getprotobyname   => sub { my @r = getprotobyname( $_[0] ) or die "$!\n"; @r };
+register_resolver getprotobynumber => sub { my @r = getprotobynumber( $_[0] ) or die "$!\n"; @r };
 
 =pod
 

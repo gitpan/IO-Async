@@ -6,14 +6,18 @@ use warnings;
 use IO::Async::Test;
 
 use Test::More;
+use Test::Identity;
 
 use IO::Socket::INET;
 use POSIX qw( ENOENT );
 use Socket qw( AF_UNIX );
 
-use IO::Async::Loop::Poll;
+use IO::Async::Loop;
 
-my $loop = IO::Async::Loop::Poll->new;
+use IO::Async::Stream;
+use IO::Async::Socket;
+
+my $loop = IO::Async::Loop->new_builtin;
 
 testing_loop( $loop );
 
@@ -26,25 +30,6 @@ my $listensock = IO::Socket::INET->new(
 ) or die "Cannot create listensock - $!";
 
 my $addr = $listensock->sockname;
-
-{
-   my $sock;
-
-   $loop->connect(
-      addr => { family => "inet", socktype => "stream", addr => $addr },
-      on_connected => sub { $sock = shift; },
-      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
-   );
-
-   wait_for { $sock };
-
-   # Not sure if it'll be an IO::Socket::INET or ::IP, but either way it should support these
-   can_ok( $sock, qw( peerhost peerport ) );
-   is_deeply( [ unpack_sockaddr_in $sock->peername ],
-              [ unpack_sockaddr_in $addr ], 'by addr: $sock->getpeername is $addr' );
-
-   $listensock->accept; # Throw it away
-}
 
 {
    my $future = $loop->connect(
@@ -64,7 +49,70 @@ my $addr = $listensock->sockname;
    $listensock->accept; # Throw it away
 }
 
+# handle
+{
+   my $future = $loop->connect(
+      handle => my $given_stream = IO::Async::Stream->new,
+      addr   => { family => "inet", socktype => "stream", addr => $addr },
+   );
+
+   isa_ok( $future, "Future", '$future for ->connect( handle )' );
+
+   $loop->await( $future );
+
+   my $stream = $future->get;
+   identical( $stream, $given_stream, '$future->get returns given Stream' );
+   ok( my $sock = $stream->read_handle, '$stream has a read handle' );
+   is_deeply( [ unpack_sockaddr_in $sock->peername ],
+              [ unpack_sockaddr_in $addr ], 'Returned $stream->read_handle->getpeername is $addr' );
+
+   $listensock->accept; # Throw it away
+}
+
+# legacy callbacks
+{
+   my $sock;
+
+   $loop->connect(
+      addr => { family => "inet", socktype => "stream", addr => $addr },
+      on_connected => sub { $sock = shift; },
+      on_connect_error => sub { die "Test died early - connect error $_[0]() - $_[-1]\n"; },
+   );
+
+   wait_for { $sock };
+
+   # Not sure if it'll be an IO::Socket::INET or ::IP, but either way it should support these
+   can_ok( $sock, qw( peerhost peerport ) );
+   is_deeply( [ unpack_sockaddr_in $sock->peername ],
+              [ unpack_sockaddr_in $addr ], 'by addr: $sock->getpeername is $addr' );
+
+   $listensock->accept; # Throw it away
+}
+
 # Now try by name
+{
+   my $future = $loop->connect(
+      host     => $listensock->sockhost,
+      service  => $listensock->sockport,
+      socktype => $listensock->socktype,
+   );
+
+   isa_ok( $future, "Future", '$future' );
+
+   $loop->await( $future );
+
+   my ( $sock ) = $future->get;
+
+   can_ok( $sock, qw( peerhost peerport ) );
+   is_deeply( [ unpack_sockaddr_in $sock->peername ],
+              [ unpack_sockaddr_in $addr ], 'by host/service: $sock->getpeername is $addr from future' );
+
+   is( $sock->sockhost, "127.0.0.1", '$sock->sockhost is 127.0.0.1 from future' );
+
+   $listensock->accept; # Throw it away
+}
+
+# legacy callbacks
 {
    my $sock;
 
@@ -88,28 +136,6 @@ my $addr = $listensock->sockname;
    $listensock->accept; # Throw it away
 }
 
-{
-   my $future = $loop->connect(
-      host     => $listensock->sockhost,
-      service  => $listensock->sockport,
-      socktype => $listensock->socktype,
-   );
-
-   isa_ok( $future, "Future", '$future' );
-
-   $loop->await( $future );
-
-   my ( $sock ) = $future->get;
-
-   can_ok( $sock, qw( peerhost peerport ) );
-   is_deeply( [ unpack_sockaddr_in $sock->peername ],
-              [ unpack_sockaddr_in $addr ], 'by host/service: $sock->getpeername is $addr from future' );
-
-   is( $sock->sockhost, "127.0.0.1", '$sock->sockhost is 127.0.0.1 from future' );
-
-   $listensock->accept; # Throw it away
-}
-
 SKIP: {
    # Some OSes can't bind(2) locally to other addresses on 127./8
    skip "Cannot bind to 127.0.0.2", 1 unless eval { IO::Socket::INET->new(
@@ -117,10 +143,13 @@ SKIP: {
    ) };
 
    # Some can bind(2) but then cannot connect() to 127.0.0.1 from it
-   skip "Cannot connect to 127.0.0.1 from 127.0.0.2", 1 unless eval { IO::Socket::INET->new(
-      LocalHost => "127.0.0.2", LocalPort => 0,
-      PeerHost  => $listensock->sockhost, PeerPort => $listensock->sockport,
-   ) };
+   chomp($@), skip "Cannot connect to 127.0.0.1 from 127.0.0.2 - $@", 1 unless eval {
+      my $s = IO::Socket::INET->new(
+         LocalHost => "127.0.0.2", LocalPort => 0,
+         PeerHost  => $listensock->sockhost, PeerPort => $listensock->sockport,
+      ) or die $@;
+      $listensock->accept; # Throw it away
+      $s->sockhost eq "127.0.0.2" or die "sockhost is not 127.0.0.2\n"; };
 
    my $sock;
 
@@ -168,6 +197,23 @@ SKIP: {
 my $udpsock = IO::Socket::INET->new( LocalAddr => 'localhost', Protocol => 'udp' ) or
    die "Cannot create udpsock - $!";
 
+{
+   my $future = $loop->connect(
+      handle => my $given_socket = IO::Async::Socket->new,
+      addr   => { family => "inet", socktype => "dgram", addr => $udpsock->sockname },
+   );
+
+   isa_ok( $future, "Future", '$future for ->connect( handle socket )' );
+
+   $loop->await( $future );
+
+   my $socket = $future->get;
+   identical( $socket, $given_socket, '$future->get returns given Socket' );
+   is_deeply( [ unpack_sockaddr_in $socket->read_handle->peername ],
+              [ unpack_sockaddr_in $udpsock->sockname ], 'Returned $socket->read_handle->getpeername is $addr' );
+}
+
+# legacy callbacks
 {
    my $sock;
 

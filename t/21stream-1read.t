@@ -18,7 +18,7 @@ use IO::Async::OS;
 
 use IO::Async::Stream;
 
-my $loop = IO::Async::Loop->new;
+my $loop = IO::Async::Loop->new_builtin;
 
 testing_loop( $loop );
 
@@ -110,6 +110,79 @@ sub mkhandles
    $loop->remove( $stream );
 
    is_oneref( $stream, 'reading $stream refcount 1 finally' );
+}
+
+# Abstract reading with reader function
+{
+   my ( $rd, $wr ) = mkhandles;
+   my $buffer = "Here is the contents\n";
+
+   my @lines;
+   my $stream = IO::Async::Stream->new(
+      read_handle => $rd,
+      reader => sub {
+         my $self = shift;
+         my $more = substr( $buffer, 0, $_[2], "" );
+         $_[1] .= $more;
+         return length $more;
+      },
+      on_read => sub {
+         my $self = shift;
+         my ( $buffref, $eof ) = @_;
+
+         push @lines, $1 while $$buffref =~ s/^(.*\n)//;
+         return 0;
+      },
+   );
+
+   $loop->add( $stream );
+
+   # make it readready
+   $wr->syswrite( "1" );
+
+   wait_for { scalar @lines };
+
+   is_deeply( \@lines, [ "Here is the contents\n" ], '@lines from stream with abstract reader' );
+
+   $loop->remove( $stream );
+}
+
+# ->want_readready_for_write
+{
+   my ( $rd, $wr ) = mkhandles;
+
+   my $reader_called;
+   my $writer_called;
+   my $stream = IO::Async::Stream->new(
+      handle => $rd,
+      on_read => sub { return 0; }, # ignore reading
+      reader => sub { $reader_called++; sysread( $rd, $_[2], $_[3] ) },
+      writer => sub { $writer_called++; return 1 },
+   );
+
+   $loop->add( $stream );
+
+   # Hacky hack - make the stream want to write, but don't mark the stream write-ready
+   $stream->write( "A" );
+   $stream->want_writeready_for_write( 0 );
+   # End hack
+
+   # make it readready
+   $wr->syswrite( "1" );
+
+   wait_for { $reader_called };
+
+   ok( !$writer_called, 'writer not yet called before ->want_readready_for_write' );
+
+   $stream->want_readready_for_write( 1 );
+
+   undef $reader_called;
+   $wr->syswrite( "2" );
+   wait_for { $reader_called && $writer_called };
+
+   ok( $writer_called, 'writer now invoked with ->want_readready_for_write' );
+
+   $loop->remove( $stream );
 }
 
 {
@@ -513,7 +586,7 @@ my @sub_lines;
    my $f = $stream->read_atmost( 256 );
 
    wait_for { $f->is_ready };
-   cmp_ok( $f->failure, "==", ECONNRESET, 'failure from ->read_atmost after failed read' );
+   cmp_ok( ( $f->failure )[-1], "==", ECONNRESET, 'failure from ->read_atmost after failed read' );
 
    $loop->remove( $stream );
 }

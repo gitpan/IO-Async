@@ -184,7 +184,19 @@ DESCRIPTION
     In general, methods that support Futures return a new Future object to
     represent the outstanding operation. If callback functions are supplied
     as well, these will be fired in addition to the Future object becoming
-    ready.
+    ready. Any failures that are reported will, in general, use the same
+    conventions for the Future's `fail' arguments to relate it to the legacy
+    `on_error'-style callbacks.
+
+     $on_NAME_error->( $message, @argmuents )
+
+     $f->fail( $message, NAME, @arguments )
+
+    where `$message' is a message intended for humans to read (so that this
+    is the message displayed by `$f->get' if the failure is not otherwise
+    caught), `NAME' is the name of the failing operation. If the failure is
+    due to a failed system call, the value of `$!' will be the final
+    argument. The message should not end with a linefeed.
 
   Networking
     The IO::Async::Loop provides several methods for performing

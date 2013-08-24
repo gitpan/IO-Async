@@ -10,12 +10,12 @@ examples/whoami-server.pl
 lib/IO/Async.pm
 lib/IO/Async/Channel.pm
 lib/IO/Async/ChildManager.pm
-lib/IO/Async/Connector.pm
 lib/IO/Async/File.pm
 lib/IO/Async/FileStream.pm
 lib/IO/Async/Function.pm
 lib/IO/Async/Future.pm
 lib/IO/Async/Handle.pm
+lib/IO/Async/Internals/Connector.pm
 lib/IO/Async/Internals/TimeQueue.pm
 lib/IO/Async/Listener.pm
 lib/IO/Async/Loop.pm
@@ -25,6 +25,7 @@ lib/IO/Async/LoopTests.pm
 lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
 lib/IO/Async/OS.pm
+lib/IO/Async/OS/cygwin.pm
 lib/IO/Async/OS/MSWin32.pm
 lib/IO/Async/PID.pm
 lib/IO/Async/Process.pm
@@ -102,6 +103,7 @@ t/53loop-extend.t
 t/60protocol.t
 t/61protocol-stream.t
 t/62protocol-linestream.t
+t/63handle-connect.t
 t/99pod.t
 t/StupidLoop.pm
 t/TimeAbout.pm

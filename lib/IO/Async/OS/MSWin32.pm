@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2012-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::OS::MSWin32;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.58';
+our $VERSION = '0.59';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -21,10 +21,15 @@ use IO::Socket (); # empty import
 use constant HAVE_FAKE_ISREG_READY => 1;
 
 use constant HAVE_SELECT_CONNECT_EVEC => 1;
+use constant HAVE_POLL_CONNECT_POLLPRI => 1;
 
 use constant HAVE_CONNECT_EWOULDBLOCK => 1;
 
 use constant HAVE_RENAME_OPEN_FILES => 0;
+
+# poll(2) on Windows is emulated by wrapping select(2) anyway, so we might as
+# well try the Select loop first
+use constant LOOP_BUILTIN_CLASSES => qw( Select Poll );
 
 =head1 NAME
 

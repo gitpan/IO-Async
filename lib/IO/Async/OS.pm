@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2012-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::OS;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.58';
+our $VERSION = '0.59';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -40,6 +40,8 @@ use constant HAVE_FAKE_ISREG_READY => 0;
 
 # Do we have to select() for for evec to get connect() failures
 use constant HAVE_SELECT_CONNECT_EVEC => 0;
+# Ditto; do we have to poll() for POLLPRI to get connect() failures
+use constant HAVE_POLL_CONNECT_POLLPRI => 0;
 
 # Does connect() yield EWOULDBLOCK for nonblocking in progress?
 use constant HAVE_CONNECT_EWOULDBLOCK => 0;
@@ -49,6 +51,9 @@ use constant HAVE_RENAME_OPEN_FILES => 1;
 
 # Do we have IO::Socket::IP available?
 use constant HAVE_IO_SOCKET_IP => defined eval { require IO::Socket::IP };
+
+# Preferred trial order for built-in Loop classes
+use constant LOOP_BUILTIN_CLASSES => qw( Poll Select );
 
 =head1 NAME
 

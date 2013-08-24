@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use 5.010; # //
 
-our $VERSION = '0.58';
+our $VERSION = '0.59';
 
 use base qw( IO::Async::Handle );
 
@@ -27,11 +27,20 @@ our $WRITELEN = 8192;
 
 # Indicies in writequeue elements
 use constant WQ_DATA     => 0;
-use constant WQ_ON_FLUSH => 1;
-use constant WQ_WATCHING => 2;
+use constant WQ_WRITELEN => 1;
+use constant WQ_ON_WRITE => 2;
+use constant WQ_ON_FLUSH => 3;
+use constant WQ_WATCHING => 4;
 # Indicies into readqueue elements
 use constant RQ_ONREAD => 0;
 use constant RQ_FUTURE => 1;
+# Bitfields in the want flags
+use constant WANT_READ_FOR_READ   => 0x01;
+use constant WANT_READ_FOR_WRITE  => 0x02;
+use constant WANT_WRITE_FOR_READ  => 0x04;
+use constant WANT_WRITE_FOR_WRITE => 0x08;
+use constant WANT_ANY_READ  => WANT_READ_FOR_READ |WANT_READ_FOR_WRITE;
+use constant WANT_ANY_WRITE => WANT_WRITE_FOR_READ|WANT_WRITE_FOR_WRITE;
 
 =head1 NAME
 
@@ -165,11 +174,24 @@ and re-enable notifications again once something has read enough to cause it to
 drop. If these events are overridden, the overriding code will have to perform
 this behaviour if required, by using
 
- $self->want_readready(...)
+ $self->want_readready_for_read(...)
 
 =head2 on_outgoing_empty
 
 Optional. Invoked when the writing data buffer becomes empty.
+
+=head2 on_writeable_start
+
+=head2 on_writeable_stop
+
+Optional. These two events inform when the filehandle becomes writeable, and
+when it stops being writeable. C<on_writeable_start> is invoked by the
+C<on_write_ready> event if previously it was known to be not writeable.
+C<on_writeable_stop> is invoked after a C<syswrite> operation fails with
+C<EAGAIN> or C<EWOULDBLOCK>. These two events track the writeability state,
+and ensure that only state change cause events to be invoked. A stream starts
+off being presumed writeable, so the first of these events to be observed will
+be C<on_writeable_stop>.
 
 =cut
 
@@ -177,12 +199,18 @@ sub _init
 {
    my $self = shift;
 
-   $self->{writequeue} = []; # Queue of ARRAYs of [ $data, $on_flushed ]
+   $self->{writequeue} = []; # Queue of ARRAYs of [ $data, $on_write, $on_flush ]
    $self->{readqueue} = []; # Queue of ARRAYs of [ CODE, $readfuture ]
+   $self->{writeable} = 1; # "innocent until proven guilty" (by means of EAGAIN)
    $self->{readbuff} = "";
+
+   $self->{reader} = "_sysread";
+   $self->{writer} = "_syswrite";
 
    $self->{read_len}  = $READLEN;
    $self->{write_len} = $WRITELEN;
+
+   $self->{want} = WANT_READ_FOR_READ;
 
    $self->{close_on_read_eof} = 1;
 }
@@ -212,6 +240,10 @@ Shortcut to specifying the same IO handle for both of the above.
 =item on_outgoing_empty => CODE
 
 =item on_write_error => CODE
+
+=item on_writeable_start => CODE
+
+=item on_writeable_stop => CODE
 
 CODE references for event handlers.
 
@@ -281,6 +313,23 @@ If these options are used with the default event handlers, be careful not to
 cause deadlocks by having a high watermark sufficiently low that a single
 C<on_read> invocation might not consider it finished yet.
 
+=item reader => STRING|CODE
+
+=item writer => STRING|CODE
+
+Optional. If defined, gives the name of a method or a CODE reference to use
+to implement the actual reading from or writing to the filehandle. These will
+be invoked as
+
+ $stream->reader( $read_handle, $buffer, $len )
+ $stream->writer( $write_handle, $buffer, $len )
+
+Each is expected to modify the passed buffer; C<reader> by appending to it,
+C<writer> by removing a prefix from it. Each is expected to return a true
+value on success, zero on EOF, or C<undef> with C<$!> set for errors. If not
+provided, they will be substituted by implenentations using C<sysread> and
+C<syswrite> on the underlying handle, respectively.
+
 =item close_on_read_eof => BOOL
 
 Optional. Usually true, but if set to a false value then the stream will not
@@ -334,9 +383,9 @@ sub configure
    my %params = @_;
 
    for (qw( on_read on_outgoing_empty on_read_eof on_write_eof on_read_error
-            on_write_error autoflush read_len read_all write_len write_all
-            on_read_high_watermark on_read_low_watermark
-            close_on_read_eof )) {
+            on_write_error on_writeable_start on_writeable_stop autoflush
+            read_len read_all write_len write_all on_read_high_watermark
+            on_read_low_watermark reader writer close_on_read_eof )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
    }
 
@@ -382,13 +431,83 @@ sub _add_to_loop
    $self->SUPER::_add_to_loop( @_ );
 
    if( !$self->_is_empty ) {
-      $self->want_writeready( 1 );
+      $self->want_writeready_for_write( 1 );
    }
 }
 
 =head1 METHODS
 
 =cut
+
+=head2 $stream->want_readready_for_read( $set )
+
+=head2 $stream->want_readready_for_write( $set )
+
+Mutators for the C<want_readready> property on L<IO::Async::Handle>, which
+control whether the C<read> or C<write> behaviour should be continued once the
+filehandle becomes ready for read.
+
+Normally, C<want_readready_for_read> is always true (though the read watermark
+behaviour can modify it), and C<want_readready_for_write> is not used.
+However, if a custom C<writer> function is provided, it may find this useful
+for being invoked again if it cannot proceed with a write operation until the
+filehandle becomes readable (such as during transport negotiation or SSL key
+management, for example).
+
+=cut
+
+sub want_readready_for_read
+{
+   my $self = shift;
+   my ( $set ) = @_;
+   $set ? ( $self->{want} |= WANT_READ_FOR_READ ) : ( $self->{want} &= ~WANT_READ_FOR_READ );
+
+   $self->want_readready( $self->{want} & WANT_ANY_READ ) if $self->read_handle;
+}
+
+sub want_readready_for_write
+{
+   my $self = shift;
+   my ( $set ) = @_;
+   $set ? ( $self->{want} |= WANT_READ_FOR_WRITE ) : ( $self->{want} &= ~WANT_READ_FOR_WRITE );
+
+   $self->want_readready( $self->{want} & WANT_ANY_READ ) if $self->read_handle;
+}
+
+=head2 $stream->want_writeready_for_write( $set )
+
+=head2 $stream->want_writeready_for_read( $set )
+
+Mutators for the C<want_writeready> property on L<IO::Async::Handle>, which
+control whether the C<write> or C<read> behaviour should be continued once the
+filehandle becomes ready for write.
+
+Normally, C<want_writeready_for_write> is managed by the C<write> method and
+associated flushing, and C<want_writeready_for_read> is not used. However, if
+a custom C<reader> function is provided, it may find this useful for being
+invoked again if it cannot proceed with a read operation until the filehandle
+becomes writable (such as during transport negotiation or SSL key management,
+for example).
+
+=cut
+
+sub want_writeready_for_write
+{
+   my $self = shift;
+   my ( $set ) = @_;
+   $set ? ( $self->{want} |= WANT_WRITE_FOR_WRITE ) : ( $self->{want} &= ~WANT_WRITE_FOR_WRITE );
+
+   $self->want_writeready( $self->{want} & WANT_ANY_WRITE ) if $self->write_handle;
+}
+
+sub want_writeready_for_read
+{
+   my $self = shift;
+   my ( $set ) = @_;
+   $set ? ( $self->{want} |= WANT_WRITE_FOR_READ ) : ( $self->{want} &= ~WANT_WRITE_FOR_READ );
+
+   $self->want_writeready( $self->{want} & WANT_ANY_WRITE ) if $self->write_handle;
+}
 
 # FUNCTION not method
 sub _nonfatal_error
@@ -525,6 +644,20 @@ Takes the following optional named parameters in C<%params>:
 
 =over 8
 
+=item write_len => INT
+
+Overrides the C<write_len> parameter for the data written by this call.
+
+=item on_write => CODE
+
+A CODE reference which will be invoked after every successful C<syswrite>
+operation on the underlying filehandle. It will be passed the number of bytes
+that were written by this call, which may not be the entire length of the
+buffer - if it takes more than one C<syscall> operation to empty the buffer
+then this callback will be invoked multiple times.
+
+ $on_write->( $stream, $len )
+
 =item on_flush => CODE
 
 A CODE reference which will be invoked once the data queued by this C<write>
@@ -551,6 +684,18 @@ complete (with no value) when the write operation has been flushed. This may
 be used as an alternative to, or combined with, the C<on_flush> callback.
 
 =cut
+
+sub _syswrite
+{
+   my $self = shift;
+   my ( $handle, undef, $len ) = @_;
+
+   my $written = $handle->syswrite( $_[1], $len );
+   return $written if !$written; # zero or undef
+
+   substr( $_[1], 0, $written ) = "";
+   return $written;
+}
 
 sub _flush_one_write
 {
@@ -593,20 +738,30 @@ sub _flush_one_write
       }
    }
 
-   while( !$head->[WQ_ON_FLUSH] and
-          $writequeue->[1] and
-          !ref $writequeue->[1][WQ_DATA] ) {
-      $head->[WQ_DATA] .= $writequeue->[1][WQ_DATA];
-      $head->[WQ_ON_FLUSH] = $writequeue->[1][WQ_ON_FLUSH];
+   my $second;
+   while( $second = $writequeue->[1] and
+          !ref $second->[WQ_DATA] and
+          $head->[WQ_WRITELEN] == $second->[WQ_WRITELEN] and
+          !$head->[WQ_ON_WRITE] and !$second->[WQ_ON_WRITE] and
+          !$head->[WQ_ON_FLUSH] ) {
+      $head->[WQ_DATA] .= $second->[WQ_DATA];
+      $head->[WQ_ON_WRITE] = $second->[WQ_ON_WRITE];
+      $head->[WQ_ON_FLUSH] = $second->[WQ_ON_FLUSH];
       splice @$writequeue, 1, 1, ();
    }
 
    die "TODO: head data does not contain a plain string" if ref $head->[WQ_DATA];
 
-   my $len = $self->write_handle->syswrite( $head->[WQ_DATA], $self->{write_len} );
+   my $writer = $self->{writer};
+   my $len = $self->$writer( $self->write_handle, $head->[WQ_DATA], $head->[WQ_WRITELEN] );
 
    if( !defined $len ) {
       my $errno = $!;
+
+      if( $errno == EAGAIN or $errno == EWOULDBLOCK ) {
+         $self->maybe_invoke_event( on_writeable_stop => ) if $self->{writeable};
+         $self->{writeable} = 0;
+      }
 
       return 0 if _nonfatal_error( $errno );
 
@@ -621,7 +776,9 @@ sub _flush_one_write
       return 0;
    }
 
-   substr( $head->[WQ_DATA], 0, $len ) = "";
+   if( my $on_write = $head->[WQ_ON_WRITE] ) {
+      $on_write->( $self, $len );
+   }
 
    if( !length $head->[WQ_DATA] ) {
       $head->[WQ_ON_FLUSH]->( $self ) if $head->[WQ_ON_FLUSH];
@@ -648,6 +805,7 @@ sub write
       $data = $encoding->encode( $data );
    }
 
+   my $on_write = delete $params{on_write};
    my $on_flush = delete $params{on_flush};
 
    my $f;
@@ -660,7 +818,7 @@ sub write
       };
    }
 
-   push @{ $self->{writequeue} }, [ $data, $on_flush ];
+   push @{ $self->{writequeue} }, [ $data, $params{write_len} // $self->{write_len}, $on_write, $on_flush ];
 
    keys %params and croak "Unrecognised keys for ->write - " . join( ", ", keys %params );
 
@@ -670,12 +828,12 @@ sub write
       1 while !$self->_is_empty and $self->_flush_one_write;
 
       if( $self->_is_empty ) {
-         $self->want_writeready( 0 );
+         $self->want_writeready_for_write( 0 );
          return $f;
       }
    }
 
-   $self->want_writeready( 1 );
+   $self->want_writeready_for_write( 1 );
    return $f;
 }
 
@@ -683,11 +841,24 @@ sub on_write_ready
 {
    my $self = shift;
 
+   if( !$self->{writeable} ) {
+      $self->maybe_invoke_event( on_writeable_start => );
+      $self->{writeable} = 1;
+   }
+
+   $self->_do_write if $self->{want} & WANT_WRITE_FOR_WRITE;
+   $self->_do_read  if $self->{want} & WANT_WRITE_FOR_READ;
+}
+
+sub _do_write
+{
+   my $self = shift;
+
    1 while !$self->_is_empty and $self->_flush_one_write and $self->{write_all};
 
    # All data successfully flushed
    if( $self->_is_empty ) {
-      $self->want_writeready( 0 );
+      $self->want_writeready_for_write( 0 );
 
       $self->maybe_invoke_event( on_outgoing_empty => );
 
@@ -730,15 +901,31 @@ sub _flush_one_read
    }
 }
 
+sub _sysread
+{
+   my $self = shift;
+   my ( $handle, undef, $len ) = @_;
+   return $handle->sysread( $_[1], $len );
+}
+
 sub on_read_ready
 {
    my $self = shift;
 
+   $self->_do_read  if $self->{want} & WANT_READ_FOR_READ;
+   $self->_do_write if $self->{want} & WANT_READ_FOR_WRITE;
+}
+
+sub _do_read
+{
+   my $self = shift;
+
    my $handle = $self->read_handle;
+   my $reader = $self->{reader};
 
    while(1) {
       my $data;
-      my $len = $handle->sysread( $data, $self->{read_len} );
+      my $len = $self->$reader( $handle, $data, $self->{read_len} );
 
       if( !defined $len ) {
          my $errno = $!;
@@ -749,14 +936,14 @@ sub on_read_ready
             or $self->close_now;
 
          foreach ( @{ $self->{readqueue} } ) {
-            $_->[RQ_FUTURE]->fail( $errno ) if $_->[RQ_FUTURE];
+            $_->[RQ_FUTURE]->fail( "read failed: $errno", sysread => $errno ) if $_->[RQ_FUTURE];
          }
          undef @{ $self->{readqueue} };
 
          return;
       }
 
-      my $eof = ( $len == 0 );
+      my $eof = $self->{read_eof} = ( $len == 0 );
 
       if( my $encoding = $self->{encoding} ) {
          my $bytes = defined $self->{bytes_remaining} ? $self->{bytes_remaining} . $data : $data;
@@ -769,7 +956,6 @@ sub on_read_ready
       1 while $self->_flush_one_read( $eof );
 
       if( $eof ) {
-         $self->{read_eof} = 1;
          $self->maybe_invoke_event( on_read_eof => );
          $self->close_now if $self->{close_on_read_eof};
          foreach ( @{ $self->{readqueue} } ) {
@@ -793,13 +979,13 @@ sub on_read_ready
 sub on_read_high_watermark
 {
    my $self = shift;
-   $self->want_readready( 0 );
+   $self->want_readready_for_read( 0 );
 }
 
 sub on_read_low_watermark
 {
    my $self = shift;
-   $self->want_readready( 1 );
+   $self->want_readready_for_read( 1 );
 }
 
 =head2 $stream->push_on_read( $on_read )
@@ -863,6 +1049,8 @@ If a read EOF or error condition happens while there are read C<Future>s
 pending, they are all completed. In the case of a read EOF, they are done with
 C<undef>; in the case of a read error they are failed using the C<$!> error
 value as the failure.
+
+ $f->fail( $message, sysread => $! )
 
 If a read EOF condition happens to the currently-processing read C<Future>, it
 will return a partial result. The calling code can detect this by the fact

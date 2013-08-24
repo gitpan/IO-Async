@@ -9,13 +9,15 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.58';
+our $VERSION = '0.59';
 
 use Carp;
 
 use IO::Handle; # give methods to bare IO handles
 
 use Future;
+
+use IO::Async::OS;
 
 =head1 NAME
 
@@ -551,6 +553,74 @@ sub want_writeready
    else {
       return $self->{want_writeready};
    }
+}
+
+=head2 $handle->socket( $ai )
+
+Convenient shortcut to creating a socket handle, as given by an addrinfo
+structure, and setting it as the read and write handle for the object.
+
+C<$ai> may be either a C<HASH> or C<ARRAY> reference of the same form as given
+to L<IO::Async::OS>'s C<extract_addrinfo> method.
+
+This method returns nothing if it succeeds, or throws an exception if it
+fails.
+
+=cut
+
+sub socket
+{
+   my $self = shift;
+   my ( $ai ) = @_;
+
+   # TODO: Something about closing the old one?
+
+   my ( $family, $socktype, $protocol ) = IO::Async::OS->extract_addrinfo( $ai );
+
+   my $sock = IO::Async::OS->socket( $family, $socktype, $protocol );
+   $self->set_handle( $sock );
+}
+
+=head2 $handle->bind( $ai )
+
+Convenient shortcut to creating a socket handle and C<bind()>ing it to the
+address as given by an addrinfo structure, and setting it as the read and
+write handle for the object.
+
+C<$ai> may be either a C<HASH> or C<ARRAY> reference of the same form as given
+to L<IO::Async::OS>'s C<extract_addrinfo> method.
+
+This method returns nothing if it succeeds, or throws an exception if it
+fails.
+
+=cut
+
+sub bind
+{
+   my $self = shift;
+   my ( $ai ) = @_;
+
+   $self->socket( $ai );
+   my $addr = ( IO::Async::OS->extract_addrinfo( $ai ) )[3];
+
+   $self->read_handle->bind( $addr ) or croak "Cannot bind - $!";
+}
+
+=head2 $future = $handle->connect( %args )
+
+A convenient wrapper for calling the C<connect> method on the underlying
+L<IO::Async::Loop> object.
+
+=cut
+
+sub connect
+{
+   my $self = shift;
+   my %args = @_;
+
+   my $loop = $self->loop or croak "Cannot ->connect a Handle that is not in a Loop";
+
+   return $self->loop->connect( %args, handle => $self );
 }
 
 =head1 SEE ALSO

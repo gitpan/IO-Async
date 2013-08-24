@@ -16,7 +16,7 @@ use IO::Async::OS;
 
 use IO::Async::Stream;
 
-my $loop = IO::Async::Loop->new;
+my $loop = IO::Async::Loop->new_builtin;
 
 testing_loop( $loop );
 
@@ -75,18 +75,26 @@ sub read_data
 
    is( read_data( $rd ), "message\n", 'data after writing buffer' );
 
+   my $written = 0;
    my $flushed;
 
-   my $f = $stream->write( "hello again\n", on_flush => sub {
-      is( $_[0], $stream, 'on_flush $_[0] is $stream' );
-      $flushed++
-   } );
+   my $f = $stream->write( "hello again\n",
+      on_write => sub {
+         is( $_[0], $stream, 'on_write $_[0] is $stream' );
+         $written += $_[1];
+      },
+      on_flush => sub {
+         is( $_[0], $stream, 'on_flush $_[0] is $stream' );
+         $flushed++
+      },
+   );
 
    ok( !$f->is_ready, '->write future not yet ready' );
 
    wait_for { $flushed };
 
    ok( $f->is_ready, '->write future is ready after flush' );
+   is( $written, 12, 'on_write given total write length after flush' );
    is( read_data( $rd ), "hello again\n", 'flushed data does get flushed' );
 
    $flushed = 0;
@@ -114,6 +122,94 @@ sub read_data
    $loop->remove( $stream );
 
    is_oneref( $stream, 'writing $stream refcount 1 finally' );
+}
+
+# Abstract writing with writer function
+{
+   my ( $rd, $wr ) = mkhandles;
+   my $buffer;
+
+   my $stream = IO::Async::Stream->new(
+      write_handle => $wr,
+      writer => sub {
+         my $self = shift;
+         $buffer .= substr( $_[1], 0, $_[2], "" );
+         return $_[2];
+      },
+   );
+
+   $loop->add( $stream );
+
+   my $flushed;
+   $stream->write( "Some data for abstract buffer\n", on_flush => sub { $flushed++ } );
+
+   wait_for { $flushed };
+
+   is( $buffer, "Some data for abstract buffer\n", '$buffer after ->write to stream with abstract writer' );
+
+   $loop->remove( $stream );
+}
+
+# ->want_writeready_for_read
+{
+   my ( $rd, $wr ) = mkhandles;
+
+   my $reader_called;
+   my $stream = IO::Async::Stream->new(
+      handle => $wr,
+      on_read => sub { return 0; }, # ignore reading
+      reader => sub { $reader_called++; $! = EAGAIN; return undef },
+   );
+
+   $loop->add( $stream );
+
+   $loop->loop_once( 0.1 ); # haaaaack
+
+   ok( !$reader_called, 'reader not yet called before ->want_writeready_for_read' );
+
+   $stream->want_writeready_for_read( 1 );
+
+   wait_for { $reader_called };
+
+   ok( $reader_called, 'reader now invoked with ->want_writeready_for_read' );
+
+   $loop->remove( $stream );
+}
+
+# on_writeable_{start,stop}
+{
+   my ( $rd, $wr ) = mkhandles;
+   my $buffer;
+
+   my $writeable;
+   my $unwriteable;
+   my $emulate_writeable = 0;
+   my $stream = IO::Async::Stream->new(
+      write_handle => $wr,
+      writer => sub {
+         my $self = shift;
+         $! = EAGAIN, return undef unless $emulate_writeable;
+
+         $buffer .= substr( $_[1], 0, $_[2], "" );
+         return $_[2];
+      },
+      on_writeable_start => sub { $writeable++ },
+      on_writeable_stop  => sub { $unwriteable++ },
+   );
+
+   $loop->add( $stream );
+
+   $stream->write( "Something" );
+
+   wait_for { $unwriteable };
+
+   $emulate_writeable = 1;
+
+   wait_for { $writeable };
+
+   is( $buffer, "Something", '$buffer after emulated EAGAIN' );
+
+   $loop->remove( $stream );
 }
 
 {
