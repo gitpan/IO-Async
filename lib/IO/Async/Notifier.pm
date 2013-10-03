@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.60';
+our $VERSION = '0.60_001';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -655,7 +655,7 @@ sub make_event_cb
    return $self->_capture_weakself( 
       !$DEBUG ? $code : sub {
          my $self = $_[0];
-         $self->debug_printf_event( $caller, $event_name );
+         $self->_debug_printf_event( $caller, $event_name );
          goto &$code;
       }
    );
@@ -681,7 +681,7 @@ sub maybe_make_event_cb
    return $self->_capture_weakself(
       !$DEBUG ? $code : sub {
          my $self = $_[0];
-         $self->debug_printf_event( $caller, $event_name );
+         $self->_debug_printf_event( $caller, $event_name );
          goto &$code;
       }
    );
@@ -704,7 +704,7 @@ sub invoke_event
    my $code = $self->can_event( $event_name )
       or croak "$self cannot handle $event_name event";
 
-   $self->debug_printf_event( scalar caller, $event_name ) if $DEBUG;
+   $self->_debug_printf_event( scalar caller, $event_name ) if $DEBUG;
    return $code->( $self, @args );
 }
 
@@ -726,7 +726,7 @@ sub maybe_invoke_event
    my $code = $self->can_event( $event_name )
       or return undef;
 
-   $self->debug_printf_event( scalar caller, $event_name ) if $DEBUG;
+   $self->_debug_printf_event( scalar caller, $event_name ) if $DEBUG;
    return [ $code->( $self, @args ) ];
 }
 
@@ -742,6 +742,13 @@ When debugging is enabled, the C<make_event_cb> and C<invoke_event> methods
 (and their C<maybe_> variants) are altered such that when the event is fired,
 a debugging line is printed, using the C<debug_printf> method. This identifes
 the name of the event.
+
+By default, the line is only printed if the caller of one of these methods is
+the same package as the object is blessed into, allowing it to print the
+events of the most-derived class, without the extra verbosity of the
+lower-level events of its parent class used to create it. All calls regardless
+of caller can be printed by setting a number greater than 1 as the value of
+C<IO_ASYNC_DEBUG>.
 
 =cut
 
@@ -799,7 +806,7 @@ sub debug_printf
       join("<-", @id), @args;
 }
 
-sub debug_printf_event
+sub _debug_printf_event
 {
    my $self = shift;
    my ( $caller, $event_name ) = @_;

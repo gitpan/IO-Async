@@ -8,7 +8,7 @@ package IO::Async::OS;
 use strict;
 use warnings;
 
-our $VERSION = '0.60';
+our $VERSION = '0.60_001';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -51,6 +51,10 @@ use constant HAVE_RENAME_OPEN_FILES => 1;
 
 # Do we have IO::Socket::IP available?
 use constant HAVE_IO_SOCKET_IP => defined eval { require IO::Socket::IP };
+
+# Can we reliably watch for POSIX signals, including SIGCHLD to reliably
+# inform us that a fork()ed child has exit()ed?
+use constant HAVE_SIGNALS => 1;
 
 # Preferred trial order for built-in Loop classes
 use constant LOOP_BUILTIN_CLASSES => qw( Poll Select );

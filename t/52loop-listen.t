@@ -6,6 +6,7 @@ use warnings;
 use IO::Async::Test;
 
 use Test::More;
+use Test::Identity;
 
 use IO::Socket::INET;
 
@@ -28,94 +29,87 @@ my $loop = IO::Async::Loop->new_builtin;
 
 testing_loop( $loop );
 
-my $listensock;
-my $notifier;
+{
+   my $listensock = IO::Socket::INET->new(
+      LocalAddr => "localhost",
+      Type      => SOCK_STREAM,
+      Listen    => 1,
+   ) or die "Cannot socket() - $!";
 
-$listensock = IO::Socket::INET->new(
-   LocalAddr => "localhost",
-   Type      => SOCK_STREAM,
-   Listen    => 1,
-) or die "Cannot socket() - $!";
+   my $newclient;
 
-my $newclient;
+   my $f = $loop->listen(
+      handle => $listensock,
+      on_accept => sub { $newclient = $_[0]; },
+   );
 
-$loop->listen(
-   handle => $listensock,
+   ok( $f->is_ready, '$loop->listen on handle ready synchronously' );
 
-   on_notifier => sub { $notifier = $_[0]; },
+   my $notifier = $f->get;
+   isa_ok( $notifier, "IO::Async::Notifier", 'synchronous on_notifier given a Notifier' );
 
-   on_accept => sub { $newclient = $_[0]; },
-);
+   identical( $notifier->loop, $loop, 'synchronous $notifier->loop is $loop' );
 
-ok( defined $notifier, 'on_notifier fired synchronously' );
-isa_ok( $notifier, "IO::Async::Notifier", 'synchronous on_notifier given a Notifier' );
+   my $clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
+      or die "Cannot socket() - $!";
 
-my $clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
-   or die "Cannot socket() - $!";
+   $clientsock->connect( $listensock->sockname ) or die "Cannot connect() - $!";
 
-$clientsock->connect( $listensock->sockname ) or die "Cannot connect() - $!";
+   ok( defined $clientsock->peername, '$clientsock is connected' );
 
-ok( defined $clientsock->peername, '$clientsock is connected' );
+   wait_for { defined $newclient };
 
-wait_for { defined $newclient };
+   is_deeply( [ unpack_sockaddr_in $newclient->peername ],
+              [ unpack_sockaddr_in $clientsock->sockname ], '$newclient peer is correct' );
+}
 
-is_deeply( [ unpack_sockaddr_in $newclient->peername ],
-           [ unpack_sockaddr_in $clientsock->sockname ], '$newclient peer is correct' );
+{
+   my $listensock;
+   my $newclient;
 
-undef $listensock;
-undef $clientsock;
-undef $newclient;
-undef $notifier;
+   my $f = $loop->listen(
+      family   => "inet",
+      socktype => "stream",
+      service  => "", # Ask the kernel to allocate a port for us
+      host     => "localhost",
 
-$loop->listen(
-   family   => "inet",
-   socktype => "stream",
-   service  => "", # Ask the kernel to allocate a port for us
-   host     => "localhost",
+      on_listen => sub { $listensock = $_[0]; },
 
-   on_resolve_error => sub { die "Test died early - resolve error $_[0]\n"; },
+      on_accept => sub { $newclient = $_[0]; },
+   );
 
-   on_listen => sub { $listensock = $_[0]; },
+   my $notifier = $f->get;
 
-   on_notifier => sub { $notifier = $_[0]; },
+   ok( defined $listensock->fileno, '$listensock has a fileno' );
+   # Not sure if it'll be an IO::Socket::INET or ::IP, but either way it should support these
+   can_ok( $listensock, qw( peerhost peerport ) );
 
-   on_accept => sub { $newclient = $_[0]; },
+   isa_ok( $notifier, "IO::Async::Notifier", 'asynchronous on_notifier given a Notifier' );
 
-   on_listen_error => sub { die "Test died early - $_[0] - $_[-1]\n"; },
-);
+   identical( $notifier->loop, $loop, 'asynchronous $notifier->loop is $loop' );
 
-wait_for { defined $listensock };
+   my $listenaddr = $listensock->sockname;
 
-ok( defined $listensock->fileno, '$listensock has a fileno' );
-# Not sure if it'll be an IO::Socket::INET or ::IP, but either way it should support these
-can_ok( $listensock, qw( peerhost peerport ) );
+   ok( defined $listenaddr, '$listensock has address' );
 
-wait_for { defined $notifier };
+   my ( $listenport, $listen_inaddr ) = unpack_sockaddr_in( $listenaddr );
 
-ok( defined $notifier, 'on_notifier fired asynchronously' );
-isa_ok( $notifier, "IO::Async::Notifier", 'asynchronous on_notifier given a Notifier' );
+   is( inet_ntoa( $listen_inaddr ), $INADDR_LOOPBACK_HOST, '$listenaddr is INADDR_LOOPBACK' );
 
-my $listenaddr = $listensock->sockname;
+   my $clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
+      or die "Cannot socket() - $!";
 
-ok( defined $listenaddr, '$listensock has address' );
+   $clientsock->connect( $listenaddr ) or die "Cannot connect() - $!";
 
-my ( $listenport, $listen_inaddr ) = unpack_sockaddr_in( $listenaddr );
+   is( (unpack_sockaddr_in( $clientsock->peername ))[0], $listenport, '$clientsock on the correct port' );
 
-is( inet_ntoa( $listen_inaddr ), $INADDR_LOOPBACK_HOST, '$listenaddr is INADDR_LOOPBACK' );
+   wait_for { defined $newclient };
 
-$clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
-   or die "Cannot socket() - $!";
+   can_ok( $newclient, qw( peerhost peerport ) );
 
-$clientsock->connect( $listenaddr ) or die "Cannot connect() - $!";
-
-is( (unpack_sockaddr_in( $clientsock->peername ))[0], $listenport, '$clientsock on the correct port' );
-
-wait_for { defined $newclient };
-
-can_ok( $newclient, qw( peerhost peerport ) );
-
-is_deeply( [ unpack_sockaddr_in $newclient->peername ],
-           [ unpack_sockaddr_in $clientsock->sockname ], '$newclient peer is correct' );
+   is_deeply( [ unpack_sockaddr_in $newclient->peername ],
+              [ unpack_sockaddr_in $clientsock->sockname ], '$newclient peer is correct' );
+}
 
 # Now we want to test failure. It's hard to know in a test script what will
 # definitely fail, but it's likely we're either running as non-root, or the
@@ -145,8 +139,17 @@ SKIP: {
 
    my @error;
 
-   # Undocumented API, returning the Listener object
-   my $listener = $loop->listen(
+   # We need to capture the Listener object before failure, so we can assert
+   # it gets removed from the Loop again afterwards
+   my $listener;
+   no warnings 'redefine';
+   my $add = IO::Async::Loop->can( "add" );
+   local *IO::Async::Loop::add = sub {
+      $listener = $_[1];
+      $add->( @_ );
+   };
+
+   $loop->listen(
       family   => "inet",
       socktype => "stream",
       host     => "localhost",
@@ -161,6 +164,8 @@ SKIP: {
       on_fail => sub { $failop = shift; $failerr = pop; },
       on_listen_error => sub { @error = @_; },
    );
+
+   ok( defined $listener, 'Managed to capture listener being added to Loop' );
 
    wait_for { @error };
 

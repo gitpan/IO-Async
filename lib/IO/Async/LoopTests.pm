@@ -27,7 +27,7 @@ use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
 use Socket qw( sockaddr_family AF_UNIX );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.60';
+our $VERSION = '0.60_001';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -548,6 +548,11 @@ Tests the Loop's ability to watch POSIX signals
 use constant count_tests_signal => 14;
 sub run_tests_signal
 {
+   unless( IO::Async::OS->HAVE_SIGNALS ) {
+      SKIP: { skip "This OS does not have signals", 14; }
+      return;
+   }
+
    my $caught = 0;
 
    $loop->watch_signal( TERM => sub { $caught++ } );

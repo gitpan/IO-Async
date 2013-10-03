@@ -10,7 +10,7 @@ WriteMakefile
                    'File::Temp' => 0,
                    'File::stat' => 0,
                    'Future' => '0.12',
-                   'Future::Utils' => '0.16',
+                   'Future::Utils' => '0.18',
                    'IO::Poll' => 0,
                    'Socket' => '1.95',
                    'Storable' => 0,

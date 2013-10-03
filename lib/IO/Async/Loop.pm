@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.60';
+our $VERSION = '0.60_001';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -34,8 +34,11 @@ use IO::Socket (); # empty import
 use Time::HiRes qw(); # empty import
 use POSIX qw( _exit WNOHANG );
 use Scalar::Util qw( refaddr );
+use Socket qw( SO_REUSEADDR AF_INET6 IPPROTO_IPV6 IPV6_V6ONLY );
 
 use IO::Async::OS;
+
+use constant HAVE_SIGNALS => IO::Async::OS->HAVE_SIGNALS;
 
 # Never sleep for more than 1 second if a signal proxy is registered, to avoid
 # a borderline race condition.
@@ -46,6 +49,10 @@ use IO::Async::OS;
 # signal proxy, we'll adjust the maximal timeout. The signal handler will be 
 # run when the XS function returns. 
 our $MAX_SIGWAIT_TIME = 1;
+
+# Also, never sleep for more than 1 second if the OS does not support signals
+# and we have child watches registered (so we must use waitpid() polling)
+our $MAX_CHILDWAIT_TIME = 1;
 
 # Maybe our calling program will have a suggested hint of a specific Loop
 # class or list of classes to use
@@ -693,6 +700,8 @@ sub attach_signal
    my $self = shift;
    my ( $signal, $code ) = @_;
 
+   HAVE_SIGNALS or croak "This OS cannot ->attach_signal";
+
    if( $signal eq "CHLD" ) {
       # We make special exception to allow $self->watch_child to do this
       caller eq "IO::Async::Loop" or
@@ -737,6 +746,8 @@ sub detach_signal
 {
    my $self = shift;
    my ( $signal, $id ) = @_;
+
+   HAVE_SIGNALS or croak "This OS cannot ->detach_signal";
 
    # Can't use grep because we have to preserve the addresses
    my $attaches = $self->{sigattaches}->{$signal} or return;
@@ -1330,24 +1341,137 @@ sub connect
    return $future;
 }
 
-=head2 $loop->listen( %params )
+=head2 $loop->listen( %params ) ==> $listener
 
-This method sets up a listening socket. It creates an instance of
-L<IO::Async::Listener> and adds it to the Loop.
+This method sets up a listening socket and arranges for an acceptor callback
+to be invoked each time a new connection is accepted on the socket. Internally
+it creates an instance of L<IO::Async::Listener> and adds it to the Loop if
+not given one in the arguments.
 
-Most parameters given to this method are passed into the constructed Listener
-object's C<listen> method. In addition, the following arguments are also
-recognised directly:
+Addresses may be given directly, or they may be looked up using the system's
+name resolver, or a socket handle may be given directly.
+
+If multiple addresses are given, or resolved from the service and hostname,
+then each will be attempted in turn until one succeeds.
+
+In named resolver mode, the C<%params> hash takes the following keys:
 
 =over 8
 
-=item on_listen => CODE
+=item service => STRING
 
-Optional. A callback that is invoked when the listening socket is ready.
-Typically this would be used in the name resolver case, in order to inspect
-the socket's sockname address, or otherwise inspect the filehandle.
+The service name to listen on.
 
- $on_listen->( $socket )
+=item host => STRING
+
+The hostname to listen on. Optional. Will listen on all addresses if not
+supplied.
+
+=item family => INT
+
+=item socktype => INT
+
+=item protocol => INT
+
+=item flags => INT
+
+Optional. Other arguments to pass along with C<host> and C<service> to the
+C<getaddrinfo> call.
+
+=item socktype => STRING
+
+Optionally may instead be one of the values C<'stream'>, C<'dgram'> or
+C<'raw'> to stand for C<SOCK_STREAM>, C<SOCK_DGRAM> or C<SOCK_RAW>. This
+utility is provided to allow the caller to avoid a separate C<use Socket> only
+for importing these constants.
+
+=back
+
+It is necessary to pass the C<socktype> hint to the resolver when resolving
+the host/service names into an address, as some OS's C<getaddrinfo> functions
+require this hint. A warning is emitted if neither C<socktype> nor C<protocol>
+hint is defined when performing a C<getaddrinfo> lookup. To avoid this warning
+while still specifying no particular C<socktype> hint (perhaps to invoke some
+OS-specific behaviour), pass C<0> as the C<socktype> value.
+
+In plain address mode, the C<%params> hash takes the following keys:
+
+=over 8
+
+=item addrs => ARRAY
+
+Reference to an array of (possibly-multiple) address structures to attempt to
+listen on. Each should be in the layout described for C<addr>. Such a layout
+is returned by the C<getaddrinfo> named resolver.
+
+=item addr => ARRAY
+
+Shortcut for passing a single address to listen on; it may be passed directly
+with this key, instead of in another array of its own. This should be in a
+format recognised by L<IO::Async::OS>'s C<extract_addrinfo> method. See also
+the C<EXAMPLES> section.
+
+=back
+
+In direct socket handle mode, the following keys are taken:
+
+=over 8
+
+=item handle => IO
+
+The listening socket handle.
+
+=back
+
+In either case, the following keys are also taken:
+
+=over 8
+
+=item on_fail => CODE
+
+Optional. A callback that is invoked if a syscall fails while attempting to
+create a listening sockets. It is passed the name of the syscall that failed,
+the arguments that were passed to it, and the error generated. I.e.
+
+ $on_fail->( "socket", $family, $socktype, $protocol, $! );
+
+ $on_fail->( "sockopt", $sock, $optname, $optval, $! );
+
+ $on_fail->( "bind", $sock, $address, $! );
+
+ $on_fail->( "listen", $sock, $queuesize, $! );
+
+=item queuesize => INT
+
+Optional. The queue size to pass to the C<listen(2)> calls. If not supplied,
+then 3 will be given instead.
+
+=item reuseaddr => BOOL
+
+Optional. If true or not supplied then the C<SO_REUSEADDR> socket option will
+be set. To prevent this, pass a false value such as 0.
+
+=item v6only => BOOL
+
+Optional. If defined, sets or clears the C<IPV6_V6ONLY> socket option on
+C<PF_INET6> sockets. This option disables the ability of C<PF_INET6> socket to
+accept connections from C<AF_INET> addresses. Not all operating systems allow
+this option to be disabled.
+
+=back
+
+An alternative which gives more control over the listener, is to create the
+C<IO::Async::Listener> object directly and add it explicitly to the Loop.
+
+This method accepts an C<extensions> parameter; see the C<EXTENSIONS> section
+below.
+
+=head2 $loop->listen( %params )
+
+When not returning a future, additional parameters can be given containing the
+continuations to invoke on success or failure.
+
+=over 8
 
 =item on_notifier => CODE
 
@@ -1359,13 +1483,29 @@ receive connections. The callback is passed the Listener object itself.
 If this callback is required, it may instead be better to construct the
 Listener object directly.
 
+=item on_listen => CODE
+
+Optional. A callback that is invoked when the listening socket is ready.
+Typically this would be used in the name resolver case, in order to inspect
+the socket's sockname address, or otherwise inspect the filehandle.
+
+ $on_listen->( $socket )
+
+=item on_listen_error => CODE
+
+A continuation this is invoked after all of the addresses have been tried, and
+none of them succeeded. It will be passed the most significant error that
+occurred, and the name of the operation it occurred in. Errors from the
+C<listen(2)> syscall are considered most significant, then C<bind(2)>, then
+C<sockopt(2)>, then finally C<socket(2)>.
+
+=item on_resolve_error => CODE
+
+A continuation that is invoked when the name resolution attempt fails. This is
+invoked in the same way as the C<on_error> continuation for the C<resolve>
+method.
+
 =back
-
-An alternative which gives more control over the listener, is to create the
-C<IO::Async::Listener> object directly and add it explicitly to the Loop.
-
-This method accepts an C<extensions> parameter; see the C<EXTENSIONS> section
-below.
 
 =cut
 
@@ -1374,71 +1514,196 @@ sub listen
    my $self = shift;
    my ( %params ) = @_;
 
+   my $remove_on_error;
+   my $listener = $params{listener} ||= do {
+      $remove_on_error++;
+
+      require IO::Async::Listener;
+
+      # Our wrappings of these don't want $listener
+      my %listenerparams;
+      for (qw( on_accept on_stream on_socket )) {
+         next unless exists $params{$_};
+         croak "Cannot ->listen with '$_' and 'listener'" if $params{listener};
+
+         my $code = delete $params{$_};
+         $listenerparams{$_} = sub {
+            shift;
+            goto &$code;
+         };
+      }
+
+      my $listener = IO::Async::Listener->new( %listenerparams );
+      $self->add( $listener );
+      $listener
+   };
+
    my $extensions;
    if( $extensions = delete $params{extensions} and @$extensions ) {
       my ( $ext, @others ) = @$extensions;
+
+      # We happen to know we break older IO::Async::SSL
+      if( $ext eq "SSL" and $IO::Async::SSL::VERSION < '0.12001' ) {
+         croak "IO::Async::SSL version too old; need at least 0.12_001; found $IO::Async::SSL::VERSION";
+      }
 
       my $method = "${ext}_listen";
       # TODO: Try to 'require IO::Async::$ext'
 
       $self->can( $method ) or croak "Extension method '$method' is not available";
 
-      $self->$method(
+      my $f = $self->$method(
          %params,
          ( @others ? ( extensions => \@others ) : () ),
       );
-      return;
+      $f->on_fail( sub { $self->remove( $listener ) } ) if $remove_on_error;
+
+      return $f;
    }
 
-   require IO::Async::Listener;
+   my $on_notifier = delete $params{on_notifier}; # optional
 
-   my $on_notifier = delete $params{on_notifier};
+   my $on_listen_error  = delete $params{on_listen_error};
+   my $on_resolve_error = delete $params{on_resolve_error};
 
-   my %listenerparams;
+   # Shortcut
+   if( $params{addr} and not $params{addrs} ) {
+      $params{addrs} = [ delete $params{addr} ];
+   }
 
+   my $f;
    if( my $handle = delete $params{handle} ) {
-      $listenerparams{handle} = $handle;
+      $f = $self->_listen_handle( $listener, $handle, %params );
    }
-
-   # Our wrappings of these don't want $self
-   for (qw( on_accept on_stream on_socket )) {
-      next unless exists $params{$_};
-      my $code = delete $params{$_};
-      $listenerparams{$_} = sub {
-         shift;
-         goto &$code;
-      };
+   elsif( my $addrs = delete $params{addrs} ) {
+      $on_listen_error or defined wantarray or
+         croak "Expected 'on_listen_error' or to return a Future";
+      $f = $self->_listen_addrs( $listener, $addrs, %params );
    }
-
-   my $listener = IO::Async::Listener->new( %listenerparams );
-
-   $self->add( $listener );
-
-   if( $listener->is_listening ) {
-      $on_notifier->( $listener ) if $on_notifier;
+   elsif( defined $params{service} ) {
+      $on_listen_error or defined wantarray or
+         croak "Expected 'on_listen_error' or to return a Future";
+      $on_resolve_error or defined wantarray or
+         croak "Expected 'on_resolve_error' or to return a Future";
+      $f = $self->_listen_hostservice( $listener, delete $params{host}, delete $params{service}, %params );
    }
    else {
-      my $on_listen = delete $params{on_listen};
-      $listener->listen( 
-         %params,
-         on_listen => sub {
-            my ( $sock ) = @_;
-            $on_listen->( $listener->read_handle ) if $on_listen;
-            $on_notifier->( $listener ) if $on_notifier;
-         },
-         on_listen_error => sub {
-            $self->remove( $listener );
-            $params{on_listen_error}->( @_ ) if $params{on_listen_error};
-         },
-         on_resolve_error => sub {
-            $self->remove( $listener );
-            $params{on_resolve_error}->( @_ ) if $params{on_resolve_error};
-         },
-      );
+      croak "Expected either 'service' or 'addrs' or 'addr' arguments";
    }
 
-   # Unit testing needs this
-   return $listener;
+   $f->on_done( $on_notifier ) if $on_notifier;
+   if( my $on_listen = $params{on_listen} ) {
+      $f->on_done( sub { $on_listen->( shift->read_handle ) } );
+   }
+   $f->on_fail( sub {
+      my ( $message, $how, @rest ) = @_;
+      $on_listen_error->( @rest )  if $on_listen_error  and $how eq "listen";
+      $on_resolve_error->( @rest ) if $on_resolve_error and $how eq "resolve";
+   });
+   $f->on_fail( sub { $self->remove( $listener ) } ) if $remove_on_error;
+
+   return $f;
+}
+
+sub _listen_handle
+{
+   my $self = shift;
+   my ( $listener, $handle, %params ) = @_;
+
+   $listener->configure( handle => $handle );
+   return $self->new_future->done( $listener );
+}
+
+sub _listen_addrs
+{
+   my $self = shift;
+   my ( $listener, $addrs, %params ) = @_;
+
+   my $queuesize = $params{queuesize} || 3;
+
+   my $on_fail = $params{on_fail};
+   !defined $on_fail or ref $on_fail or croak "Expected 'on_fail' to be a reference";
+
+   my $reuseaddr = 1;
+   $reuseaddr = 0 if defined $params{reuseaddr} and not $params{reuseaddr};
+
+   my $v6only = $params{v6only};
+
+   my ( $listenerr, $binderr, $sockopterr, $socketerr );
+
+   foreach my $addr ( @$addrs ) {
+      my ( $family, $socktype, $proto, $address ) = IO::Async::OS->extract_addrinfo( $addr );
+
+      my $sock;
+
+      unless( $sock = IO::Async::OS->socket( $family, $socktype, $proto ) ) {
+         $socketerr = $!;
+         $on_fail->( socket => $family, $socktype, $proto, $! ) if $on_fail;
+         next;
+      }
+
+      if( $reuseaddr ) {
+         unless( $sock->sockopt( SO_REUSEADDR, 1 ) ) {
+            $sockopterr = $!;
+            $on_fail->( sockopt => $sock, SO_REUSEADDR, 1, $! ) if $on_fail;
+            next;
+         }
+      }
+
+      if( defined $v6only and $family == AF_INET6 ) {
+         unless( $sock->setsockopt( IPPROTO_IPV6, IPV6_V6ONLY, $v6only ) ) {
+            $sockopterr = $!;
+            $on_fail->( sockopt => $sock, IPV6_V6ONLY, $v6only, $! ) if $on_fail;
+            next;
+         }
+      }
+
+      unless( $sock->bind( $address ) ) {
+         $binderr = $!;
+         $on_fail->( bind => $sock, $address, $! ) if $on_fail;
+         next;
+      }
+
+      unless( $sock->listen( $queuesize ) ) {
+         $listenerr = $!;
+         $on_fail->( listen => $sock, $queuesize, $! ) if $on_fail;
+         next;
+      }
+
+      return $self->_listen_handle( $listener, $sock, %params );
+   }
+
+   my $f = $self->new_future;
+   return $f->fail( "Cannot listen() - $listenerr",      listen => listen  => $listenerr  ) if $listenerr;
+   return $f->fail( "Cannot bind() - $binderr",          listen => bind    => $binderr    ) if $binderr;
+   return $f->fail( "Cannot setsockopt() - $sockopterr", listen => sockopt => $sockopterr ) if $sockopterr;
+   return $f->fail( "Cannot socket() - $socketerr",      listen => socket  => $socketerr  ) if $socketerr;
+   die 'Oops; $loop->listen failed but no error cause was found';
+}
+
+sub _listen_hostservice
+{
+   my $self = shift;
+   my ( $listener, $host, $service, %params ) = @_;
+
+   $host ||= "";
+   defined $service or $service = ""; # might be 0
+
+   my %gai_hints;
+   exists $params{$_} and $gai_hints{$_} = $params{$_} for qw( family socktype protocol flags );
+
+   defined $gai_hints{socktype} or defined $gai_hints{protocol} or
+      carp "Attempting to ->listen without either 'socktype' or 'protocol' hint is not portable";
+
+   $self->resolver->getaddrinfo(
+      host    => $host,
+      service => $service,
+      passive => 1,
+      %gai_hints,
+   )->then( sub {
+      my @addrs = @_;
+      $self->_listen_addrs( $listener, \@addrs, %params );
+   });
 }
 
 =head1 OS ABSTRACTIONS
@@ -1722,6 +1987,8 @@ sub watch_signal
    my $self = shift;
    my ( $signal, $code ) = @_;
 
+   HAVE_SIGNALS or croak "This OS cannot ->watch_signal";
+
    IO::Async::OS->loop_watch_signal( $self, $signal, $code );
 }
 
@@ -1743,6 +2010,8 @@ sub unwatch_signal
 {
    my $self = shift;
    my ( $signal ) = @_;
+
+   HAVE_SIGNALS or croak "This OS cannot ->unwatch_signal";
 
    IO::Async::OS->loop_unwatch_signal( $self, $signal );
 }
@@ -2028,6 +2297,28 @@ sub unwatch_idle
    splice @$deferrals, $idx, 1, () if defined $idx;
 }
 
+sub _reap_children
+{
+   my ( $childwatches ) = @_;
+
+   while( 1 ) {
+      my $zid = waitpid( -1, WNOHANG );
+
+      last if !defined $zid or $zid < 1;
+      my $status = $?;
+
+      if( defined $childwatches->{$zid} ) {
+         $childwatches->{$zid}->( $zid, $status );
+         delete $childwatches->{$zid};
+      }
+
+      if( defined $childwatches->{0} ) {
+         $childwatches->{0}->( $zid, $status );
+         # Don't delete it
+      }
+   }
+}
+
 =head2 $loop->watch_child( $pid, $code )
 
 This method adds a new handler for the termination of the given child process
@@ -2073,25 +2364,10 @@ sub watch_child
 
    croak "Already have a handler for $pid" if exists $childwatches->{$pid};
 
-   if( !$self->{childwatch_sigid} ) {
-      $self->{childwatch_sigid} = $self->attach_signal( CHLD => sub {
-         while( 1 ) {
-            my $zid = waitpid( -1, WNOHANG );
-
-            last if !defined $zid or $zid < 1;
-            my $status = $?;
-
-            if( defined $childwatches->{$zid} ) {
-               $childwatches->{$zid}->( $zid, $status );
-               delete $childwatches->{$zid};
-            }
-
-            if( defined $childwatches->{0} ) {
-               $childwatches->{0}->( $zid, $status );
-               # Don't delete it
-            }
-         }
-      } );
+   if( HAVE_SIGNALS and !$self->{childwatch_sigid} ) {
+      $self->{childwatch_sigid} = $self->attach_signal(
+         CHLD => sub { _reap_children( $childwatches ) }
+      );
 
       # There's a chance the child has already exited
       my $zid = waitpid( $pid, WNOHANG );
@@ -2120,7 +2396,7 @@ sub unwatch_child
 
    delete $childwatches->{$pid};
 
-   if( !keys %$childwatches ) {
+   if( HAVE_SIGNALS and !keys %$childwatches ) {
       $self->detach_signal( CHLD => delete $self->{childwatch_sigid} );
    }
 }
@@ -2149,7 +2425,10 @@ sub _adjust_timeout
    $$timeref = 0, return if @{ $self->{deferrals} };
 
    if( defined $self->{sigproxy} and !$params{no_sigwait} ) {
-      $$timeref = $MAX_SIGWAIT_TIME if( !defined $$timeref or $$timeref > $MAX_SIGWAIT_TIME );
+      $$timeref = $MAX_SIGWAIT_TIME if !defined $$timeref or $$timeref > $MAX_SIGWAIT_TIME;
+   }
+   if( !HAVE_SIGNALS and keys %{ $self->{childwatches} } ) {
+      $$timeref = $MAX_CHILDWAIT_TIME if !defined $$timeref or $$timeref > $MAX_CHILDWAIT_TIME;
    }
 
    my $timequeue = $self->{timequeue};
@@ -2195,6 +2474,11 @@ sub _manage_queues
       $count++;
    }
 
+   my $childwatches = $self->{childwatches};
+   if( !HAVE_SIGNALS and keys %$childwatches ) {
+      _reap_children( $childwatches );
+   }
+
    return $count;
 }
 
@@ -2235,6 +2519,11 @@ The following methods take an C<extensions> parameter:
 
  $loop->connect
  $loop->listen
+
+If an extension C<listen> method is invoked, it will be passed a C<listener>
+parameter even if one was not provided to the original C<< $loop->listen >>
+call, and it will not receive any of the C<on_*> event callbacks. It should
+use the C<acceptor> parameter on the C<listener> object.
 
 =cut
 

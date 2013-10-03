@@ -8,7 +8,7 @@ package IO::Async::OS::MSWin32;
 use strict;
 use warnings;
 
-our $VERSION = '0.60';
+our $VERSION = '0.60_001';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -30,6 +30,9 @@ use constant HAVE_RENAME_OPEN_FILES => 0;
 # poll(2) on Windows is emulated by wrapping select(2) anyway, so we might as
 # well try the Select loop first
 use constant LOOP_BUILTIN_CLASSES => qw( Select Poll );
+
+# Windows does not have signals, and SIGCHLD is not available
+use constant HAVE_SIGNALS => 0;
 
 =head1 NAME
 

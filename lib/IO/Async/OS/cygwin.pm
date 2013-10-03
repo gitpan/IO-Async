@@ -8,7 +8,7 @@ package IO::Async::OS::cygwin;
 use strict;
 use warnings;
 
-our $VERSION = '0.60';
+our $VERSION = '0.60_001';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -22,7 +22,7 @@ C<IO::Async::OS::cygwin> - operating system abstractions on C<cygwin> for C<IO::
 
 =head1 DESCRIPTION
 
-This module contains OS support code for C<MSWin32>.
+This module contains OS support code for C<cygwin>.
 
 See instead L<IO::Async::OS>.
 
