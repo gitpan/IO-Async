@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2009-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2009-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::LoopTests;
 
@@ -23,11 +23,11 @@ use IO::Async::OS;
 
 use IO::File;
 use Fcntl qw( SEEK_SET );
-use POSIX qw( SIGTERM WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG );
+use POSIX qw( SIGTERM );
 use Socket qw( sockaddr_family AF_UNIX );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.60_001';
+our $VERSION = '0.60_002';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -692,7 +692,7 @@ sub run_in_child(&)
    die "Fell out of run_in_child!\n";
 }
 
-use constant count_tests_child => 8;
+use constant count_tests_child => 7;
 sub run_tests_child
 {
    my $kid = run_in_child {
@@ -709,29 +709,32 @@ sub run_tests_child
    undef $exitcode;
    wait_for { defined $exitcode };
 
-   ok( WIFEXITED($exitcode),      'WIFEXITED($exitcode) after child exit' );
-   is( WEXITSTATUS($exitcode), 3, 'WEXITSTATUS($exitcode) after child exit' );
+   ok( ($exitcode & 0x7f) == 0, 'WIFEXITED($exitcode) after child exit' );
+   is( ($exitcode >> 8), 3,     'WEXITSTATUS($exitcode) after child exit' );
 
-   # We require that SIGTERM perform its default action; i.e. terminate the
-   # process. Ensure this definitely happens, in case the test harness has it
-   # ignored or handled elsewhere.
-   local $SIG{TERM} = "DEFAULT";
+   SKIP: {
+      skip "This OS does not have signals", 1 unless IO::Async::OS->HAVE_SIGNALS;
 
-   $kid = run_in_child {
-      sleep( 10 );
-      # Just in case the parent died already and didn't kill us
-      exit( 0 );
-   };
+      # We require that SIGTERM perform its default action; i.e. terminate the
+      # process. Ensure this definitely happens, in case the test harness has it
+      # ignored or handled elsewhere.
+      local $SIG{TERM} = "DEFAULT";
 
-   $loop->watch_child( $kid => sub { ( undef, $exitcode ) = @_; } );
+      $kid = run_in_child {
+         sleep( 10 );
+         # Just in case the parent died already and didn't kill us
+         exit( 0 );
+      };
 
-   kill SIGTERM, $kid;
+      $loop->watch_child( $kid => sub { ( undef, $exitcode ) = @_; } );
 
-   undef $exitcode;
-   wait_for { defined $exitcode };
+      kill SIGTERM, $kid;
 
-   ok( WIFSIGNALED($exitcode),          'WIFSIGNALED($exitcode) after SIGTERM' );
-   is( WTERMSIG($exitcode),    SIGTERM, 'WTERMSIG($exitcode) after SIGTERM' );
+      undef $exitcode;
+      wait_for { defined $exitcode };
+
+      is( ($exitcode & 0x7f), SIGTERM, 'WTERMSIG($exitcode) after SIGTERM' );
+   }
 
    my %kids;
 

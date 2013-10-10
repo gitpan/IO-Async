@@ -93,6 +93,7 @@ t/34process-handles.t
 t/35loop-openchild.t
 t/36loop-runchild.t
 t/37loop-child-root.t
+t/38loop-thread.t
 t/40channel.t
 t/41routine.t
 t/42function.t

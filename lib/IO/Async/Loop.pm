@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_001';
+our $VERSION = '0.60_002';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -32,13 +32,15 @@ use Carp;
 
 use IO::Socket (); # empty import
 use Time::HiRes qw(); # empty import
-use POSIX qw( _exit WNOHANG );
+use POSIX qw( WNOHANG );
 use Scalar::Util qw( refaddr );
 use Socket qw( SO_REUSEADDR AF_INET6 IPPROTO_IPV6 IPV6_V6ONLY );
 
 use IO::Async::OS;
 
 use constant HAVE_SIGNALS => IO::Async::OS->HAVE_SIGNALS;
+use constant HAVE_POSIX__EXIT => IO::Async::OS->HAVE_POSIX__EXIT;
+use constant HAVE_THREADS_EXIT => IO::Async::OS->HAVE_THREADS_EXIT;
 
 # Never sleep for more than 1 second if a signal proxy is registered, to avoid
 # a borderline race condition.
@@ -149,14 +151,15 @@ sub __new
       warn "$class cannot implement IO_ASYNC_WATCHDOG\n";
 
    my $self = bless {
-      notifiers    => {}, # {nkey} = notifier
-      iowatches    => {}, # {fd} = [ $on_read_ready, $on_write_ready, $on_hangup ]
-      sigattaches  => {}, # {sig} => \@callbacks
-      childmanager => undef,
-      childwatches => {}, # {pid} => $code
-      timequeue    => undef,
-      deferrals    => [],
-      os           => {}, # A generic scratchpad for IO::Async::OS to store whatever it wants
+      notifiers     => {}, # {nkey} = notifier
+      iowatches     => {}, # {fd} = [ $on_read_ready, $on_write_ready, $on_hangup ]
+      sigattaches   => {}, # {sig} => \@callbacks
+      childmanager  => undef,
+      childwatches  => {}, # {pid} => $code
+      threadwatches => {}, # {tid} => $code
+      timequeue     => undef,
+      deferrals     => [],
+      os            => {}, # A generic scratchpad for IO::Async::OS to store whatever it wants
    }, $class;
 
    # It's possible this is a specific subclass constructor. We still want the
@@ -834,8 +837,7 @@ way:
 
  $on_finish->( $pid, $exitcode )
 
-The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS> and others from C<POSIX>.
+The second argument is passed the plain perl C<$?> value.
 
 =item on_error => CODE
 
@@ -946,8 +948,7 @@ and STDERR streams. It will be invoked in the following way:
 
  $on_finish->( $pid, $exitcode, $stdout, $stderr )
 
-The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS> and others from C<POSIX>.
+The second argument is passed the plain perl C<$?> value.
 
 =item stdin => STRING
 
@@ -1758,8 +1759,7 @@ be invoked in the following way:
 
  $on_exit->( $pid, $exitcode )
 
-The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS> and others from C<POSIX>.
+The second argument is passed the plain perl C<$?> value.
 
 This key is optional; if not supplied, the calling code should install a
 handler using the C<watch_child> method.
@@ -1795,7 +1795,16 @@ sub fork
       my $exitvalue = eval { $code->() };
 
       defined $exitvalue or $exitvalue = -1;
-      _exit( $exitvalue );
+
+      if( HAVE_POSIX__EXIT ) {
+         POSIX::_exit( $exitvalue );
+      }
+      elsif( HAVE_THREADS_EXIT ) {
+         require threads; threads->exit( $exitvalue );
+      }
+      else {
+         die "No known-safe way to exit() this process";
+      }
    }
 
    if( defined $params{on_exit} ) {
@@ -1803,6 +1812,102 @@ sub fork
    }
 
    return $kid;
+}
+
+=head2 $tid = $loop->create_thread( %params )
+
+This method creates a new (non-detached) thread to run the given code block,
+returning its thread ID.
+
+=over 8
+
+=item code => CODE
+
+A block of code to execute in the thread. It is called in the context given by
+the C<context> argument, and its return value will be available to the
+C<on_joined> callback. It is called inside an C<eval> block; if it fails the
+exception will be caught.
+
+=item context => "scalar" | "list" | "void"
+
+Optional. Gives the calling context that C<code> is invoked in. Defaults to
+C<scalar> if not supplied.
+
+=item on_joined => CODE
+
+Callback to invoke when the thread function returns or throws an exception.
+If it returned, this callback will be invoked with its result
+
+ $on_joined->( return => @result )
+
+If it threw an exception the callback is invoked with the value of C<$@>
+
+ $on_joined->( died => $! )
+
+=back
+
+=cut
+
+sub create_thread
+{
+   my $self = shift;
+   my %params = @_;
+
+   eval { require threads } or croak "This Perl does not support threads";
+
+   my $code = $params{code} or croak "Expected 'code' as a CODE reference";
+   my $on_joined = $params{on_joined} or croak "Expected 'on_joined' as a CODE reference";
+
+   my $threadwatches = $self->{threadwatches};
+
+   unless( $self->{thread_join_pipe} ) {
+      ( my $rd, $self->{thread_join_pipe} ) = IO::Async::OS->pipepair or
+         croak "Cannot pipepair - $!";
+
+      $self->watch_io(
+         handle => $rd,
+         on_read_ready => sub {
+            sysread $rd, my $buffer, 8192 or return;
+
+            # There's a race condition here in that we might have read from
+            # the pipe after the returning thread has written to it but before
+            # it has returned. We'll grab the actual $thread object and
+            # forcibly ->join it here to ensure we wait for its result.
+
+            foreach my $tid ( unpack "N*", $buffer ) {
+               my $thr = threads->object( $tid );
+               if( my $on_joined = delete $threadwatches->{$tid} ) {
+                  $on_joined->( $thr->join );
+               }
+            }
+         }
+      );
+   }
+
+   my $wr = $self->{thread_join_pipe};
+
+   my $context = $params{context} || "scalar";
+
+   my ( $thread ) = threads->create(
+      sub {
+         my ( @ret, $died );
+         eval {
+            $context eq "list"   ? ( @ret    = $code->() ) :
+            $context eq "scalar" ? ( $ret[0] = $code->() ) :
+                                               $code->();
+            1;
+         } or $died = $@;
+
+         $wr->syswrite( pack "N", threads->tid );
+
+         return died => $died if $died;
+         return return => @ret;
+      }
+   );
+
+   $threadwatches->{$thread->tid} = $on_joined;
+
+   return $thread->tid;
 }
 
 =head1 LOW-LEVEL METHODS
@@ -2304,7 +2409,8 @@ sub _reap_children
    while( 1 ) {
       my $zid = waitpid( -1, WNOHANG );
 
-      last if !defined $zid or $zid < 1;
+      # PIDs on MSWin32 can be negative
+      last if !defined $zid or $zid == 0 or $zid == -1;
       my $status = $?;
 
       if( defined $childwatches->{$zid} ) {
@@ -2336,8 +2442,7 @@ A CODE reference to the exit handler. It will be invoked as
 
  $code->( $pid, $? )
 
-The second argument is passed the plain perl C<$?> value. To use that
-usefully, see C<WEXITSTATUS> and others from C<POSIX>.
+The second argument is passed the plain perl C<$?> value.
 
 =back
 

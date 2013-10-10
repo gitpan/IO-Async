@@ -1,22 +1,25 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2012-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Routine;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.60_001';
+our $VERSION = '0.60_002';
 
-use base qw( IO::Async::Process );
+use base qw( IO::Async::Notifier );
+
+use Carp;
 
 use IO::Async::OS;
+use IO::Async::Process;
 
 =head1 NAME
 
-C<IO::Async::Routine> - execute code in an independent sub-process
+C<IO::Async::Routine> - execute code in an independent sub-process or thread
 
 =head1 SYNOPSIS
 
@@ -62,17 +65,21 @@ C<IO::Async::Routine> - execute code in an independent sub-process
 
 =head1 DESCRIPTION
 
-This subclass of L<IO::Async::Process> contains a body of code and executes it
-in a sub-process, allowing it to act independently of the main program. Once
-set up, all communication with the code happens by values passed into or out
-of the Routine via L<IO::Async::Channel> objects.
+This L<IO::Async::Notifier> contains a body of code and executes it in a
+sub-process or thread, allowing it to act independently of the main program.
+Once set up, all communication with the code happens by values passed into or
+out of the Routine via L<IO::Async::Channel> objects.
 
-Because the code running inside the Routine runs within its own process, it
-is isolated from the rest of the program, in terms of memory, CPU time, and
-other resources, and perhaps most importantly in terms of control flow. The
-code contained within the Routine is free to make blocking calls without
-stalling the rest of the program. This makes it useful for using existing code
-which has no option not to block within an C<IO::Async>-based program.
+A choice of detachment model is available, with options being a spawned child
+process, or a thread. In both cases the code contained within the Routine is
+free to make blocking calls without stalling the rest of the program. This
+makes it useful for using existing code which has no option not to block
+within an C<IO::Async>-based program.
+
+Code running inside spawn-based Routine runs within its own process; it is
+isolated from the rest of the program in terms of memory, CPU time, and other
+resources. Code running in a thread-based Routine however, shares memory and
+other resources such as open filehandles with the main thread.
 
 To create asynchronous wrappers of functions that return a value based only on
 their arguments, and do not generally maintain state within the process it may
@@ -82,11 +89,44 @@ Channels itself.
 
 =cut
 
+=head1 EVENTS
+
+=head2 on_finish $exitcode
+
+For spawn-based Routines, this is invoked after the process has exited and is
+passed the raw exitcode status.
+
+=head2 on_finish $type, @result
+
+For thread-based Routines, this is invoked after the thread has returned from
+its code block and is passed the C<on_joined> result.
+
+As the behaviour of these events differs per model, it may be more convenient
+to use C<on_return> and C<on_die> instead.
+
+=head2 on_return $result
+
+Invoked if the code block returns normally. Note that spawn-based Routines can
+only transport an integer result between 0 and 255, as this is the actual
+C<exit()> value.
+
+=head2 on_die $exception
+
+Invoked if the code block fails with an exception.
+
+=cut
+
 =head1 PARAMETERS
 
 The following named parameters may be passed to C<new> or C<configure>:
 
 =over 8
+
+=item model => "spawn" | "thread"
+
+Optional. Defines how the routine will detach itself from the main process.
+C<spawn> uses a child process detached using an L<IO::Async::Process>.
+C<thread> uses a thread, and is only available on threaded Perls.
 
 =item channels_in => ARRAY of IO::Async::Channel
 
@@ -103,9 +143,23 @@ out of the Routine.
 CODE reference to the body of the Routine, to execute once the channels are
 set up.
 
+=item setup => ARRAY
+
+Optional. For spawn-based Routines, gives a reference to an array to pass to
+the underlying C<Loop> C<spawn_child> method. Ignored for thread-based
+Routines.
+
 =back
 
 =cut
+
+sub _init
+{
+   my $self = shift;
+   $self->SUPER::_init( @_ );
+
+   $self->{model} = "spawn"; # TODO: Get OS to tell us what to prefer
+}
 
 sub configure
 {
@@ -113,17 +167,51 @@ sub configure
    my %params = @_;
 
    # TODO: Can only reconfigure when not running
-   foreach (qw( channels_in channels_out )) {
+   foreach (qw( channels_in channels_out code setup on_finish on_return on_die )) {
       $self->{$_} = delete $params{$_} if exists $params{$_};
    }
 
+   if( defined( my $model = delete $params{model} ) ) {
+      $model eq "spawn" or $model eq "thread" or
+         croak "Expected 'model' to be either 'spawn' or 'thread'";
+
+      if( $model eq "thread" ) {
+         eval { require threads } or croak "Cannot use 'thread' model as threads are not available";
+      }
+
+      $self->{model} = $model;
+   }
+
    $self->SUPER::configure( %params );
+}
+
+sub DESTROY
+{
+   my $self = shift;
+
+   if( my $tid = $self->{tid} ) {
+      my $thread = threads->object( $tid ) or return;
+
+      $thread->kill( "KILL" );
+      $thread->detach;
+   }
 }
 
 sub _add_to_loop
 {
    my $self = shift;
    my ( $loop ) = @_;
+   $self->SUPER::_add_to_loop( $loop );
+
+   return $self->_setup_spawn  if $self->{model} eq "spawn";
+   return $self->_setup_thread if $self->{model} eq "thread";
+
+   die "TODO: unrecognised Routine model $self->{model}";
+}
+
+sub _setup_spawn
+{
+   my $self = shift;
 
    my @setup;
    my @channels_in;
@@ -147,13 +235,12 @@ sub _add_to_loop
       push @channels_out, [ $ch, $rd, $wr ];
    }
 
-   # TODO: This breaks encap.
-   my $code  = delete $self->{code};
-   my $setup = delete $self->{setup};
+   my $code  = $self->{code};
 
+   my $setup = $self->{setup};
    push @setup, @$setup if $setup;
 
-   $self->configure(
+   my $process = IO::Async::Process->new(
       setup => \@setup,
       code => sub {
          foreach ( @channels_in ) {
@@ -174,6 +261,19 @@ sub _add_to_loop
 
          return $ret;
       },
+      on_finish => $self->_replace_weakself( sub {
+         my $self = shift or return;
+         my ( $exitcode ) = @_;
+         $self->maybe_invoke_event( on_finish => $exitcode );
+
+         $self->maybe_invoke_event( on_return => ($exitcode >> 8) ) unless $exitcode & 0x7f;
+      }),
+      on_exception => $self->_replace_weakself( sub {
+         my $self = shift or return;
+         my ( $exception, $errno, $exitcode ) = @_;
+
+         $self->maybe_invoke_event( on_die => $exception );
+      }),
    );
 
    foreach ( @channels_in ) {
@@ -192,7 +292,8 @@ sub _add_to_loop
       $self->add_child( $ch ) unless $ch->parent;
    }
 
-   $self->SUPER::_add_to_loop( $loop );
+   $self->add_child( $self->{process} = $process );
+   $self->{id} = "P" . $process->pid;
 
    foreach ( @channels_in, @channels_out ) {
       my ( undef, undef, $other ) = @$_;
@@ -200,12 +301,102 @@ sub _add_to_loop
    }
 }
 
+sub _setup_thread
+{
+   my $self = shift;
+
+   my @channels_in;
+   my @channels_out;
+
+   foreach my $ch ( @{ $self->{channels_in} || [] } ) {
+      my ( $rd, $wr );
+      unless( $rd = $ch->_extract_read_handle ) {
+         ( $rd, $wr ) = IO::Async::OS->pipepair;
+      }
+      push @channels_in, [ $ch, $wr, $rd ];
+   }
+
+   foreach my $ch ( @{ $self->{channels_out} || [] } ) {
+      my ( $rd, $wr );
+      unless( $wr = $ch->_extract_write_handle ) {
+         ( $rd, $wr ) = IO::Async::OS->pipepair;
+      }
+      push @channels_out, [ $ch, $rd, $wr ];
+   }
+
+   my $code = $self->{code};
+
+   my $tid = $self->loop->create_thread(
+      code => sub {
+         $SIG{KILL} = sub { threads->exit };
+
+         foreach ( @channels_in ) {
+            my ( $ch, undef, $rd ) = @$_;
+            $ch->setup_sync_mode( $rd );
+         }
+         foreach ( @channels_out ) {
+            my ( $ch, undef, $wr ) = @$_;
+            $ch->setup_sync_mode( $wr );
+         }
+
+         my $ret = $code->();
+
+         foreach ( @channels_in, @channels_out ) {
+            my ( $ch ) = @$_;
+            $ch->close;
+         }
+
+         return $ret;
+      },
+      on_joined => $self->_capture_weakself( sub {
+         my $self = shift or return;
+         my ( $ev, @result ) = @_;
+         $self->maybe_invoke_event( on_finish => @_ );
+
+         $self->maybe_invoke_event( on_return => @result ) if $ev eq "return";
+         $self->maybe_invoke_event( on_die => $result[0] ) if $ev eq "died";
+
+         delete $self->{tid};
+      }),
+   );
+
+   $self->{tid} = $tid;
+   $self->{id} = "T" . $tid;
+
+   foreach ( @channels_in ) {
+      my ( $ch, $wr ) = @$_;
+
+      $ch->setup_async_mode( write_handle => $wr );
+
+      $self->add_child( $ch ) unless $ch->parent;
+   }
+
+   foreach ( @channels_out ) {
+      my ( $ch, $rd ) = @$_;
+
+      $ch->setup_async_mode( read_handle => $rd );
+
+      $self->add_child( $ch ) unless $ch->parent;
+   }
+}
+
 =head1 METHODS
 
-This class provides no additional methods, other than those provided by
-L<IO::Async::Process>.
+=cut
+
+=head2 $id = $routine->id
+
+Returns an ID string that uniquely identifies the Routine out of all the
+currently-running ones. (The ID of already-exited Routines may be reused,
+however.)
 
 =cut
+
+sub id
+{
+   my $self = shift;
+   return $self->{id};
+}
 
 =head1 AUTHOR
 

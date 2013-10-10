@@ -56,7 +56,7 @@ testing_loop( $loop );
    is( $function->workers_busy, 1, '$function has 1 worker busy after ->call' );
    is( $function->workers_idle, 0, '$function has 0 worker idle after ->call' );
 
-   $loop->await( $future );
+   wait_for { $future->is_ready };
 
    my ( $result ) = $future->get;
 
@@ -330,35 +330,6 @@ testing_loop( $loop );
    is_deeply( \%ret, { 1 => 1, 2 => 2, 3 => 3 }, 'ret keys after parallel run' );
 
    is( scalar $function->workers, 3, '$function->workers is still 3' );
-
-   $loop->remove( $function );
-}
-
-# Test that 'setup' works
-{
-   my $function = IO::Async::Function->new(
-      code => sub {
-         return $ENV{$_[0]};
-      },
-
-      setup => [
-         env => { FOO => "Here is a random string" },
-      ],
-   );
-
-   $loop->add( $function );
-
-   my $result;
-
-   $function->call(
-      args => [ "FOO" ],
-      on_return => sub { $result = shift },
-      on_error  => sub { die "Test failed early - @_" },
-   );
-
-   wait_for { defined $result };
-
-   is( $result, "Here is a random string", '$result after call with modified ENV' );
 
    $loop->remove( $function );
 }

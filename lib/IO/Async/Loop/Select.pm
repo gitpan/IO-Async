@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Select;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.60_001';
+our $VERSION = '0.60_002';
 use constant API_VERSION => '0.49';
 
 use base qw( IO::Async::Loop );
@@ -16,8 +16,6 @@ use base qw( IO::Async::Loop );
 use IO::Async::OS;
 
 use Carp;
-
-use Fcntl qw( S_ISREG );
 
 # select() on most platforms claims that ISREG files are always read- and
 # write-ready, but not on MSWin32. We need to fake this
@@ -253,7 +251,7 @@ sub watch_io
    # but it does indicate exceptional
    vec( $self->{evec}, $fileno, 1 ) = 1 if SELECT_CONNECT_EVEC and $params{on_write_ready};
 
-   vec( $self->{avec}, $fileno, 1 ) = 1 if FAKE_ISREG_READY and S_ISREG +(stat $params{handle})[2];
+   vec( $self->{avec}, $fileno, 1 ) = 1 if FAKE_ISREG_READY and stat( $params{handle} ) and -f _;
 }
 
 sub unwatch_io
@@ -270,7 +268,7 @@ sub unwatch_io
 
    vec( $self->{evec}, $fileno, 1 ) = 0 if SELECT_CONNECT_EVEC and $params{on_write_ready};
 
-   vec( $self->{avec}, $fileno, 1 ) = 0 if FAKE_ISREG_READY and S_ISREG +(stat $params{handle})[2];
+   vec( $self->{avec}, $fileno, 1 ) = 0 if FAKE_ISREG_READY and stat( $params{handle} ) and -f _;
 
    # vec will grow a bit vector as needed, but never shrink it. We'll trim
    # trailing null bytes
