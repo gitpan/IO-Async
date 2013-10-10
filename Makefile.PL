@@ -12,7 +12,7 @@ WriteMakefile
                    'Future' => '0.12',
                    'Future::Utils' => '0.18',
                    'IO::Poll' => 0,
-                   'Socket' => '1.95',
+                   'Socket' => '2.007',
                    'Storable' => 0,
                    'Test::Fatal' => 0,
                    'Test::Identity' => 0,

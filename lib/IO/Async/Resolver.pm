@@ -9,9 +9,10 @@ use strict;
 use warnings;
 use base qw( IO::Async::Function );
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
-use Socket 1.93 qw(
+# Socket 2.006 fails to getaddrinfo() AI_NUMERICHOST properly on MSWin32
+use Socket 2.007 qw(
    AI_NUMERICHOST AI_PASSIVE
    NI_NUMERICHOST NI_NUMERICSERV NI_DGRAM
    EAI_NONAME
@@ -19,7 +20,12 @@ use Socket 1.93 qw(
 
 use IO::Async::OS;
 
-use Time::HiRes qw( alarm );
+# Try to use HiRes alarm, but we don't strictly need it.
+# MSWin32 doesn't implement it
+BEGIN {
+   require Time::HiRes;
+   eval { Time::HiRes::alarm(0) } and Time::HiRes->import( qw( alarm ) );
+}
 
 use Carp;
 

@@ -8,7 +8,7 @@ package IO::Async::Routine;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 use base qw( IO::Async::Notifier );
 
@@ -70,16 +70,16 @@ sub-process or thread, allowing it to act independently of the main program.
 Once set up, all communication with the code happens by values passed into or
 out of the Routine via L<IO::Async::Channel> objects.
 
-A choice of detachment model is available, with options being a spawned child
-process, or a thread. In both cases the code contained within the Routine is
-free to make blocking calls without stalling the rest of the program. This
-makes it useful for using existing code which has no option not to block
-within an C<IO::Async>-based program.
+A choice of detachment model is available, with options being a C<fork()>ed
+child process, or a thread. In both cases the code contained within the
+Routine is free to make blocking calls without stalling the rest of the
+program. This makes it useful for using existing code which has no option not
+to block within an C<IO::Async>-based program.
 
-Code running inside spawn-based Routine runs within its own process; it is
-isolated from the rest of the program in terms of memory, CPU time, and other
-resources. Code running in a thread-based Routine however, shares memory and
-other resources such as open filehandles with the main thread.
+Code running inside a C<fork()>-based Routine runs within its own process; it
+is isolated from the rest of the program in terms of memory, CPU time, and
+other resources. Code running in a thread-based Routine however, shares memory
+and other resources such as open filehandles with the main thread.
 
 To create asynchronous wrappers of functions that return a value based only on
 their arguments, and do not generally maintain state within the process it may
@@ -93,8 +93,8 @@ Channels itself.
 
 =head2 on_finish $exitcode
 
-For spawn-based Routines, this is invoked after the process has exited and is
-passed the raw exitcode status.
+For C<fork()>-based Routines, this is invoked after the process has exited and
+is passed the raw exitcode status.
 
 =head2 on_finish $type, @result
 
@@ -106,8 +106,8 @@ to use C<on_return> and C<on_die> instead.
 
 =head2 on_return $result
 
-Invoked if the code block returns normally. Note that spawn-based Routines can
-only transport an integer result between 0 and 255, as this is the actual
+Invoked if the code block returns normally. Note that C<fork()>-based Routines
+can only transport an integer result between 0 and 255, as this is the actual
 C<exit()> value.
 
 =head2 on_die $exception
@@ -122,11 +122,15 @@ The following named parameters may be passed to C<new> or C<configure>:
 
 =over 8
 
-=item model => "spawn" | "thread"
+=item model => "fork" | "thread"
 
 Optional. Defines how the routine will detach itself from the main process.
-C<spawn> uses a child process detached using an L<IO::Async::Process>.
+C<fork> uses a child process detached using an L<IO::Async::Process>.
 C<thread> uses a thread, and is only available on threaded Perls.
+
+If the model is not specified, the environment variable
+C<IO_ASYNC_ROUTINE_MODEL> is used to pick a default. If that isn't defined,
+C<fork> is preferred if it is available, otherwise C<thread>.
 
 =item channels_in => ARRAY of IO::Async::Channel
 
@@ -145,20 +149,27 @@ set up.
 
 =item setup => ARRAY
 
-Optional. For spawn-based Routines, gives a reference to an array to pass to
-the underlying C<Loop> C<spawn_child> method. Ignored for thread-based
+Optional. For C<fork()>-based Routines, gives a reference to an array to pass
+to the underlying C<Loop> C<fork_child> method. Ignored for thread-based
 Routines.
 
 =back
 
 =cut
 
+use constant PREFERRED_MODEL =>
+   IO::Async::OS->HAVE_POSIX_FORK ? "fork" :
+   IO::Async::OS->HAVE_THREADS    ? "thread" :
+      die "No viable Routine models";
+
 sub _init
 {
    my $self = shift;
-   $self->SUPER::_init( @_ );
+   my ( $params ) = @_;
 
-   $self->{model} = "spawn"; # TODO: Get OS to tell us what to prefer
+   $params->{model} ||= $ENV{IO_ASYNC_ROUTINE_MODEL} || PREFERRED_MODEL;
+
+   $self->SUPER::_init( @_ );
 }
 
 sub configure
@@ -172,29 +183,18 @@ sub configure
    }
 
    if( defined( my $model = delete $params{model} ) ) {
-      $model eq "spawn" or $model eq "thread" or
-         croak "Expected 'model' to be either 'spawn' or 'thread'";
+      $model eq "fork" or $model eq "thread" or
+         croak "Expected 'model' to be either 'fork' or 'thread'";
 
-      if( $model eq "thread" ) {
-         eval { require threads } or croak "Cannot use 'thread' model as threads are not available";
-      }
+      $model eq "fork" and !IO::Async::OS->HAVE_POSIX_FORK and
+         croak "Cannot use 'fork' model as fork() is not available";
+      $model eq "thread" and !IO::Async::OS->HAVE_THREADS and
+         croak "Cannot use 'thread' model as threads are not available";
 
       $self->{model} = $model;
    }
 
    $self->SUPER::configure( %params );
-}
-
-sub DESTROY
-{
-   my $self = shift;
-
-   if( my $tid = $self->{tid} ) {
-      my $thread = threads->object( $tid ) or return;
-
-      $thread->kill( "KILL" );
-      $thread->detach;
-   }
 }
 
 sub _add_to_loop
@@ -203,13 +203,13 @@ sub _add_to_loop
    my ( $loop ) = @_;
    $self->SUPER::_add_to_loop( $loop );
 
-   return $self->_setup_spawn  if $self->{model} eq "spawn";
+   return $self->_setup_fork   if $self->{model} eq "fork";
    return $self->_setup_thread if $self->{model} eq "thread";
 
    die "TODO: unrecognised Routine model $self->{model}";
 }
 
-sub _setup_spawn
+sub _setup_fork
 {
    my $self = shift;
 
@@ -328,15 +328,15 @@ sub _setup_thread
 
    my $tid = $self->loop->create_thread(
       code => sub {
-         $SIG{KILL} = sub { threads->exit };
-
          foreach ( @channels_in ) {
-            my ( $ch, undef, $rd ) = @$_;
+            my ( $ch, $wr, $rd ) = @$_;
             $ch->setup_sync_mode( $rd );
+            $wr->close if $wr;
          }
          foreach ( @channels_out ) {
-            my ( $ch, undef, $wr ) = @$_;
+            my ( $ch, $rd, $wr ) = @$_;
             $ch->setup_sync_mode( $wr );
+            $rd->close if $rd;
          }
 
          my $ret = $code->();
@@ -364,17 +364,19 @@ sub _setup_thread
    $self->{id} = "T" . $tid;
 
    foreach ( @channels_in ) {
-      my ( $ch, $wr ) = @$_;
+      my ( $ch, $wr, $rd ) = @$_;
 
       $ch->setup_async_mode( write_handle => $wr );
+      $rd->close;
 
       $self->add_child( $ch ) unless $ch->parent;
    }
 
    foreach ( @channels_out ) {
-      my ( $ch, $rd ) = @$_;
+      my ( $ch, $rd, $wr ) = @$_;
 
       $ch->setup_async_mode( read_handle => $rd );
+      $wr->close;
 
       $self->add_child( $ch ) unless $ch->parent;
    }

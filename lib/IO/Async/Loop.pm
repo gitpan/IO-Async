@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -33,14 +33,14 @@ use Carp;
 use IO::Socket (); # empty import
 use Time::HiRes qw(); # empty import
 use POSIX qw( WNOHANG );
-use Scalar::Util qw( refaddr );
+use Scalar::Util qw( refaddr weaken );
 use Socket qw( SO_REUSEADDR AF_INET6 IPPROTO_IPV6 IPV6_V6ONLY );
 
 use IO::Async::OS;
 
 use constant HAVE_SIGNALS => IO::Async::OS->HAVE_SIGNALS;
-use constant HAVE_POSIX__EXIT => IO::Async::OS->HAVE_POSIX__EXIT;
-use constant HAVE_THREADS_EXIT => IO::Async::OS->HAVE_THREADS_EXIT;
+use constant HAVE_POSIX_FORK => IO::Async::OS->HAVE_POSIX_FORK;
+use constant HAVE_THREADS => IO::Async::OS->HAVE_THREADS;
 
 # Never sleep for more than 1 second if a signal proxy is registered, to avoid
 # a borderline race condition.
@@ -283,6 +283,11 @@ sub __try_new
 sub new
 {
    return our $ONE_TRUE_LOOP ||= shift->really_new;
+}
+
+# Ensure that the loop is DESTROYed recursively at exit time, before GD happens
+END {
+   undef our $ONE_TRUE_LOOP;
 }
 
 sub really_new
@@ -1779,6 +1784,8 @@ sub fork
    my $self = shift;
    my %params = @_;
 
+   HAVE_POSIX_FORK or croak "POSIX fork() is not available";
+
    my $code = $params{code} or croak "Expected 'code' as a CODE reference";
 
    my $kid = fork;
@@ -1796,15 +1803,7 @@ sub fork
 
       defined $exitvalue or $exitvalue = -1;
 
-      if( HAVE_POSIX__EXIT ) {
-         POSIX::_exit( $exitvalue );
-      }
-      elsif( HAVE_THREADS_EXIT ) {
-         require threads; threads->exit( $exitvalue );
-      }
-      else {
-         die "No known-safe way to exit() this process";
-      }
+      POSIX::_exit( $exitvalue );
    }
 
    if( defined $params{on_exit} ) {
@@ -1848,10 +1847,21 @@ If it threw an exception the callback is invoked with the value of C<$@>
 
 =cut
 
+# It is basically impossible to have any semblance of order on global
+# destruction, and even harder again to rely on when threads are going to be
+# terminated and joined. Instead of ensuring we join them all, just detach any
+# we no longer care about at END time
+my %threads_to_detach; # {$tid} = $thread_weakly
+END {
+   $_ and $_->detach for values %threads_to_detach;
+}
+
 sub create_thread
 {
    my $self = shift;
    my %params = @_;
+
+   HAVE_THREADS or croak "Threads are not available";
 
    eval { require threads } or croak "This Perl does not support threads";
 
@@ -1863,6 +1873,7 @@ sub create_thread
    unless( $self->{thread_join_pipe} ) {
       ( my $rd, $self->{thread_join_pipe} ) = IO::Async::OS->pipepair or
          croak "Cannot pipepair - $!";
+      $self->{thread_join_pipe}->autoflush(1);
 
       $self->watch_io(
          handle => $rd,
@@ -1875,10 +1886,10 @@ sub create_thread
             # forcibly ->join it here to ensure we wait for its result.
 
             foreach my $tid ( unpack "N*", $buffer ) {
-               my $thr = threads->object( $tid );
-               if( my $on_joined = delete $threadwatches->{$tid} ) {
-                  $on_joined->( $thr->join );
-               }
+               my ( $thread, $on_joined ) = @{ delete $threadwatches->{$tid} }
+                  or die "ARGH: Can't find threadwatch for tid $tid\n";
+               $on_joined->( $thread->join );
+               delete $threads_to_detach{$tid};
             }
          }
       );
@@ -1905,7 +1916,8 @@ sub create_thread
       }
    );
 
-   $threadwatches->{$thread->tid} = $on_joined;
+   $threadwatches->{$thread->tid} = [ $thread, $on_joined ];
+   weaken( $threads_to_detach{$thread->tid} = $thread );
 
    return $thread->tid;
 }

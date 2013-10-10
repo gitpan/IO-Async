@@ -8,7 +8,7 @@ package IO::Async::Test;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 use Exporter 'import';
 our @EXPORT = qw(
@@ -77,6 +77,7 @@ to wait for some content to be written through such a connected stream.
 =cut
 
 my $loop;
+END { undef $loop }
 
 =head1 FUNCTIONS
 

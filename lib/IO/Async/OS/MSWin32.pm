@@ -8,7 +8,7 @@ package IO::Async::OS::MSWin32;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -31,10 +31,8 @@ use constant HAVE_RENAME_OPEN_FILES => 0;
 # well try the Select loop first
 use constant LOOP_BUILTIN_CLASSES => qw( Select Poll );
 
-# POSIX::_exit will kill the entire process tree
-use constant HAVE_POSIX__EXIT => 0;
-# We have to use threads->exit to shut down just this process instead
-use constant HAVE_THREADS_EXIT => 1;
+# CORE::fork() does not provide full POSIX semantics
+use constant HAVE_POSIX_FORK => 0;
 
 # Windows does not have signals, and SIGCHLD is not available
 use constant HAVE_SIGNALS => 0;

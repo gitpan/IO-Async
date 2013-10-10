@@ -8,7 +8,7 @@ package IO::Async::Function;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
@@ -113,6 +113,11 @@ The following named parameters may be passed to C<new> or C<configure>:
 
 The body of the function to execute.
 
+=item model => "spawn" | "thread"
+
+Optional. Requests a specific C<IO::Async::Routine> model. If not supplied,
+leaves the default choice up to Routine.
+
 =item min_workers => INT
 
 =item max_workers => INT
@@ -167,7 +172,7 @@ sub configure
    my %params = @_;
 
    my %worker_params;
-   foreach (qw( exit_on_die max_worker_calls )) {
+   foreach (qw( model exit_on_die max_worker_calls )) {
       $self->{$_} = $worker_params{$_} = delete $params{$_} if exists $params{$_};
    }
 
@@ -274,6 +279,7 @@ sub stop
 {
    my $self = shift;
 
+   $self->{stopping} = 1;
    foreach my $worker ( $self->_worker_objects ) {
       $worker->stop;
    }
@@ -450,12 +456,14 @@ sub _new_worker
    my $self = shift;
 
    my $worker = IO::Async::Function::Worker->new(
-      ( map { $_ => $self->{$_} } qw( code setup exit_on_die ) ),
+      ( map { $_ => $self->{$_} } qw( model code setup exit_on_die ) ),
       max_calls => $self->{max_worker_calls},
 
       on_finish => $self->_capture_weakself( sub {
          my $self = shift or return;
          my ( $worker ) = @_;
+
+         return if $self->{stopping};
 
          $self->_new_worker if $self->workers < $self->{min_workers};
 

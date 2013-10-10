@@ -27,7 +27,7 @@ use POSIX qw( SIGTERM );
 use Socket qw( sockaddr_family AF_UNIX );
 use Time::HiRes qw( time );
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 # Abstract Units of Time
 use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
@@ -35,6 +35,7 @@ use constant AUT => $ENV{TEST_QUICK_TIMERS} ? 0.1 : 1;
 # The loop under test. We keep it in a single lexical here, so we can use
 # is_oneref tests in the individual test suite functions
 my $loop;
+END { undef $loop }
 
 =head1 NAME
 

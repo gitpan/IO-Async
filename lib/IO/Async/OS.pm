@@ -8,7 +8,7 @@ package IO::Async::OS;
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -56,10 +56,11 @@ use constant HAVE_IO_SOCKET_IP => defined eval { require IO::Socket::IP };
 # inform us that a fork()ed child has exit()ed?
 use constant HAVE_SIGNALS => 1;
 
-# Does POSIX::_exit cleanly shut down just this process?
-use constant HAVE_POSIX__EXIT => 1;
-# Do we have to use threads->exit to shut down just this process?
-use constant HAVE_THREADS_EXIT => 0;
+# Do we support POSIX-style true fork()ed processes at all?
+use constant HAVE_POSIX_FORK => !$ENV{IO_ASYNC_NO_FORK};
+# Can we potentially support threads? (would still need to 'require threads')
+use constant HAVE_THREADS => !$ENV{IO_ASYNC_NO_THREADS} &&
+   eval { require Config && $Config::Config{useithreads} };
 
 # Preferred trial order for built-in Loop classes
 use constant LOOP_BUILTIN_CLASSES => qw( Poll Select );
@@ -73,6 +74,33 @@ C<IO::Async::OS> - operating system abstractions for C<IO::Async>
 This module acts as a class to provide a number of utility methods whose exact
 behaviour may depend on the type of OS it is running on. It is provided as a
 class so that specific kinds of operating system can override methods in it.
+
+As well as these support functions it also provides a number of constants, all
+with names beginning C<HAVE_> which describe various features that may or may
+not be available on the OS or perl build. Most of these are either hard-coded
+per OS, or detected at runtime.
+
+The following constants may be overridden by environment variables.
+
+=over 4
+
+=item * HAVE_POSIX_FORK
+
+True if the C<fork()> call has full POSIX semantics (full process separation).
+This is true on most OSes but false on MSWin32.
+
+This may be overridden to be false by setting the environment variable
+C<IO_ASYNC_NO_FORK>.
+
+=item * HAVE_THREADS
+
+True if C<ithreads> are available, meaning that the C<threads> module can be
+used. This depends on whether perl was built with threading support.
+
+This may be overridable to be false by setting the environment variable
+C<IO_ASYNC_NO_THREADS>.
+
+=back
 
 =cut
 

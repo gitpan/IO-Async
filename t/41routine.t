@@ -14,17 +14,15 @@ use IO::Async::Routine;
 use IO::Async::Channel;
 use IO::Async::Loop;
 
-use constant HAVE_THREADS => eval { require threads };
-
 my $loop = IO::Async::Loop->new_builtin;
 
 testing_loop( $loop );
 
-foreach my $model (qw( spawn thread )) {
-   SKIP: {
-      skip "This Perl does not support threads", 6
-         if $model eq "thread" and not HAVE_THREADS;
+sub test_with_model
+{
+   my ( $model ) = @_;
 
+   {
       my $calls   = IO::Async::Channel->new;
       my $returns = IO::Async::Channel->new;
 
@@ -69,10 +67,7 @@ foreach my $model (qw( spawn thread )) {
       is_oneref( $routine, '$routine has refcount 1 before EOF' );
    }
 
-   SKIP: {
-      skip "This perl does not support threads", 2
-         if $model eq "thread" and not HAVE_THREADS;
-
+   {
       my $returned;
       my $return_routine = IO::Async::Routine->new(
          model => $model,
@@ -98,6 +93,36 @@ foreach my $model (qw( spawn thread )) {
       wait_for { defined $died };
 
       is( $died, "ARGH!\n", "on_die for $model model" );
+   }
+
+   {
+      my $channel = IO::Async::Channel->new;
+
+      my $finished;
+      my $routine = IO::Async::Routine->new(
+         model => $model,
+         channels_in => [ $channel ],
+         code => sub { while( $channel->recv ) { 1 } },
+         on_finish => sub { $finished++ },
+      );
+
+      $loop->add( $routine );
+
+      $channel->close;
+
+      wait_for { $finished };
+      pass( "Recv on closed channel for $model model" );
+   }
+}
+
+foreach my $model (qw( fork thread )) {
+   SKIP: {
+      skip "This Perl does not support threads", 9
+         if $model eq "thread" and not IO::Async::OS->HAVE_THREADS;
+      skip "This Perl does not support fork()", 9
+         if $model eq "fork" and not IO::Async::OS->HAVE_POSIX_FORK;
+
+      test_with_model( $model );
    }
 }
 
@@ -160,6 +185,7 @@ foreach my $model (qw( spawn thread )) {
          return 0;
       },
       on_finish => sub { $src_finished++ },
+      on_die => sub { die "source routine failed - $_[1]" },
    );
 
    $loop->add( $src_routine );
@@ -172,6 +198,7 @@ foreach my $model (qw( spawn thread )) {
          return ( $data[0] eq "some" and $data[1] eq "data" ) ? 0 : 1;
       },
       on_return => sub { $sink_result = $_[1] },
+      on_die => sub { die "sink routine failed - $_[1]" },
    );
 
    $loop->add( $sink_routine );
@@ -182,11 +209,14 @@ foreach my $model (qw( spawn thread )) {
 }
 
 # Test that 'setup' works
-{
+SKIP: {
+   skip "This Perl does not support fork()", 1
+      if not IO::Async::OS->HAVE_POSIX_FORK;
+
    my $channel = IO::Async::Channel->new;
 
    my $routine = IO::Async::Routine->new(
-      model => "spawn",
+      model => "fork",
       setup => [
          env => { FOO => "Here is a random string" },
       ],
@@ -209,6 +239,51 @@ foreach my $model (qw( spawn thread )) {
 
    is( $result->[0], "Here is a random string", '$result from Routine with modified ENV' );
 
+   $loop->remove( $routine );
+}
+
+# Test that STDOUT/STDERR are unaffected
+SKIP: {
+   skip "This Perl does not support fork()", 1
+      if not IO::Async::OS->HAVE_POSIX_FORK;
+
+   my ( $pipe_rd, $pipe_wr ) = IO::Async::OS->pipepair;
+
+   my $routine;
+   {
+      open my $stdoutsave, ">&", \*STDOUT;
+      POSIX::dup2( $pipe_wr->fileno, STDOUT->fileno );
+
+      open my $stderrsave, ">&", \*STDERR;
+      POSIX::dup2( $pipe_wr->fileno, STDERR->fileno );
+
+      $routine = IO::Async::Routine->new(
+         model => "fork",
+         code => sub {
+            STDOUT->autoflush(1);
+            print STDOUT "A line to STDOUT\n";
+            print STDERR "A line to STDERR\n";
+            return 0;
+         }
+      );
+
+      $loop->add( $routine );
+
+      POSIX::dup2( $stdoutsave->fileno, STDOUT->fileno );
+      POSIX::dup2( $stderrsave->fileno, STDERR->fileno );
+   }
+
+   my $buffer = "";
+   $loop->watch_io(
+      handle => $pipe_rd,
+      on_read_ready => sub { sysread $pipe_rd, $buffer, 8192, length $buffer or die "Cannot read - $!" },
+   );
+
+   wait_for { $buffer =~ m/\n.*\n/ };
+
+   is( $buffer, "A line to STDOUT\nA line to STDERR\n", 'Write-to-STD{OUT+ERR} wrote to pipe' );
+
+   $loop->unwatch_io( handle => $pipe_rd, on_read_ready => 1 );
    $loop->remove( $routine );
 }
 

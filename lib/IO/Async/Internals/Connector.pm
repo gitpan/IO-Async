@@ -9,7 +9,9 @@ package # hide from CPAN
 use strict;
 use warnings;
 
-our $VERSION = '0.60_002';
+our $VERSION = '0.60_003';
+
+use Scalar::Util qw( weaken );
 
 use POSIX qw( EINPROGRESS );
 use Socket qw( SOL_SOCKET SO_ERROR );
@@ -31,9 +33,8 @@ sub new
 
    my $loop = delete $params{loop} or croak "Expected a 'loop'";
 
-   my $self = bless {
-      loop => $loop,
-   }, $class;
+   my $self = bless {}, $class;
+   weaken( $self->{loop} = $loop );
 
    return $self;
 }
