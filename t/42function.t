@@ -155,6 +155,7 @@ testing_loop( $loop );
 
 # Exception throwing
 {
+   my $line = __LINE__ + 2;
    my $function = IO::Async::Function->new(
       code => sub { die shift },
    );
@@ -163,7 +164,7 @@ testing_loop( $loop );
 
    my $err;
 
-   $function->call(
+   my $f = $function->call(
       args => [ "exception name" ],
       on_return => sub { },
       on_error  => sub { $err = shift },
@@ -172,6 +173,10 @@ testing_loop( $loop );
    wait_for { defined $err };
 
    like( $err, qr/^exception name at \Q$0\E line \d+\.$/, '$err after exception' );
+
+   is_deeply( [ $f->failure ],
+              [ "exception name at $0 line $line.", error => ],
+              '$f->failure after exception' );
 
    $loop->remove( $function );
 }
@@ -203,7 +208,7 @@ testing_loop( $loop );
    undef @errs;
    wait_for { scalar @errs == 2 };
 
-   is_deeply( \@errs, [ "1\n", "2\n" ], 'Closed variables preserved when exit_on_die => 0' );
+   is_deeply( \@errs, [ "1", "2" ], 'Closed variables preserved when exit_on_die => 0' );
 
    $loop->remove( $function );
 }
@@ -235,7 +240,7 @@ testing_loop( $loop );
    undef @errs;
    wait_for { scalar @errs == 2 };
 
-   is_deeply( \@errs, [ "1\n", "1\n" ], 'Closed variables preserved when exit_on_die => 1' );
+   is_deeply( \@errs, [ "1", "1" ], 'Closed variables preserved when exit_on_die => 1' );
 
    $loop->remove( $function );
 }
@@ -484,6 +489,57 @@ SKIP: {
    );
    wait_for { defined $result };
    is( $result, 1, '$result from third call' );
+
+   $loop->remove( $function );
+}
+
+# Cancellation of sent calls
+{
+   my $function = IO::Async::Function->new(
+      max_workers => 1,
+      code => sub {
+         return 123;
+      },
+   );
+
+   $loop->add( $function );
+
+   my $f1 = $function->call( args => [] );
+   $f1->cancel;
+
+   my $f2 = $function->call( args => [] );
+
+   wait_for { $f2->is_ready };
+
+   is( scalar $f2->get, 123, 'Result of function call after cancelled call' );
+
+   $loop->remove( $function );
+}
+
+# Cancellation of pending calls
+{
+   my $function = IO::Async::Function->new(
+      max_workers => 1,
+      code => do { my $state; sub {
+         my $oldstate = $state;
+         $state = shift;
+         return $oldstate;
+      } },
+   );
+
+   $loop->add( $function );
+
+   # Queue 3 calls but immediately cancel the middle one
+   my ( $f1, $f2, $f3 ) = map {
+      $function->call( args => [ $_ ] )
+   } 1 .. 3;
+
+   $f2->cancel;
+
+   wait_for { $f1->is_ready and $f3->is_ready };
+
+   is( scalar $f1->get, undef, '$f1 result is undef' );
+   is( scalar $f3->get, 1, '$f3 result is 1' );
 
    $loop->remove( $function );
 }

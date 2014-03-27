@@ -8,7 +8,7 @@ package IO::Async::FileStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 use base qw( IO::Async::Stream );
 
@@ -167,8 +167,9 @@ sub configure
       $self->{file}->configure( filename => delete $params{filename} );
       $params{read_handle} = $self->{file}->handle;
    }
-   elsif( exists $params{read_handle} ) {
-      $self->{file}->configure( handle => delete $params{read_handle} );
+   elsif( exists $params{handle} or exists $params{read_handle} ) {
+      my $handle = delete $params{handle} // delete $params{read_handle};
+      $self->{file}->configure( handle => $handle );
       $params{read_handle} = $self->{file}->handle;
    }
 

@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -590,7 +590,7 @@ sub await_all
    $self->loop_once until _all_ready @futures;
 }
 
-=head2 $future = $loop->delay_future( %args )
+=head2 $loop->delay_future( %args ) ==> ()
 
 Returns a new C<IO::Async::Future> instance which will become done at a given
 point in time. The C<%args> should contain an C<at> or C<after> key as per the
@@ -614,7 +614,7 @@ sub delay_future
    return $future;
 }
 
-=head2 $future = $loop->timeout_future( %args )
+=head2 $loop->timeout_future( %args ) ==> ()
 
 Returns a new C<IO::Async::Future> instance which will fail at a given point
 in time. The C<%args> should contain an C<at> or C<after> key as per the
@@ -1042,7 +1042,26 @@ sub resolver
    }
 }
 
-=head2 $loop->resolve( %params )
+=head2 $loop->set_resolver( $resolver )
+
+Sets the internally-stored L<IO::Async::Resolver> object. In most cases this
+method should not be required, but it may be used to provide an alternative
+resolver for special use-cases.
+
+=cut
+
+sub set_resolver
+{
+   my $self = shift;
+   my ( $resolver ) = @_;
+
+   $resolver->can( $_ ) or croak "Resolver is unsuitable as it does not implement $_"
+      for qw( resolve getaddrinfo getnameinfo );
+
+   $self->{resolver} = $resolver;
+}
+
+=head2 $loop->resolve( %params ) ==> @result
 
 This method performs a single name resolution operation. It uses an
 internally-stored C<IO::Async::Resolver> object. For more detail, see the
@@ -1058,7 +1077,7 @@ sub resolve
    $self->resolver->resolve( %params );
 }
 
-=head2 $future = $loop->connect( %params )
+=head2 $loop->connect( %params ) ==> ( $handle|$socket )
 
 This method performs a non-blocking connection to a given address or set of
 addresses, returning a L<IO::Async::Future> which represents the operation. On
@@ -1344,7 +1363,11 @@ sub connect
       $on_resolve_error->( $_[2] )   if $on_resolve_error and $_[1] eq "resolve";
    } );
 
-   return $future;
+   return $future if defined wantarray;
+
+   # Caller is not going to keep hold of the Future, so we have to ensure it
+   # stays alive somehow
+   $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
 =head2 $loop->listen( %params ) ==> $listener
@@ -1608,7 +1631,11 @@ sub listen
    });
    $f->on_fail( sub { $self->remove( $listener ) } ) if $remove_on_error;
 
-   return $f;
+   return $f if defined wantarray;
+
+   # Caller is not going to keep hold of the Future, so we have to ensure it
+   # stays alive somehow
+   $f->on_ready( sub { undef $f } ); # intentional cycle
 }
 
 sub _listen_handle

@@ -1,5 +1,21 @@
 Revision history for IO-Async
 
+0.62    2014/03/27 23:15:25
+        [CHANGES]
+         * Added IO::Async::Future->{done,fail}_later
+         * Allow overriding of debug log file or file descriptor
+         * Avoid Future's and_then/or_else methods
+         * Allow Channel->recv in async mode to return a Future (RT91180)
+         * Ensure that Function ->call Futures cancel correctly
+         * Added $routine->kill
+         * Kill the 'getaddrinfo' => 'getaddrinfo_array' legacy redirection
+         * Allow Loop's resolver to be changed to a different object
+
+        [BUGFIXES]
+         * Avoid relying on strong forward references in Future, by creating
+           intentional cycles on pending Futures. Workaround for bugfix in
+           upcoming Future release.
+
 0.61    2013/10/15 01:10:51
         [CHANGES]
          * Some OSes lack signals; forbid the ->*_signal methods, and use

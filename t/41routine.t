@@ -49,15 +49,15 @@ sub test_with_model
 
       is_refcount( $routine, 2, "\$routine has refcount 2 after \$loop->add for $model model" );
 
+      is( $routine->model, $model, "\$routine->model for $model model" );
+
       $calls->send( [ 1, 2, 3 ] );
 
-      my $result;
-      $returns->recv(
-         on_recv => sub { $result = $_[1]; }
-      );
+      my $f = $returns->recv;
 
-      wait_for { defined $result };
+      wait_for { $f->is_ready };
 
+      my $result = $f->get;
       is( ${$result}, 6, "Result for $model model" );
 
       is_refcount( $routine, 2, '$routine has refcount 2 before $loop->remove' );
@@ -113,6 +113,40 @@ sub test_with_model
       wait_for { $finished };
       pass( "Recv on closed channel for $model model" );
    }
+
+   {
+      my $channel = IO::Async::Channel->new;
+
+      my $routine = IO::Async::Routine->new(
+         model => $model,
+         channels_out => [ $channel ],
+         code => sub {
+            $SIG{INT} = sub { $channel->send( \"SIGINT" ); die "SIGINT" };
+            $channel->send( \"READY" );
+
+            # Busy-wait so thread kill still works
+            my $until = time() + 5;
+            1 while time() < $until;
+         },
+      );
+
+      $loop->add( $routine );
+
+      my $f;
+      $f = $channel->recv;
+
+      wait_for { $f->is_ready };
+
+      is( ${ $f->get }, "READY", 'Routine is ready for SIGINT' );
+
+      $routine->kill( "INT" );
+
+      $f = $channel->recv;
+
+      wait_for { $f->is_ready };
+
+      is( ${ $f->get }, "SIGINT", 'Routine caught SIGINT' );
+   }
 }
 
 foreach my $model (qw( fork thread )) {
@@ -155,20 +189,18 @@ foreach my $model (qw( fork thread )) {
 
    $in1->send( \"+" );
 
-   my $status;
-   $out1->recv( on_recv => sub { $status = ${$_[1]} } );
+   my $status_f = $out1->recv;
 
-   wait_for { defined $status };
-   is( $status, "Ready +", '$status midway through Routine' );
+   wait_for { $status_f->is_ready };
+   is( ${ $status_f->get }, "Ready +", '$status_f result midway through Routine' );
 
    $in2->send( [ 10, 20 ] );
 
-   my $result;
-   $out2->recv( on_recv => sub { $result = ${$_[1]} } );
+   my $result_f = $out2->recv;
 
-   wait_for { defined $result };
+   wait_for { $result_f->is_ready };
 
-   is( $result, 30, '$result at end of Routine' );
+   is( ${ $result_f->get }, 30, '$result_f result at end of Routine' );
 
    $loop->remove( $routine );
 }
@@ -232,11 +264,11 @@ SKIP: {
 
    $loop->add( $routine );
 
-   my $result;
-   $channel->recv( on_recv => sub { $result = $_[1] } );
+   my $f = $channel->recv;
 
-   wait_for { defined $result };
+   wait_for { $f->is_ready };
 
+   my $result = $f->get;
    is( $result->[0], "Here is a random string", '$result from Routine with modified ENV' );
 
    $loop->remove( $routine );

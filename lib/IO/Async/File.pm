@@ -9,7 +9,7 @@ use 5.010; # //
 use strict;
 use warnings;
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 use base qw( IO::Async::Timer::Periodic );
 
@@ -147,6 +147,17 @@ sub configure
    }
 
    $self->SUPER::configure( %params );
+}
+
+sub _add_to_loop
+{
+   my $self = shift;
+
+   if( !defined $self->{filename} and !defined $self->{handle} ) {
+      croak "IO::Async::File needs either a filename or a handle";
+   }
+
+   return $self->SUPER::_add_to_loop( @_ );
 }
 
 sub _reopen_file

@@ -363,4 +363,25 @@ my ( $testerr, $testhost, $testserv ) = getnameinfo( $testaddr );
    is_deeply( [ $future->get ], [ "127.0.0.1", 80 ], '$resolver->getnameinfo with numeric is synchronous for future' );
 }
 
+# $loop->set_resolver
+{
+   my $callcount = 0;
+   {
+      package MockResolver;
+      sub new { bless {}, shift }
+
+      sub resolve {
+         $callcount++; return Future->new->done();
+      }
+      sub getaddrinfo {}
+      sub getnameinfo {}
+   }
+
+   $loop->set_resolver( MockResolver->new );
+
+   $loop->resolve( type => "getpwuid", data => [ 0 ] )->get;
+
+   is( $callcount, 1, '$callcount 1 after ->resolve' );
+}
+
 done_testing;

@@ -1,7 +1,7 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008-2013 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2014 -- leonerd@leonerd.org.uk
 
 package IO::Async::Listener;
 
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 use IO::Async::Handle;
 use IO::Async::OS;
@@ -280,13 +280,17 @@ sub on_read_ready
    }
 
    my $acceptor = $self->acceptor;
-   $self->$acceptor( $socket, %acceptor_params )->on_done( sub {
+   my $f = $self->$acceptor( $socket, %acceptor_params )->on_done( sub {
       my ( $result ) = @_ or return; # false-alarm
       $on_done->( $self, $result );
    })->on_fail( sub {
       my ( $message, undef, $socket, $dollarbang ) = @_;
       $self->maybe_invoke_event( on_accept_error => $socket, $dollarbang );
    });
+
+   # Caller is not going to keep hold of the Future, so we have to ensure it
+   # stays alive somehow
+   $f->on_ready( sub { undef $f } ); # intentional cycle
 }
 
 sub _accept

@@ -8,7 +8,7 @@ package IO::Async::Routine;
 use strict;
 use warnings;
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 use base qw( IO::Async::Notifier );
 
@@ -398,6 +398,37 @@ sub id
 {
    my $self = shift;
    return $self->{id};
+}
+
+=head2 $model = $routine->model
+
+Returns the detachment model in use by the Routine.
+
+=cut
+
+sub model
+{
+   my $self = shift;
+   return $self->{model};
+}
+
+=head2 $routine->kill( $signal )
+
+Sends the specified signal to the routine code. This is either implemented by
+C<CORE::kill()> or C<threads::kill> as required. Note that in the thread case
+this has the usual limits of signal delivery to threads; namely, that it works
+at the Perl interpreter level, and cannot actually interrupt blocking system
+calls.
+
+=cut
+
+sub kill
+{
+   my $self = shift;
+   my ( $signal ) = @_;
+
+   $self->{process}->kill( $signal ) if $self->{model} eq "fork";
+   threads->object( $self->{tid} )->kill( $signal ) if $self->{model} eq "thread";
 }
 
 =head1 AUTHOR

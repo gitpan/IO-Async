@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Function );
 
-our $VERSION = '0.61';
+our $VERSION = '0.62';
 
 # Socket 2.006 fails to getaddrinfo() AI_NUMERICHOST properly on MSWin32
 use Socket 2.007 qw(
@@ -173,10 +173,8 @@ sub resolve
    my $type = $args{type};
    defined $type or croak "Expected 'type'";
 
-   # Legacy
    if( $type eq "getaddrinfo" ) {
-      warnings::warnif( deprecated => "getaddrinfo resolver will be changed in a future release to be the same as getaddrinfo_hash; please update your code to call it specifically" );
-      $type = "getaddrinfo_array";
+      $type = "getaddrinfo_hash";
    }
 
    exists $METHODS{$type} or croak "Expected 'type' to be an existing resolver method, got '$type'";
@@ -206,7 +204,11 @@ sub resolve
    $future->on_done( $on_resolved ) if $on_resolved;
    $future->on_fail( $on_error    ) if $on_error;
 
-   return $future;
+   return $future if defined wantarray;
+
+   # Caller is not going to keep hold of the Future, so we have to ensure it
+   # stays alive somehow
+   $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
 =head2 $resolver->getaddrinfo( %args ) ==> @addrs
@@ -353,7 +355,11 @@ sub getaddrinfo
    $future->on_done( $args{on_resolved} ) if $args{on_resolved};
    $future->on_fail( $args{on_error}    ) if $args{on_error};
 
-   return $future;
+   return $future if defined wantarray;
+
+   # Caller is not going to keep hold of the Future, so we have to ensure it
+   # stays alive somehow
+   $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
 =head2 $resolver->getnameinfo( %args ) ==> ( $host, $service )
@@ -394,7 +400,7 @@ As a specific optimisation, this method will try to perform a lookup of
 numeric values synchronously, rather than asynchronously, if both the
 C<NI_NUMERICHOST> and C<NI_NUMERICSERV> flags are given.
 
-=head2 $future = $resolver->getnameinfo( %args )
+=head2 $resolver->getnameinfo( %args )
 
 When not returning a future, additional parameters can be given containing the
 continuations to invoke on success or failure:
@@ -466,7 +472,11 @@ sub getnameinfo
    $future->on_done( $args{on_resolved} ) if $args{on_resolved};
    $future->on_fail( $args{on_error}    ) if $args{on_error};
 
-   return $future;
+   return $future if defined wantarray;
+
+   # Caller is not going to keep hold of the Future, so we have to ensure it
+   # stays alive somehow
+   $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
 =head1 FUNCTIONS
@@ -556,7 +566,8 @@ The C<getaddrinfo_hash> resolver takes arguments in a hash of name/value pairs
 and returns a list of hash structures, as the C<Socket::getaddrinfo> function
 does. For neatness it takes all its arguments as named values; taking the host
 and service names from arguments called C<host> and C<service> respectively;
-all the remaining arguments are passed into the hints hash.
+all the remaining arguments are passed into the hints hash. This name is also
+aliased as simply C<getaddrinfo>.
 
 The C<getaddrinfo_array> resolver behaves more like the C<Socket6> version of
 the function. It takes hints in a flat list, and mangles the result of the
@@ -568,12 +579,6 @@ As an extra convenience to the caller, both resolvers will also accept plain
 string names for the C<family> argument, converting C<inet> and possibly
 C<inet6> into the appropriate C<AF_*> value, and for the C<socktype> argument,
 converting C<stream>, C<dgram> or C<raw> into the appropriate C<SOCK_*> value.
-
-For backward-compatibility with older code, the resolver name C<getaddrinfo>
-is currently aliased to C<getaddrinfo_array>; but any code that wishes to rely
-on the array-like nature of its arguments and return values, should request it
-specifically by name, as this alias will be changed in a later version of
-C<IO::Async>.
 
 The C<getnameinfo> resolver returns its result in the same form as C<Socket>.
 
