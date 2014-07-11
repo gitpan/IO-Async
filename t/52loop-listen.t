@@ -123,6 +123,7 @@ foreach my $port ( 22, 80 ) {
       Type      => SOCK_STREAM,
       LocalHost => "localhost",
       LocalPort => $port,
+      ReuseAddr => 1,
       Listen    => 1,
    ) and next;
       

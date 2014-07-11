@@ -8,7 +8,7 @@ package IO::Async::OS::MSWin32;
 use strict;
 use warnings;
 
-our $VERSION = '0.62';
+our $VERSION = '0.63';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -20,7 +20,9 @@ use IO::Socket (); # empty import
 
 use constant HAVE_FAKE_ISREG_READY => 1;
 
+# Also select() only reports connect() failures by evec, not wvec
 use constant HAVE_SELECT_CONNECT_EVEC => 1;
+
 use constant HAVE_POLL_CONNECT_POLLPRI => 1;
 
 use constant HAVE_CONNECT_EWOULDBLOCK => 1;

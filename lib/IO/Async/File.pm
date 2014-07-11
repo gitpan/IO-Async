@@ -9,7 +9,7 @@ use 5.010; # //
 use strict;
 use warnings;
 
-our $VERSION = '0.62';
+our $VERSION = '0.63';
 
 use base qw( IO::Async::Timer::Periodic );
 

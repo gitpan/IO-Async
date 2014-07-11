@@ -8,13 +8,16 @@ package IO::Async::OS::cygwin;
 use strict;
 use warnings;
 
-our $VERSION = '0.62';
+our $VERSION = '0.63';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
 # Cygwin almost needs no hinting above the POSIX-like base, except that its
 # emulation of poll() isn't quite perfect. It needs POLLPRI
 use constant HAVE_POLL_CONNECT_POLLPRI => 1;
+
+# Also select() only reports connect() failures by evec, not wvec
+use constant HAVE_SELECT_CONNECT_EVEC => 1;
 
 =head1 NAME
 

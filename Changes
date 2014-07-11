@@ -1,5 +1,19 @@
 Revision history for IO-Async
 
+0.63    2014/07/11 15:09:08
+        [CHANGES]
+         * Allow Notifier subclasses to last-ditch handle unrecognised
+           ->configure() params
+         * Added $notifier->adopt_future
+         * Added $notifier->invoke_error and 'on_error' event
+         * Ensure that TimeQueue inserts in FIFO order for equal timestamps
+         * Kill remaining docs to long-dead IO::Async::Sequencer
+
+        [BUGFIXES]
+         * Cygwin needs the SELECT_CONNECT_EVEC OS hint as well
+         * Probe for a broken port to perform listen() tests on by using
+           ReuseAddr => 1 so it matches what IO::Async will do (RT84051)
+
 0.62    2014/03/27 23:15:25
         [CHANGES]
          * Added IO::Async::Future->{done,fail}_later

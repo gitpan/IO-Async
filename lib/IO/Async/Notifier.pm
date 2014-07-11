@@ -8,7 +8,7 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.62';
+our $VERSION = '0.63';
 
 use Carp;
 use Scalar::Util qw( weaken );
@@ -97,10 +97,6 @@ filehandle
 
 =item *
 
-L<IO::Async::Sequencer> - handle a serial pipeline of requests / responses (EXPERIMENTAL)
-
-=item *
-
 L<IO::Async::Timer> - base class for Notifiers that use timed delays
 
 =item *
@@ -168,6 +164,17 @@ methods to implement its own event callbacks.
 
 =cut
 
+=head1 EVENTS
+
+The following events are invoked, either using subclass methods or CODE
+references in parameters:
+
+=head2 on_error $message, $name, @details
+
+Invoked by C<invoke_error>.
+
+=cut
+
 =head1 PARAMETERS
 
 A specific subclass of C<IO::Async::Notifier> defines named parameters that
@@ -180,6 +187,10 @@ the object is in a particular state.
 The following parameters are supported by all Notifiers:
 
 =over 8
+
+=item on_error => CODE
+
+CODE reference for event handler.
 
 =item notifier_name => STRING
 
@@ -227,7 +238,7 @@ sub new
 =head2 $notifier->configure( %params )
 
 Adjust the named parameters of the C<Notifier> as given by the C<%params>
-hash. 
+hash.
 
 =cut
 
@@ -237,15 +248,20 @@ sub configure
    my $self = shift;
    my %params = @_;
 
-   foreach (qw( notifier_name )) {
+   foreach (qw( notifier_name on_error )) {
       $self->{"IO_Async_Notifier__$_"} = delete $params{$_} if exists $params{$_};
    }
 
-   # We don't recognise any configure keys at this level
-   if( keys %params ) {
-      my $class = ref $self;
-      croak "Unrecognised configuration keys for $class - " . join( " ", keys %params );
-   }
+   $self->configure_unknown( %params ) if keys %params;
+}
+
+sub configure_unknown
+{
+   my $self = shift;
+   my %params = @_;
+
+   my $class = ref $self;
+   croak "Unrecognised configuration keys for $class - " . join( " ", keys %params );
 }
 
 =head2 $loop = $notifier->loop
@@ -292,6 +308,46 @@ sub notifier_name
 {
    my $self = shift;
    return $self->{IO_Async_Notifier__notifier_name} || "";
+}
+
+=head2 $f = $notifier->adopt_future( $f )
+
+Stores a reference to the L<Future> instance within the notifier itself, so
+the reference doesn't get lost. This reference will be dropped when the future
+becomes ready (either by success or failure). Additionally, if the future
+failed the notifier's C<invoke_error> method will be informed.
+
+This means that if the notifier does not provide an C<on_error> handler, nor
+is there one anywhere in the parent chain, this will be fatal to the caller of
+C<< $f->fail >>. To avoid this being fatal if the failure is handled
+elsewhere, use the C<else_done> method on the future to obtain a sequence one
+that never fails.
+
+ $notifier->adopt_future( $f->else_done() )
+
+The future itself is returned.
+
+=cut
+
+sub adopt_future
+{
+   my $self = shift;
+   my ( $f ) = @_;
+
+   my $fkey = "$f"; # stable stringification
+
+   $self->{IO_Async_Notifier__futures}{$fkey} = $f;
+
+   $f->on_ready( $self->_capture_weakself( sub {
+      my $self = shift;
+      my ( $f ) = @_;
+
+      delete $self->{IO_Async_Notifier__futures}{$fkey};
+
+      $self->invoke_error( $f->failure ) if $f->failure;
+   }));
+
+   return $f;
 }
 
 =head1 CHILD NOTIFIERS
@@ -446,6 +502,17 @@ This method should C<delete> from the C<%params> hash any keys it has dealt
 with, then pass the remaining ones to the C<SUPER::configure>. The base
 class implementation will throw an exception if there are any unrecognised
 keys remaining.
+
+=cut
+
+=head2 $notifier->configure_unknown( %params )
+
+This method is called by the base class C<configure> method, for any remaining
+parameters that are not recognised. The default implementation throws an
+exception using C<Carp> that lists the unrecognised keys. This method is
+provided to allow subclasses to override the behaviour, perhaps to store
+unrecognised keys, or to otherwise inspect the left-over arguments for some
+other purpose.
 
 =cut
 
@@ -846,6 +913,42 @@ sub _debug_printf_event
          ( $class eq $caller ? $event_name : "${str_caller}::$event_name" )
       );
    }
+}
+
+=head2 $notifier->invoke_error( $message, $name, @details )
+
+Invokes the stored C<on_error> event handler, passing in the given arguments.
+If no handler is defined, it will be passed up to the containing parent
+notifier, if one exists. If no parent exists, the error message will be thrown
+as an exception by using C<die()> and this method will not return.
+
+If a handler is found to handle this error, the method will return as normal.
+However, as the expected use-case is to handle "fatal" errors that now render
+the notifier unsuitable to continue, code should be careful not to perform any
+further work after invoking it. Specifically, sockets may become disconnected,
+or the entire notifier may now be removed from its containing loop.
+
+The C<$name> and C<@details> list should follow similar semantics to L<Future>
+failures. That is, the C<$name> should be a string giving a category of
+failure, and the C<@details> list should contain additional arguments that
+relate to that kind of failure.
+
+=cut
+
+sub invoke_error
+{
+   my $self = shift;
+   my ( $message, $name, @details ) = @_;
+
+   if( my $code = $self->{IO_Async_Notifier__on_error} || $self->can( "on_error" ) ) {
+      return $code->( $self, $message, $name, @details );
+   }
+
+   if( my $parent = $self->parent ) {
+      return $parent->invoke_error( @_ );
+   }
+
+   die "$message\n";
 }
 
 =head1 AUTHOR

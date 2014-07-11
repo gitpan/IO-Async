@@ -53,8 +53,9 @@ t/01timequeue.t
 t/02os.t
 t/03loop-magic.t
 t/04notifier.t
-t/05notifier-child.t
+t/05notifier-loop.t
 t/06notifier-mixin.t
+t/07notifier-future.t
 t/10loop-poll-io.t
 t/10loop-select-io.t
 t/11loop-poll-timer.t
