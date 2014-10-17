@@ -8,7 +8,7 @@ package IO::Async::Socket;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Handle );
 
@@ -68,9 +68,9 @@ provides a queue of outgoing data. It invokes the C<on_recv> handler when new
 data is received from the filehandle. Data may be sent to the filehandle by
 calling the C<send> method.
 
-It is primarily intended for C<SOCK_DGRAM> or C<SOCK_RAW> sockets; for
-C<SOCK_STREAM> sockets an instance of L<IO::Async::Stream> is probably more
-appropriate.
+It is primarily intended for C<SOCK_DGRAM> or C<SOCK_RAW> sockets (such as UDP
+or packet-capture); for C<SOCK_STREAM> sockets (such as TCP) an instance of
+L<IO::Async::Stream> is more appropriate.
 
 =head1 EVENTS
 
@@ -121,39 +121,37 @@ sub _init
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item read_handle => IO
+=head2 read_handle => IO
 
 The IO handle to receive from. Must implement C<fileno> and C<recv> methods.
 
-=item write_handle => IO
+=head2 write_handle => IO
 
 The IO handle to send to. Must implement C<fileno> and C<send> methods.
 
-=item handle => IO
+=head2 handle => IO
 
 Shortcut to specifying the same IO handle for both of the above.
 
-=item on_recv => CODE
+=head2 on_recv => CODE
 
-=item on_recv_error => CODE
+=head2 on_recv_error => CODE
 
-=item on_outgoing_empty => CODE
+=head2 on_outgoing_empty => CODE
 
-=item on_send_error => CODE
+=head2 on_send_error => CODE
 
-=item autoflush => BOOL
+=head2 autoflush => BOOL
 
 Optional. If true, the C<send> method will atempt to send data to the
 operating system immediately, without waiting for the loop to indicate the
 filehandle is write-ready.
 
-=item recv_len => INT
+=head2 recv_len => INT
 
 Optional. Sets the buffer size for C<recv> calls. Defaults to 64 KiB.
 
-=item recv_all => BOOL
+=head2 recv_all => BOOL
 
 Optional. If true, repeatedly call C<recv> when the receiving handle first
 becomes read-ready. By default this is turned off, meaning at most one
@@ -166,13 +164,11 @@ filehandles of processing time. Turning this option on may improve bulk data
 transfer rate, at the risk of delaying or stalling processing on other
 filehandles.
 
-=item send_all => INT
+=head2 send_all => INT
 
 Optional. Analogous to the C<recv_all> option, but for sending. When
 C<autoflush> is enabled, this option only affects deferred sending if the
 initial attempt failed.
-
-=back
 
 The condition requiring an C<on_recv> handler is checked at the time the
 object is added to a Loop; it is allowed to create a C<IO::Async::Socket>
@@ -327,6 +323,20 @@ sub on_write_ready
       $self->maybe_invoke_event( on_outgoing_empty => );
    }
 }
+
+=head1 EXAMPLES
+
+=head2 Using a UDP Socket
+
+C<UDP> is carried by the C<SOCK_DGRAM> socket type, for which the string
+C<'dgram'> is a convenient shortcut:
+
+ $loop->connect(
+    host     => $hostname,
+    service  => $service,
+    socktype => 'dgram',
+    ...
+ )
 
 =head1 SEE ALSO
 

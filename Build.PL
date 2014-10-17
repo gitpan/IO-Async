@@ -6,13 +6,14 @@ use Module::Build;
 my $build = Module::Build->new(
    module_name => 'IO::Async',
    requires => {
-      'Future' => '0.12',
+      'Future' => '0.22', # ->else_done
       'Future::Utils' => '0.18', # try_repeat
       'Exporter' => '5.57',
       'File::stat' => 0,
       'IO::Poll' => 0,
       'Socket' => '2.007',
       'Storable' => 0,
+      'Struct::Dumb' => 0,
       'Time::HiRes' => 0,
 
       # Fails on perl 5.8.3 for unknown reasons
@@ -37,6 +38,11 @@ my $build = Module::Build->new(
    create_makefile_pl => 'traditional',
    create_license => 1,
    create_readme  => 1,
+   meta_merge => {
+      resources => {
+         x_IRC => "irc://irc.perl.org/#io-async",
+      },
+   },
 );
 
 $build->create_build_script;

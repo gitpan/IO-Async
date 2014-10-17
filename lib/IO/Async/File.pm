@@ -9,7 +9,7 @@ use 5.010; # //
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Timer::Periodic );
 
@@ -91,27 +91,23 @@ L<File::stat> instances containing the old and new C<stat()> fields.
 
 The following named parameters may be passed to C<new> or C<configure>.
 
-=over 8
-
-=item handle => IO
+=head2 handle => IO
 
 The opened filehandle to watch for C<stat()> changes if C<filename> is not
 supplied.
 
-=item filename => STRING
+=head2 filename => STRING
 
 Optional. If supplied, watches the named file rather than the filehandle given
 in C<handle>. The file will be opened for reading and then watched for
 renames. If the file is renamed, the new filename is opened and tracked
 similarly after closing the previous file.
 
-=item interval => NUM
+=head2 interval => NUM
 
 Optional. The interval in seconds to poll the filehandle using C<stat(2)>
 looking for size changes. A default of 2 seconds will be applied if not
 defined.
-
-=back
 
 =cut
 

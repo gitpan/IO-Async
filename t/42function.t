@@ -8,6 +8,7 @@ use IO::Async::Test;
 use Test::More;
 use Test::Fatal;
 use Test::Refcount;
+use constant HAVE_TEST_MEMORYGROWTH => eval { require Test::MemoryGrowth; };
 
 use File::Temp qw( tempdir );
 use Time::HiRes qw( sleep );
@@ -542,6 +543,27 @@ SKIP: {
    is( scalar $f3->get, 1, '$f3 result is 1' );
 
    $loop->remove( $function );
+}
+
+# Leak test (RT99552)
+if( HAVE_TEST_MEMORYGROWTH ) {
+   diag( "Performing memory leak test" );
+
+   my $function = IO::Async::Function->new(
+      max_workers => 8,
+      code => sub {},
+   );
+
+   $loop->add( $function );
+
+   Test::MemoryGrowth::no_growth( sub {
+      $function->restart;
+      $function->call( args => [] )->get;
+   }, calls => 100,
+      'IO::Async::Function calls do not leak memory' );
+
+   $loop->remove( $function );
+   undef $function;
 }
 
 done_testing;

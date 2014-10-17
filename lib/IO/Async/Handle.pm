@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -87,37 +87,41 @@ Loop object.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
+=head2 read_handle => IO
 
-=item read_handle => IO
-
-=item write_handle => IO
+=head2 write_handle => IO
 
 The reading and writing IO handles. Each must implement the C<fileno> method.
 Primarily used for passing C<STDIN> / C<STDOUT>; see the SYNOPSIS section of
 C<IO::Async::Stream> for an example.
 
-=item handle => IO
+=head2 handle => IO
 
 The IO handle for both reading and writing; instead of passing each separately
 as above. Must implement C<fileno> method in way that C<IO::Handle> does.
 
-=item on_read_ready => CODE
+=head2 read_fileno => INT
 
-=item on_write_ready => CODE
+=head2 write_fileno => INT
 
-=item on_closed => CODE
+File descriptor numbers for reading and writing. If these are given as an
+alternative to C<read_handle> or C<write_handle> then a new C<IO::Handle>
+instance will be constructed around each.
+
+=head2 on_read_ready => CODE
+
+=head2 on_write_ready => CODE
+
+=head2 on_closed => CODE
 
 CODE references for event handlers.
 
-=item want_readready => BOOL
+=head2 want_readready => BOOL
 
-=item want_writeready => BOOL
+=head2 want_writeready => BOOL
 
 If present, enable or disable read- or write-ready notification as per the
 C<want_readready> and C<want_writeready> methods.
-
-=back
 
 It is required that a matching C<on_read_ready> or C<on_write_ready> are
 available for any handle that is provided; either passed as a callback CODE
@@ -154,6 +158,21 @@ sub configure
 
    if( exists $params{on_closed} ) {
       $self->{on_closed} = delete $params{on_closed};
+   }
+
+   if( defined $params{read_fileno} and defined $params{write_fileno} and
+       $params{read_fileno} == $params{write_fileno} ) {
+      $params{handle} = IO::Handle->new_from_fd( $params{read_fileno}, "r+" );
+
+      delete $params{read_fileno};
+      delete $params{write_fileno};
+   }
+   else {
+      $params{read_handle} = IO::Handle->new_from_fd( delete $params{read_fileno}, "r" )
+         if defined $params{read_fileno};
+
+      $params{write_handle} = IO::Handle->new_from_fd( delete $params{write_fileno}, "w" )
+         if defined $params{write_fileno};
    }
 
    # 'handle' is a shortcut for setting read_ and write_
@@ -311,6 +330,9 @@ sub notifier_name
 
 =head1 METHODS
 
+The following methods documented with a trailing call to C<< ->get >> return
+L<Future> instances.
+
 =cut
 
 =head2 $handle->set_handles( %params )
@@ -421,7 +443,7 @@ sub close_write
    $self->_closed if !$self->{read_handle};
 }
 
-=head2 $handle->new_close_future ==> ()
+=head2 $handle->new_close_future->get
 
 Returns a new L<IO::Async::Future> object which will become done when the
 handle is closed. Cancelling the C<$future> will remove this notification
@@ -606,7 +628,7 @@ sub bind
    $self->read_handle->bind( $addr ) or croak "Cannot bind - $!";
 }
 
-=head2 $handle->connect( %args ) ==> ( $handle )
+=head2 $handle = $handle->connect( %args )->get
 
 A convenient wrapper for calling the C<connect> method on the underlying
 L<IO::Async::Loop> object.

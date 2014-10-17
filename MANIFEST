@@ -26,6 +26,7 @@ lib/IO/Async/MergePoint.pm
 lib/IO/Async/Notifier.pm
 lib/IO/Async/OS.pm
 lib/IO/Async/OS/cygwin.pm
+lib/IO/Async/OS/linux.pm
 lib/IO/Async/OS/MSWin32.pm
 lib/IO/Async/PID.pm
 lib/IO/Async/Process.pm

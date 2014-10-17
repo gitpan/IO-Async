@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -67,17 +67,13 @@ Invoked when the timer expires.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item on_expire => CODE
+=head2 on_expire => CODE
 
 CODE reference for the C<on_expire> event.
 
-=item time => NUM
+=head2 time => NUM
 
 The epoch time at which the timer will expire.
-
-=back
 
 Once constructed, the timer object will need to be added to the C<Loop> before
 it will work.

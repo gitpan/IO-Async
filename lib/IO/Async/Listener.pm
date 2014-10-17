@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Handle );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use IO::Async::Handle;
 use IO::Async::OS;
@@ -136,23 +136,21 @@ simply be ignored.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
+=head2 on_accept => CODE
 
-=item on_accept => CODE
+=head2 on_stream => CODE
 
-=item on_stream => CODE
-
-=item on_socket => CODE
+=head2 on_socket => CODE
 
 CODE reference for the event handlers. Because of the mutually-exclusive
 nature of their behaviour, only one of these may be set at a time. Setting one
 will remove the other two.
 
-=item handle => IO
+=head2 handle => IO
 
 The IO handle containing an existing listen-mode socket.
 
-=item handle_constructor => CODE
+=head2 handle_constructor => CODE
 
 Optional. If defined, gives a CODE reference to be invoked every time a new
 client socket is accepted from the listening socket. It is passed the listener
@@ -161,7 +159,11 @@ C<IO::Async::Handle> or a subclass, used to wrap the new client socket.
 
  $handle = $handle_constructor->( $listener )
 
-=item handle_class => STRING
+This can also be given as a subclass method
+
+ $handle = $listener->handle_constructor()
+
+=head2 handle_class => STRING
 
 Optional. If defined and C<handle_constructor> isn't, then new wrapper handles
 are constructed by invoking the C<new> method on the given class name, passing
@@ -169,21 +171,23 @@ in no additional parameters.
 
  $handle = $handle_class->new()
 
-=item acceptor => STRING|CODE
+This can also be given as a subclass method
+
+ $handle = $listener->handle_class->new
+
+=head2 acceptor => STRING|CODE
 
 Optional. If defined, gives the name of a method or a CODE reference to use to
 implement the actual accept behaviour. This will be invoked as:
 
- $listener->acceptor( $socket ) ==> $accepted
+ ( $accepted ) = $listener->acceptor( $socket )->get
 
- $listener->acceptor( $socket, handle => $handle ) ==> $handle
+ ( $handle ) = $listener->acceptor( $socket, handle => $handle )->get
 
 It is invoked with the listening socket as its its argument, and optionally
 an C<IO::Async::Handle> instance as a named parameter, and is expected to
 return a C<Future> that will eventually yield the newly-accepted socket or
 handle instance, if such was provided.
-
-=back
 
 =cut
 
@@ -237,15 +241,6 @@ sub configure
       $self->{$_} = delete $params{$_} if exists $params{$_};
    }
 
-   my $new_handle;
-   if( my $constructor = $self->{handle_constructor} ) {
-      $new_handle = $self->{handle_constructor};
-   }
-   elsif( my $class = $self->{handle_class} ) {
-      $new_handle = sub { $class->new };
-   }
-   $self->{new_handle} = $new_handle;
-
    if( keys %params ) {
       croak "Cannot pass though configuration keys to underlying Handle - " . join( ", ", keys %params );
    }
@@ -272,8 +267,23 @@ sub on_read_ready
    }
    # on_accept needs to be last in case of multiple layers of subclassing
    elsif( $on_done = $self->can_event( "on_accept" ) ) {
-      my $new_handle = $self->{new_handle};
-      $acceptor_params{handle} = $new_handle->( $self ) if $new_handle;
+      my $handle;
+
+      # Test both params before moving on to either method
+      if( my $constructor = $self->{handle_constructor} ) {
+         $handle = $self->{handle_constructor}->( $self );
+      }
+      elsif( my $class = $self->{handle_class} ) {
+         $handle = $class->new;
+      }
+      elsif( $self->can( "handle_constructor" ) ) {
+         $handle = $self->handle_constructor;
+      }
+      elsif( $self->can( "handle_class" ) ) {
+         $handle = $self->handle_class->new;
+      }
+
+      $acceptor_params{handle} = $handle if $handle;
    }
    else {
       die "ARG! Missing on_accept,on_stream,on_socket!";
@@ -319,6 +329,9 @@ sub _accept
 }
 
 =head1 METHODS
+
+The following methods documented with a trailing call to C<< ->get >> return
+L<Future> instances.
 
 =cut
 
@@ -473,8 +486,7 @@ The C<addr> or C<addrs> parameters should contain a definition of a plain
 socket address in a form that the L<IO::Async::OS> C<extract_addrinfo>
 method can use.
 
-This example shows how to use the C<Socket> functions to construct one for
-TCP port 8001 on address 10.0.0.1:
+This example shows how to listen on TCP port 8001 on address 10.0.0.1:
 
  $listener->listen(
     addr => {

@@ -8,7 +8,7 @@ package IO::Async::Loop;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 # When editing this value don't forget to update the docs below
 use constant NEED_API_VERSION => '0.33';
@@ -590,7 +590,7 @@ sub await_all
    $self->loop_once until _all_ready @futures;
 }
 
-=head2 $loop->delay_future( %args ) ==> ()
+=head2 $loop->delay_future( %args )->get
 
 Returns a new C<IO::Async::Future> instance which will become done at a given
 point in time. The C<%args> should contain an C<at> or C<after> key as per the
@@ -614,7 +614,7 @@ sub delay_future
    return $future;
 }
 
-=head2 $loop->timeout_future( %args ) ==> ()
+=head2 $loop->timeout_future( %args )->get
 
 Returns a new C<IO::Async::Future> instance which will fail at a given point
 in time. The C<%args> should contain an C<at> or C<after> key as per the
@@ -647,6 +647,9 @@ sub timeout_future
 Most of the following methods are higher-level wrappers around base
 functionality provided by the low-level API documented below. They may be
 used by C<IO::Async::Notifier> subclasses or called directly by the program.
+
+The following methods documented with a trailing call to C<< ->get >> return
+L<Future> instances.
 
 =cut
 
@@ -1061,7 +1064,7 @@ sub set_resolver
    $self->{resolver} = $resolver;
 }
 
-=head2 $loop->resolve( %params ) ==> @result
+=head2 @result = $loop->resolve( %params )->get
 
 This method performs a single name resolution operation. It uses an
 internally-stored C<IO::Async::Resolver> object. For more detail, see the
@@ -1077,7 +1080,7 @@ sub resolve
    $self->resolver->resolve( %params );
 }
 
-=head2 $loop->connect( %params ) ==> ( $handle|$socket )
+=head2 $handle|$socket = $loop->connect( %params )->get
 
 This method performs a non-blocking connection to a given address or set of
 addresses, returning a L<IO::Async::Future> which represents the operation. On
@@ -1370,7 +1373,7 @@ sub connect
    $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
-=head2 $loop->listen( %params ) ==> $listener
+=head2 $listener = $loop->listen( %params )->get
 
 This method sets up a listening socket and arranges for an acceptor callback
 to be invoked each time a new connection is accepted on the socket. Internally

@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -86,6 +86,26 @@ C<< Loop->open_child >>'s C<on_error>.
 If this is not provided and the process exits with an exception, then
 C<on_finish> is invoked instead, being passed just the exit code.
 
+Since this is just the results of the underlying C<< $loop->spawn_child >>
+C<on_exit> handler in a different order it is possible that the C<$exception>
+field will be an empty string. It will however always be defined. This can be
+used to distinguish the two cases:
+
+ on_exception => sub {
+    my ( $self, $exception, $errno, $exitcode ) = @_;
+
+    if( length $exception ) {
+       print STDERR "The process died with the exception $exception " .
+          "(errno was $errno)\n";
+    }
+    elsif( ( my $status = W_EXITSTATUS($exitcode) ) == 255 ) {
+       print STDERR "The process failed to exec() - $errno\n";
+    }
+    else {
+       print STDERR "The process exited with exit status $status\n";
+    }
+ }
+
 =cut
 
 =head1 CONSTRUCTOR
@@ -114,15 +134,11 @@ sub _init
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
+=head2 on_finish => CODE
 
-=item on_finish => CODE
-
-=item on_exception => CODE
+=head2 on_exception => CODE
 
 CODE reference for the event handlers.
-
-=back
 
 Once the C<on_finish> continuation has been invoked, the C<IO::Async::Process>
 object is removed from the containing C<IO::Async::Loop> object.
@@ -131,25 +147,23 @@ The following parameters may be passed to C<new>, or to C<configure> before
 the process has been started (i.e. before it has been added to the C<Loop>).
 Once the process is running these cannot be changed.
 
-=over 8
-
-=item command => ARRAY or STRING
+=head2 command => ARRAY or STRING
 
 Either a reference to an array containing the command and its arguments, or a
 plain string containing the command. This value is passed into perl's
 C<exec(2)> function.
 
-=item code => CODE
+=head2 code => CODE
 
 A block of code to execute in the child process. It will be called in scalar
 context inside an C<eval> block.
 
-=item setup => ARRAY
+=head2 setup => ARRAY
 
 Optional reference to an array to pass to the underlying C<Loop>
 C<spawn_child> method.
 
-=item fdI<n> => HASH
+=head2 fdI<n> => HASH
 
 A hash describing how to set up file descriptor I<n>. The hash may contain the
 following keys:
@@ -217,21 +231,19 @@ written the pipe will be closed.
 
 =back
 
-=item stdin => ...
+=head2 stdin => ...
 
-=item stdout => ...
+=head2 stdout => ...
 
-=item stderr => ...
+=head2 stderr => ...
 
 Shortcuts for C<fd0>, C<fd1> and C<fd2> respectively.
 
-=item stdio => ...
+=head2 stdio => ...
 
 Special filehandle to affect STDIN and STDOUT at the same time. This
 filehandle supports being configured for both reading and writing at the same
 time.
-
-=back
 
 =cut
 

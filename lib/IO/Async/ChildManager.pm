@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2007-2013 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2007-2014 -- leonerd@leonerd.org.uk
 
 package IO::Async::ChildManager;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 # Not a notifier
 
@@ -19,13 +19,9 @@ use IO::Async::OS;
 use Carp;
 use Scalar::Util qw( weaken );
 
-use POSIX qw( _exit sysconf _SC_OPEN_MAX dup dup2 nice );
+use POSIX qw( _exit dup dup2 nice );
 
 use constant LENGTH_OF_I => length( pack( "I", 0 ) );
-
-# Win32 [and maybe other places] don't have an _SC_OPEN_MAX. About the best we
-# can do really is just make up some largeish number and hope for the best.
-use constant OPEN_MAX_FD => eval { sysconf(_SC_OPEN_MAX) } || 1024;
 
 =head1 NAME
 
@@ -604,7 +600,7 @@ sub _spawn_in_child
          }
       }
 
-      foreach ( 0 .. OPEN_MAX_FD ) {
+      foreach ( IO::Async::OS->potentially_open_fds ) {
          next if $fds_refcount{$_};
          next if $_ == fileno $writepipe;
          POSIX::close( $_ );

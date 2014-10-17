@@ -8,7 +8,7 @@ package IO::Async::Routine;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Notifier );
 
@@ -120,9 +120,7 @@ Invoked if the code block fails with an exception.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item model => "fork" | "thread"
+=head2 model => "fork" | "thread"
 
 Optional. Defines how the routine will detach itself from the main process.
 C<fork> uses a child process detached using an L<IO::Async::Process>.
@@ -132,28 +130,26 @@ If the model is not specified, the environment variable
 C<IO_ASYNC_ROUTINE_MODEL> is used to pick a default. If that isn't defined,
 C<fork> is preferred if it is available, otherwise C<thread>.
 
-=item channels_in => ARRAY of IO::Async::Channel
+=head2 channels_in => ARRAY of IO::Async::Channel
 
 ARRAY reference of C<IO::Async::Channel> objects to set up for passing values
 in to the Routine.
 
-=item channels_out => ARRAY of IO::Async::Channel
+=head2 channels_out => ARRAY of IO::Async::Channel
 
 ARRAY reference of C<IO::Async::Channel> objects to set up for passing values
 out of the Routine.
 
-=item code => CODE
+=head2 code => CODE
 
 CODE reference to the body of the Routine, to execute once the channels are
 set up.
 
-=item setup => ARRAY
+=head2 setup => ARRAY
 
 Optional. For C<fork()>-based Routines, gives a reference to an array to pass
 to the underlying C<Loop> C<fork_child> method. Ignored for thread-based
 Routines.
-
-=back
 
 =cut
 

@@ -8,7 +8,7 @@ package IO::Async::Protocol::LineStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Protocol::Stream );
 
@@ -72,13 +72,9 @@ Invoked when a new complete line of input is received.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item on_read_line => CODE
+=head2 on_read_line => CODE
 
 CODE reference for the C<on_read_line> event.
-
-=back
 
 =cut
 

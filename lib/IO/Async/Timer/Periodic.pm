@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -69,18 +69,16 @@ Invoked on each interval of the timer.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item on_tick => CODE
+=head2 on_tick => CODE
 
 CODE reference for the C<on_tick> event.
 
-=item interval => NUM
+=head2 interval => NUM
 
 The interval in seconds between invocations of the callback or method. Cannot
 be changed if the timer is running.
 
-=item first_interval => NUM
+=head2 first_interval => NUM
 
 Optional. If defined, the interval in seconds after calling the C<start>
 method before the first invocation of the callback or method. Thereafter, the
@@ -91,7 +89,7 @@ Even if this value is zero, the first invocation will be made asynchronously,
 by the containing C<Loop> object, and not synchronously by the C<start> method
 itself.
 
-=item reschedule => STRING
+=head2 reschedule => STRING
 
 Optional. Must be one of C<hard>, C<skip> or C<drift>. Defines the algorithm
 used to reschedule the next invocation.
@@ -108,8 +106,6 @@ C<drift> schedules each iteration at the fixed interval from the time that the
 previous iteration's event handler returns. This allows it to slowly drift over
 time and become desynchronised with other events of the same interval or
 multiples/fractions of it.
-
-=back
 
 Once constructed, the timer object will need to be added to the C<Loop> before
 it will work. It will also need to be started by the C<start> method.

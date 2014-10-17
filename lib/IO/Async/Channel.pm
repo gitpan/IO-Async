@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier ); # just to get _capture_weakself
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 use Storable qw( freeze thaw );
@@ -77,6 +77,9 @@ sub new
 }
 
 =head1 METHODS
+
+The following methods documented with a trailing call to C<< ->get >> return
+L<Future> instances.
 
 =cut
 
@@ -170,7 +173,7 @@ be passed and all Perl references are true the truth of the result of this
 method can be used to detect that the channel is still open and has not yet
 been closed.
 
-=head2 $channel->recv ==> $data
+=head2 $data = $channel->recv->get
 
 When called on an asynchronous mode Channel this method returns a future which
 will eventually yield the next Perl reference value that becomes available

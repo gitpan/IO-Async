@@ -8,10 +8,12 @@ package IO::Async::Notifier;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 use Scalar::Util qw( weaken );
+
+use Future 0.22; # ->else_done
 
 # Perl 5.8.4 cannot do trampolines by modiying @_ then goto &$code
 use constant HAS_BROKEN_TRAMPOLINES => ( $] == "5.008004" );

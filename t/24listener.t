@@ -178,8 +178,15 @@ $listensock = IO::Socket::INET->new(
 }
 
 # Subclass
-my $sub_newclient;
 {
+   my $sub_newclient;
+   {
+      package TestListener;
+      use base qw( IO::Async::Listener );
+
+      sub on_accept { ( undef, $sub_newclient ) = @_ }
+   }
+
    my $listener = TestListener->new(
       handle => $listensock,
    );
@@ -210,6 +217,36 @@ my $sub_newclient;
    $loop->remove( $listener );
 
    is_oneref( $listener, 'subclass $listener has refcount 1 after removing from Loop' );
+}
+
+# Subclass with handle_constructor
+{
+   {
+      package TestListener::WithConstructor;
+      use base qw( IO::Async::Listener );
+
+      sub handle_constructor { return IO::Async::Stream->new }
+   }
+
+   my $accepted;
+
+   my $listener = TestListener::WithConstructor->new(
+      handle => $listensock,
+      on_accept => sub { ( undef, $accepted ) = @_; },
+   );
+
+   $loop->add( $listener );
+
+   my $clientsock = IO::Socket::INET->new( Type => SOCK_STREAM )
+      or die "Cannot socket() - $!";
+
+   $clientsock->connect( $listensock->sockname ) or die "Cannot connect() - $!";
+
+   wait_for { defined $accepted };
+
+   isa_ok( $accepted, "IO::Async::Stream", '$accepted with handle_constructor method' );
+
+   $loop->remove( $listener );
 }
 
 {
@@ -262,8 +299,3 @@ my $sub_newclient;
 }
 
 done_testing;
-
-package TestListener;
-use base qw( IO::Async::Listener );
-
-sub on_accept { ( undef, $sub_newclient ) = @_ }

@@ -8,7 +8,7 @@ package IO::Async::Protocol;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Notifier );
 
@@ -53,17 +53,13 @@ Optional. Invoked when the transport handle becomes closed.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item transport => IO::Async::Handle
+=head2 transport => IO::Async::Handle
 
 The C<IO::Async::Handle> to delegate communications to.
 
-=item on_closed => CODE
+=head2 on_closed => CODE
 
 CODE reference for the C<on_closed> event.
-
-=back
 
 When a new C<transport> object is given, it will be configured by calling the
 C<setup_transport> method, then added as a child notifier. If a different

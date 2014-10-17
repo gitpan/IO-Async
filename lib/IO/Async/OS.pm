@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2012-2013 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2012-2014 -- leonerd@leonerd.org.uk
 
 package IO::Async::OS;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 our @ISA = qw( IO::Async::OS::_Base );
 
@@ -29,6 +29,12 @@ use Socket 1.95 qw(
 );
 
 use IO::Socket (); # empty import
+
+use POSIX qw( sysconf _SC_OPEN_MAX );
+
+# Win32 [and maybe other places] don't have an _SC_OPEN_MAX. About the best we
+# can do really is just make up some largeish number and hope for the best.
+use constant OPEN_MAX_FD => eval { sysconf(_SC_OPEN_MAX) } || 1024;
 
 # Some constants that define features of the OS
 
@@ -563,6 +569,19 @@ sub loop_unwatch_signal
 
    delete $sigwatch->{$signum};
    undef $SIG{$signal};
+}
+
+=head2 @fds = IO::Async::OS->potentially_open_fds
+
+Returns a list of filedescriptors which might need closing. By default this
+will return C<0 .. _SC_OPEN_MAX>. OS-specific subclasses may have a better
+guess.
+
+=cut
+
+sub potentially_open_fds
+{
+   return 0 .. OPEN_MAX_FD;
 }
 
 =head1 AUTHOR

@@ -8,7 +8,7 @@ package IO::Async::Protocol::Stream;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Protocol );
 
@@ -101,24 +101,20 @@ been invoked on it, or on an incoming EOF).
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
+=head2 on_read => CODE
 
-=item on_read => CODE
+=head2 on_read_eof => CODE
 
-=item on_read_eof => CODE
-
-=item on_write_eof => CODE
+=head2 on_write_eof => CODE
 
 CODE references for the events.
 
-=item handle => IO
+=head2 handle => IO
 
 A shortcut for the common case where the transport only needs to be a plain
 C<IO::Async::Stream> object. If this argument is provided without a
 C<transport> object, a new C<IO::Async::Stream> object will be built around
 the given IO handle, and used as the transport.
-
-=back
 
 =cut
 

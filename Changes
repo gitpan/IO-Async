@@ -1,5 +1,25 @@
 Revision history for IO-Async
 
+0.64    2014/10/17 17:51:07
+        [CHANGES]
+         * Make specific mention of 'TCP' and 'UDP' around socket examples
+           where appropriate
+         * Allow construction of an IO::Async::Handle using fileno integers
+           directly
+         * Provide a better search for 'all open filehandles' via IO::Async::OS
+           on Linux (RT97942)
+         * Allow IO::Async::Listener to have handle_constructor or handle_class
+           as a subclass method (RT97208)
+         * Clarify documentation on how to use IO::Async::Process's
+           on_exception event (RT98929)
+
+        [BUGFIXES]
+         * Ensure that Stream's write Futures are also informed of write errors
+           (RT97433)
+         * Remember to ->remove_child the individual workers of an
+           IO::Async::Function (RT99552)
+         * Fix IO::Async::Function synopsis example (RT97713)
+
 0.63    2014/07/11 15:09:08
         [CHANGES]
          * Allow Notifier subclasses to last-ditch handle unrecognised

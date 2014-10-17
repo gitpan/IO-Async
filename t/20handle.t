@@ -7,6 +7,7 @@ use IO::Async::Test;
 
 use Test::More;
 use Test::Fatal;
+use Test::Identity;
 use Test::Refcount;
 
 use IO::Async::Loop;
@@ -381,6 +382,35 @@ my $sub_writeready = 0;
    is( $handle->read_handle->sockopt(SO_TYPE), SOCK_DGRAM, 'handle->socktype is SOCK_DGRAM' );
    # Not sure what port number but it should be nonzero
    ok( ( unpack_sockaddr_in( $handle->read_handle->sockname ) )[0], 'handle->sockname has nonzero port' );
+}
+
+# Construction of IO::Handle from fileno
+{
+   my $handle = IO::Async::Handle->new(
+      read_fileno => 0,
+      on_read_ready => sub { },
+   );
+
+   ok( defined $handle->read_handle, '->new with read_fileno creates read_handle' );
+   is( $handle->read_handle->fileno, 0, '->fileno of read_handle' );
+
+   $handle = IO::Async::Handle->new(
+      write_fileno => 1,
+      on_write_ready => sub { },
+   );
+
+   ok( defined $handle->write_handle, '->new with write_fileno creates write_handle' );
+   is( $handle->write_handle->fileno, 1, '->fileno of write_handle' );
+
+   $handle = IO::Async::Handle->new(
+      read_fileno  => 2,
+      write_fileno => 2,
+      on_read_ready  => sub { },
+      on_write_ready => sub { },
+   );
+
+   identical( $handle->read_handle, $handle->write_handle,
+      '->new with equal read and write fileno only creates one handle' );
 }
 
 done_testing;

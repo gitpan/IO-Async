@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Timer );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -68,24 +68,20 @@ Invoked when the timer expires.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item on_expire => CODE
+=head2 on_expire => CODE
 
 CODE reference for the C<on_expire> event.
 
-=item delay => NUM
+=head2 delay => NUM
 
 The delay in seconds after starting the timer until it expires. Cannot be
 changed if the timer is running. A timer with a zero delay expires
 "immediately".
 
-=item remove_on_expire => BOOL
+=head2 remove_on_expire => BOOL
 
 Optional. If true, remove this timer object from its parent notifier or
 containing loop when it expires. Defaults to false.
-
-=back
 
 Once constructed, the timer object will need to be added to the C<Loop> before
 it will work. It will also need to be started by the C<start> method.

@@ -8,7 +8,7 @@ package IO::Async::FileStream;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Stream );
 
@@ -132,22 +132,18 @@ The following named parameters may be passed to C<new> or C<configure>, in
 addition to the parameters relating to reading supported by
 C<IO::Async::Stream>.
 
-=over 8
-
-=item filename => STRING
+=head2 filename => STRING
 
 Optional. If supplied, watches the named file rather than the filehandle given
 in C<read_handle>. The file will be opened by the constructor, and then
 watched for renames. If the file is renamed, the new filename is opened and
 tracked similarly after closing the previous file.
 
-=item interval => NUM
+=head2 interval => NUM
 
 Optional. The interval in seconds to poll the filehandle using C<stat(2)>
 looking for size changes. A default of 2 seconds will be applied if not
 defined.
-
-=back
 
 =cut
 

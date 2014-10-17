@@ -257,9 +257,9 @@ SKIP: {
       on_write_eof => sub { $eof++ },
    );
 
-   $stream->write( "Junk" );
-
    $loop->add( $stream );
+
+   my $write_future = $stream->write( "Junk" );
 
    $rd->close;
 
@@ -272,6 +272,9 @@ SKIP: {
    is( $eof, 1, 'EOF indication after wait' );
 
    ok( !defined $stream->loop, 'EOF stream no longer member of Loop' );
+
+   ok( $write_future->is_ready,'write future ready after stream closed' );
+   ok( $write_future->is_failed,'write future failed after stream closed' );
 }
 
 # Close
@@ -456,11 +459,14 @@ SKIP: {
 
    $loop->add( $stream );
 
-   $stream->write( "hello" );
+   my $write_future = $stream->write( "hello" );
 
    wait_for { defined $write_errno };
 
    cmp_ok( $write_errno, "==", ECONNRESET, 'errno after failed write' );
+
+   ok( $write_future->is_ready,'write future ready after failed write' );
+   ok( $write_future->is_failed,'write future failed after failed write' );
 
    $loop->remove( $stream );
 }

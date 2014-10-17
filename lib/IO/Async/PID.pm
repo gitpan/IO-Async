@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -76,18 +76,14 @@ Invoked when the watched process exits.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item pid => INT
+=head2 pid => INT
 
 The process ID to watch. Must be given before the object has been added to the
 containing C<IO::Async::Loop> object.
 
-=item on_exit => CODE
+=head2 on_exit => CODE
 
 CODE reference for the C<on_exit> event.
-
-=back
 
 Once the C<on_exit> continuation has been invoked, the C<IO::Async::PID>
 object is removed from the containing C<IO::Async::Loop> object.

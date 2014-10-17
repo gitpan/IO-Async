@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Function );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 # Socket 2.006 fails to getaddrinfo() AI_NUMERICHOST properly on MSWin32
 use Socket 2.007 qw(
@@ -115,9 +115,12 @@ sub _init
 
 =head1 METHODS
 
+The following methods documented with a trailing call to C<< ->get >> return
+L<Future> instances.
+
 =cut
 
-=head2 $loop->resolve( %params ) ==> @result
+=head2 @result = $loop->resolve( %params )->get
 
 Performs a single name resolution operation, as given by the keys in the hash.
 
@@ -211,7 +214,7 @@ sub resolve
    $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
-=head2 $resolver->getaddrinfo( %args ) ==> @addrs
+=head2 @addrs = $resolver->getaddrinfo( %args )->get
 
 A shortcut wrapper around the C<getaddrinfo> resolver, taking its arguments in
 a more convenient form.
@@ -362,7 +365,7 @@ sub getaddrinfo
    $future->on_ready( sub { undef $future } ); # intentional cycle
 }
 
-=head2 $resolver->getnameinfo( %args ) ==> ( $host, $service )
+=head2 ( $host, $service ) = $resolver->getnameinfo( %args )->get
 
 A shortcut wrapper around the C<getnameinfo> resolver, taking its arguments in
 a more convenient form.

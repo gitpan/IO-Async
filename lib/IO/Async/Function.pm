@@ -8,7 +8,7 @@ package IO::Async::Function;
 use strict;
 use warnings;
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use base qw( IO::Async::Notifier );
 use IO::Async::Timer::Countdown;
@@ -39,10 +39,10 @@ C<IO::Async::Function> - call a function asynchronously
 
  $function->call(
     args => [ 123454321 ],
- )->then( sub {
+ )->on_done( sub {
     my $isprime = shift;
     print "123454321 " . ( $isprime ? "is" : "is not" ) . " a prime number\n";
- })->else(
+ })->on_fail( sub {
     print STDERR "Cannot determine if it's prime - $_[0]\n";
  })->get;
 
@@ -103,49 +103,45 @@ also L<IO::Async::Routine>.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item code => CODE
+=head2 code => CODE
 
 The body of the function to execute.
 
-=item model => "spawn" | "thread"
+=head2 model => "fork" | "thread"
 
 Optional. Requests a specific C<IO::Async::Routine> model. If not supplied,
 leaves the default choice up to Routine.
 
-=item min_workers => INT
+=head2 min_workers => INT
 
-=item max_workers => INT
+=head2 max_workers => INT
 
 The lower and upper bounds of worker processes to try to keep running. The
 actual number running at any time will be kept somewhere between these bounds
 according to load.
 
-=item max_worker_calls => INT
+=head2 max_worker_calls => INT
 
 Optional. If provided, stop a worker process after it has processed this
 number of calls. (New workers may be started to replace stopped ones, within
 the bounds given above).
 
-=item idle_timeout => NUM
+=head2 idle_timeout => NUM
 
 Optional. If provided, idle worker processes will be shut down after this
 amount of time, if there are more than C<min_workers> of them.
 
-=item exit_on_die => BOOL
+=head2 exit_on_die => BOOL
 
 Optional boolean, controls what happens after the C<code> throws an
 exception. If missing or false, the worker will continue running to process
 more requests. If true, the worker will be shut down. A new worker might be
 constructed by the C<call> method to replace it, if necessary.
 
-=item setup => ARRAY
+=head2 setup => ARRAY
 
 Optional array reference. Specifies the C<setup> key to pass to the underlying
 L<IO::Async::Process> when setting up new worker processes.
-
-=back
 
 =cut
 
@@ -250,6 +246,9 @@ sub _remove_from_loop
 
 =head1 METHODS
 
+The following methods documented with a trailing call to C<< ->get >> return
+L<Future> instances.
+
 =cut
 
 =head2 $function->start
@@ -295,7 +294,7 @@ sub restart
    $self->start;
 }
 
-=head2 $function->call( %params ) ==> @result
+=head2 @result = $function->call( %params )->get
 
 Schedules an invocation of the contained function to be executed on one of the
 worker processes. If a non-busy worker is available now, it will be called
@@ -596,6 +595,13 @@ sub stop
 
    if( my $function = $worker->parent ) {
       delete $function->{workers}{$worker->id};
+
+      if( $worker->{busy} ) {
+         $worker->{remove_on_idle}++;
+      }
+      else {
+         $function->remove_child( $worker );
+      }
    }
 }
 
@@ -642,6 +648,8 @@ sub call
 
       my $function = $worker->parent;
       $function->_dispatch_pending if $function;
+
+      $function->remove_child( $worker ) if $function and $worker->{remove_on_idle};
    }));
 }
 

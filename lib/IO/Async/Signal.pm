@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use base qw( IO::Async::Notifier );
 
-our $VERSION = '0.63';
+our $VERSION = '0.64';
 
 use Carp;
 
@@ -61,18 +61,14 @@ Invoked when the signal is received.
 
 The following named parameters may be passed to C<new> or C<configure>:
 
-=over 8
-
-=item name => STRING
+=head2 name => STRING
 
 The name of the signal to watch. This should be a bare name like C<TERM>. Can
 only be given at construction time.
 
-=item on_receipt => CODE
+=head2 on_receipt => CODE
 
 CODE reference for the C<on_receipt> event.
-
-=back
 
 Once constructed, the C<Signal> will need to be added to the C<Loop> before it
 will work.
